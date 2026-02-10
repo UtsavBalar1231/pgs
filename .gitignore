@@ -1,0 +1,10 @@
+/target
+*.swp
+*.swo
+.DS_Store
+
+# AI
+.omc/
+.serena/
+.sisyphus/
+AGENTS.md
