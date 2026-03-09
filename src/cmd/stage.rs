@@ -74,17 +74,23 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
         .map(|s| parse::detect_selection(s))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // 12. Build exclusion set: (file_path, hunk_index)
+    // 12. Build exclusion sets: per-hunk and per-file
     let mut exclusion_set: HashSet<(String, usize)> = HashSet::new();
+    let mut excluded_files: HashSet<String> = HashSet::new();
     for ex_spec in &exclude_specs {
         if let Ok(ex_resolved) = resolve::resolve_selection(&scan, ex_spec) {
+            if ex_resolved.hunk_indices.is_empty() {
+                // File has no hunks (binary/deleted/renamed) — exclude entire file
+                excluded_files.insert(ex_resolved.file_path.clone());
+            }
             for &idx in &ex_resolved.hunk_indices {
                 exclusion_set.insert((ex_resolved.file_path.clone(), idx));
             }
         }
     }
 
-    // 13. Filter: remove excluded hunks from resolved selections
+    // 13. Filter: remove excluded hunks and fully-excluded files
+    spec_resolved.retain(|(_, resolved)| !excluded_files.contains(&resolved.file_path));
     for (_spec, resolved) in &mut spec_resolved {
         resolved
             .hunk_indices
@@ -117,9 +123,11 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
 
     let work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
 
-    // 15. Guard: no resolved hunks remain
-    let has_hunks = work_items.iter().any(|(_, r)| !r.hunk_indices.is_empty());
-    if !has_hunks {
+    // 15. Guard: no resolved work remains
+    let has_work = work_items
+        .iter()
+        .any(|(_, r)| !r.hunk_indices.is_empty() || is_whole_file_operation(&scan, &r.file_path));
+    if !has_work {
         return Err(AgstageError::SelectionEmpty);
     }
 
@@ -132,6 +140,10 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
     if args.dry_run {
         let succeeded: Vec<StagedItem> = work_items
             .iter()
+            .filter(|(_, resolved)| {
+                !resolved.hunk_indices.is_empty()
+                    || is_whole_file_operation(&scan, &resolved.file_path)
+            })
             .map(|(spec, resolved)| {
                 let lines = estimate_lines(&scan, resolved);
                 StagedItem {
@@ -160,6 +172,12 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
     let mut succeeded: Vec<StagedItem> = Vec::new();
 
     for (spec, resolved) in &work_items {
+        // Skip work items whose hunks were fully excluded (but not whole-file ops)
+        if resolved.hunk_indices.is_empty() && !is_whole_file_operation(&scan, &resolved.file_path)
+        {
+            continue;
+        }
+
         let file_path = &resolved.file_path;
         let file_info = scan
             .files
@@ -249,26 +267,54 @@ fn execute_single_stage(
             staging::stage_lines(repo, file_path, &selected)
         }
 
-        // Modified + hunk selection
-        (FileStatus::Modified, false, true, false) => {
-            let mut total_lines: u32 = 0;
+        // Modified + hunk selection (or file selection with excluded hunks)
+        (FileStatus::Modified, false, true | false, false) => {
+            // If this is a file-level spec with ALL hunks present, stage the whole file.
             let file_info = scan.files.iter().find(|f| f.path == file_path);
-            for &hunk_idx in &resolved.hunk_indices {
-                if let Some(fi) = file_info {
+            let all_hunks_present =
+                file_info.is_some_and(|fi| resolved.hunk_indices.len() == fi.hunks.len());
+
+            if !is_hunk && all_hunks_present {
+                return staging::stage_file(repo, file_path);
+            }
+
+            // Otherwise collect all selected line numbers across hunks
+            // and make a single stage_lines call (avoids overwriting index per-hunk).
+            let mut selected = HashSet::new();
+            if let Some(fi) = file_info {
+                for &hunk_idx in &resolved.hunk_indices {
                     if let Some(hunk) = fi.hunks.get(hunk_idx) {
-                        let lines = staging::stage_hunk(repo, file_path, hunk)?;
-                        total_lines += lines;
+                        for line in &hunk.lines {
+                            if matches!(
+                                line.origin,
+                                crate::models::LineOrigin::Addition
+                                    | crate::models::LineOrigin::Context
+                            ) {
+                                selected.insert(line.line_number);
+                            }
+                        }
                     }
                 }
             }
-            Ok(total_lines)
+            staging::stage_lines(repo, file_path, &selected)
         }
 
-        // Binary, Added, or Modified file-level: stage the whole file
-        (_, _, _, true)
-        | (FileStatus::Added, _, _, _)
-        | (FileStatus::Modified, false, false, _) => staging::stage_file(repo, file_path),
+        // Binary or Added file-level: stage the whole file
+        (_, _, _, true) | (FileStatus::Added, _, _, _) => staging::stage_file(repo, file_path),
     }
+}
+
+/// Check if a file requires whole-file handling (binary, added, deleted, renamed).
+/// These file types naturally have empty `hunk_indices` and should not be skipped.
+fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) -> bool {
+    scan.files.iter().any(|f| {
+        f.path == file_path
+            && (f.is_binary
+                || matches!(
+                    f.status,
+                    FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
+                ))
+    })
 }
 
 /// Estimate lines staged for dry-run reporting.
