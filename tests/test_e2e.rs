@@ -105,3 +105,63 @@ fn stage_unstage_is_idempotent() {
         "hunk count should be the same after stage+unstage round-trip"
     );
 }
+
+#[test]
+fn scan_stage_commit_untracked_file_workflow() {
+    let (dir, repo) = setup_repo();
+    commit_file(
+        &repo,
+        dir.path(),
+        "existing.rs",
+        "fn existing() {}\n",
+        "initial",
+    );
+
+    // Write a brand-new untracked file
+    write_file(
+        dir.path(),
+        "new_feature.rs",
+        "fn new_feature() {\n    println!(\"hello\");\n}\n",
+    );
+
+    // 1. Scan — should detect the untracked file as Added
+    let scan_output = run_agstage(dir.path(), &["scan"]).success();
+    let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
+    let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
+
+    let files = scan_json["files"].as_array().unwrap();
+    let new_file = files
+        .iter()
+        .find(|f| f["path"] == "new_feature.rs")
+        .expect("untracked file should appear in scan");
+    assert_eq!(new_file["status"]["type"], "Added");
+
+    // 2. Stage by path
+    let stage_output = run_agstage(dir.path(), &["stage", "new_feature.rs"]).success();
+    let stage_stdout = String::from_utf8(stage_output.get_output().stdout.clone()).unwrap();
+    let stage_json: serde_json::Value = serde_json::from_str(&stage_stdout).unwrap();
+    assert_eq!(stage_json["status"], "Ok");
+
+    // 3. Status — verify staged as Added
+    let status_output = run_agstage(dir.path(), &["status"]).success();
+    let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
+
+    let staged = status_json["staged_files"].as_array().unwrap();
+    let staged_file = staged
+        .iter()
+        .find(|f| f["path"] == "new_feature.rs")
+        .expect("new_feature.rs should be staged");
+    assert_eq!(staged_file["status"]["type"], "Added");
+
+    // 4. Commit
+    let commit_output =
+        run_agstage(dir.path(), &["commit", "-m", "feat: add new_feature"]).success();
+    let commit_stdout = String::from_utf8(commit_output.get_output().stdout.clone()).unwrap();
+    let commit_json: serde_json::Value = serde_json::from_str(&commit_stdout).unwrap();
+    assert!(commit_json["commit_hash"].is_string());
+    assert_eq!(commit_json["message"], "feat: add new_feature");
+
+    // 5. Scan — should show no changes (exit code 1)
+    run_agstage(dir.path(), &["scan"]).code(1);
+}

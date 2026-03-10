@@ -19,6 +19,9 @@ pub fn diff_index_to_workdir(
 ) -> Result<Diff<'_>, AgstageError> {
     let mut opts = DiffOptions::new();
     opts.context_lines(context_lines);
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+    opts.show_untracked_content(true);
     let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
     Ok(diff)
 }
@@ -682,6 +685,85 @@ mod tests {
         assert!(
             wide_total_lines >= narrow_total_lines,
             "wider context ({wide_total_lines}) should have >= lines than narrow ({narrow_total_lines})"
+        );
+    }
+
+    #[test]
+    fn untracked_file_appears_in_index_to_workdir_diff() {
+        let (dir, repo) = setup_repo();
+        commit_file(&repo, dir.path(), "existing.rs", "fn a() {}\n", "initial");
+
+        // Write a new file but do NOT add it to the index
+        write_file(dir.path(), "brand_new.rs", "fn brand_new() {}\n");
+
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        let file = result
+            .files
+            .iter()
+            .find(|f| f.path == "brand_new.rs")
+            .expect("untracked file should appear in scan");
+        assert!(
+            matches!(file.status, FileStatus::Added),
+            "untracked file should be Added, got {:?}",
+            file.status
+        );
+        assert!(!file.is_binary);
+        assert_eq!(
+            file.file_checksum.len(),
+            64,
+            "checksum should be 64 hex chars"
+        );
+        assert!(
+            !file.hunks.is_empty(),
+            "untracked file should have hunks with all lines as additions"
+        );
+    }
+
+    #[test]
+    fn gitignored_untracked_file_not_in_scan() {
+        let (dir, repo) = setup_repo();
+        commit_file(&repo, dir.path(), ".gitignore", "*.log\n", "add gitignore");
+
+        // Write an ignored file and a non-ignored file
+        write_file(dir.path(), "debug.log", "some log data\n");
+        write_file(dir.path(), "new_code.rs", "fn new() {}\n");
+
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        let paths: Vec<&str> = result.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(
+            paths.contains(&"new_code.rs"),
+            "non-ignored file should appear: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"debug.log"),
+            "gitignored file should NOT appear: {paths:?}"
+        );
+    }
+
+    #[test]
+    fn untracked_files_in_subdirectory_detected() {
+        let (dir, repo) = setup_repo();
+        commit_file(&repo, dir.path(), "root.rs", "fn root() {}\n", "initial");
+
+        // Write untracked files in a subdirectory
+        write_file(dir.path(), "subdir/file_a.rs", "fn a() {}\n");
+        write_file(dir.path(), "subdir/file_b.rs", "fn b() {}\n");
+
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        let paths: Vec<&str> = result.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(
+            paths.contains(&"subdir/file_a.rs"),
+            "subdir/file_a.rs should appear: {paths:?}"
+        );
+        assert!(
+            paths.contains(&"subdir/file_b.rs"),
+            "subdir/file_b.rs should appear: {paths:?}"
         );
     }
 }

@@ -48,7 +48,7 @@ agstage v2 uses flat positional arguments with auto-detection instead of explici
 
 ### agstage scan
 
-Discover all unstaged changes in the working tree.
+Discover all unstaged changes in the working tree, including untracked (new) files. Untracked files appear with `status: Added`. Files matched by `.gitignore` are excluded.
 
 **Syntax**:
 ```

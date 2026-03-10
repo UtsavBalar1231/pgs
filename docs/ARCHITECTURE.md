@@ -189,6 +189,7 @@ git/repo.rs -- open repository
   |
   v
 git/diff.rs -- diff_index_to_workdir() via git2::DiffOptions
+               (include_untracked + recurse_untracked_dirs + show_untracked_content)
   |
   v
 git/diff.rs -- build_scan_result(): iterate deltas, extract hunks,
@@ -385,7 +386,7 @@ This is the most important architectural decision:
 
 | Command | Diff Base | Reason |
 |---------|-----------|--------|
-| `scan` | **Index --> Workdir** | Shows unstaged changes only; already-staged content is excluded |
+| `scan` | **Index --> Workdir** | Shows unstaged changes only; already-staged content is excluded. Includes untracked files (via `include_untracked` + `show_untracked_content` + `recurse_untracked_dirs`); `.gitignore` is respected. |
 | `status` | **HEAD --> Index** | Shows what is staged for commit |
 | `stage` | **Index --> Workdir** | Stages from workdir into index |
 | `unstage` | **HEAD --> Index** | Unstages from index back toward HEAD |

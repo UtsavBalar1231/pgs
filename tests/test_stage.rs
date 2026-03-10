@@ -180,3 +180,33 @@ fn stage_exclude_hunk() {
 
     assert_eq!(json["status"], "Ok");
 }
+
+#[test]
+fn stage_untracked_file_by_path() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "existing.txt", "hello\n", "initial");
+
+    // Write a brand-new untracked file
+    write_file(dir.path(), "new_file.txt", "brand new content\n");
+
+    // Stage it
+    let output = run_agstage(dir.path(), &["stage", "new_file.txt"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "Ok");
+    let succeeded = json["succeeded"].as_array().unwrap();
+    assert!(!succeeded.is_empty(), "expected succeeded items");
+
+    // Verify status shows the file as staged Added
+    let status_output = run_agstage(dir.path(), &["status"]).success();
+    let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
+
+    let staged = status_json["staged_files"].as_array().unwrap();
+    let staged_file = staged
+        .iter()
+        .find(|f| f["path"] == "new_file.txt")
+        .expect("new_file.txt should be staged");
+    assert_eq!(staged_file["status"]["type"], "Added");
+}

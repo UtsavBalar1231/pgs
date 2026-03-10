@@ -130,3 +130,40 @@ fn scan_binary_file_is_flagged() {
     let hunks = files[0]["hunks"].as_array().unwrap();
     assert!(hunks.is_empty(), "binary files should have no hunks");
 }
+
+#[test]
+fn scan_untracked_file_detected_as_added() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "existing.txt", "hello\n", "initial");
+
+    // Write a brand-new file without adding to index
+    write_file(dir.path(), "new_file.txt", "brand new content\n");
+
+    // Compact scan
+    let output = run_agstage(dir.path(), &["scan"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    let new_file = files
+        .iter()
+        .find(|f| f["path"] == "new_file.txt")
+        .expect("untracked file should appear in scan");
+    assert_eq!(new_file["status"]["type"], "Added");
+    assert_eq!(new_file["is_binary"], false);
+
+    // Full scan should include hunks with lines
+    let full_output = run_agstage(dir.path(), &["scan", "--full"]).success();
+    let full_stdout = String::from_utf8(full_output.get_output().stdout.clone()).unwrap();
+    let full_json: serde_json::Value = serde_json::from_str(&full_stdout).unwrap();
+
+    let full_files = full_json["files"].as_array().unwrap();
+    let full_new = full_files
+        .iter()
+        .find(|f| f["path"] == "new_file.txt")
+        .expect("untracked file in full scan");
+    let hunks = full_new["hunks"].as_array().unwrap();
+    assert!(!hunks.is_empty(), "untracked file should have hunks");
+    let lines = hunks[0]["lines"].as_array().unwrap();
+    assert!(!lines.is_empty(), "hunks should have lines in full output");
+}
