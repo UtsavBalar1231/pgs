@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Programmatic git staging CLI for AI agents. JSON in/out, no interactive UI.
+Programmatic git staging CLI for AI agents. Text-default output with explicit JSON opt-in, no interactive UI.
 
 ## Build & Test
 
@@ -54,7 +54,7 @@ src/
     backup.rs      — create_backup(), restore_backup()
 ```
 
-main.rs is thin: parse args, call cmd::run(), print result or error JSON, set exit code.
+main.rs is thin: parse args, call cmd::run(), render typed result or error output, set exit code.
 All logic in lib.rs and modules so integration tests use the library crate.
 
 **Index-direct staging only**: All staging/unstaging uses direct blob construction via `similar::TextDiff` line diffing and `index.add_frombuffer()`. No patch-apply strategy.
@@ -66,7 +66,7 @@ All logic in lib.rs and modules so integration tests use the library crate.
 **Selection auto-detection**: Positional args are auto-detected as file path, 12-hex hunk ID, or path:range. No `--file`/`--hunk`/`--lines` flags.
 
 Read @docs/ARCHITECTURE.md before modifying module boundaries.
-Read @docs/CLI_SPEC.md before adding/changing any CLI flag or JSON output field.
+Read @docs/CLI_SPEC.md before adding/changing any CLI flag or output contract field.
 
 ## Anti-Hallucination Rules (MANDATORY)
 
@@ -102,6 +102,25 @@ For every new function:
 - `write_file(repo, path, content)` -> write file to working directory
 - `commit_file(repo, path, content, message)` -> write, add, commit
 - `run_agstage(repo, args)` -> run the CLI binary with `--repo` pointed at the test repo
+
+## Output Contract
+
+Default mode is text with marker records:
+
+`@@agstage:v1 <kind> <minified-json-payload>`
+
+JSON is opt-in via `--json` or `--output json`.
+
+Parse and runtime failures share the same envelope fields:
+
+- `version`
+- `command`
+- `phase`
+- `code`
+- `message`
+- `exit_code`
+
+Parse failures use `command: "cli"` with `phase: "parse"`; runtime failures use resolved command + `phase: "runtime"`.
 
 ### E2E CLI tests:
 `tests/test_e2e_cli.rs` uses `assert_cmd` for binary-level testing. Library-level integration tests are in `tests/test_*.rs`.
