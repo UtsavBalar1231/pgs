@@ -16,6 +16,8 @@ fn commit_staged_changes() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
+    assert_eq!(json["version"], "v1");
+    assert_eq!(json["command"], "commit");
     assert!(
         json["commit_hash"].is_string(),
         "expected commit_hash string"
@@ -25,7 +27,9 @@ fn commit_staged_changes() {
 
     assert_eq!(json["message"], "feat: add line2");
     assert!(json["author"].as_str().unwrap().contains("Test"));
-    assert!(json["files_changed"].as_u64().unwrap() > 0);
+    assert_eq!(json["files_changed"], 1);
+    assert_eq!(json["insertions"], 1);
+    assert_eq!(json["deletions"], 0);
 }
 
 #[test]

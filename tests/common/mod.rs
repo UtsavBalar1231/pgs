@@ -1,4 +1,4 @@
-#![allow(deprecated)]
+#![allow(deprecated, dead_code)]
 
 use std::fs;
 use std::path::Path;
@@ -58,6 +58,16 @@ pub fn commit_file(repo: &Repository, dir: &Path, rel_path: &str, content: &str,
 
 /// Build and run agstage with `--repo` pointed at the test repo.
 pub fn run_agstage(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("agstage")
+        .unwrap()
+        .arg("--json")
+        .arg("--repo")
+        .arg(dir.to_str().unwrap())
+        .args(args)
+        .assert()
+}
+
+pub fn run_agstage_raw(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     Command::cargo_bin("agstage")
         .unwrap()
         .arg("--repo")

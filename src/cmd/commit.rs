@@ -3,6 +3,7 @@ use clap::Args;
 use crate::error::AgstageError;
 use crate::git::repo;
 use crate::models::CommitResult;
+use crate::output::view::{CommandOutput, CommitOutput};
 
 #[derive(Args)]
 pub struct CommitArgs {
@@ -13,7 +14,7 @@ pub struct CommitArgs {
 
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
-pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<(), AgstageError> {
+pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutput, AgstageError> {
     let repository = repo::open(repo_path)?;
     let sig = repository.signature()?;
 
@@ -50,7 +51,5 @@ pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<(), AgstageE
         deletions: stats.deletions() as u32,
     };
 
-    let json = serde_json::to_string_pretty(&result)?;
-    println!("{json}");
-    Ok(())
+    Ok(CommitOutput::from(result).into())
 }

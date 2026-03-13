@@ -1,0 +1,551 @@
+use serde::Serialize;
+
+use crate::models::{
+    CommitResult, CompactFileInfo, CompactHunkInfo, CompactScanResult, DiffLineInfo, FileInfo,
+    FileStatus, HunkInfo, LineOrigin, OperationStatus, ScanResult, ScanSummary, StagedFileInfo,
+    StatusReport, StatusSummary,
+};
+
+pub const OUTPUT_VERSION: &str = "v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandOutput {
+    Scan(ScanOutput),
+    Operation(OperationOutput),
+    Status(StatusOutput),
+    Commit(CommitOutput),
+}
+
+impl From<ScanOutput> for CommandOutput {
+    fn from(output: ScanOutput) -> Self {
+        Self::Scan(output)
+    }
+}
+
+impl From<OperationOutput> for CommandOutput {
+    fn from(output: OperationOutput) -> Self {
+        Self::Operation(output)
+    }
+}
+
+impl From<StatusOutput> for CommandOutput {
+    fn from(output: StatusOutput) -> Self {
+        Self::Status(output)
+    }
+}
+
+impl From<CommitOutput> for CommandOutput {
+    fn from(output: CommitOutput) -> Self {
+        Self::Commit(output)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputCommand {
+    Scan,
+    Stage,
+    Unstage,
+    Status,
+    Commit,
+}
+
+impl OutputCommand {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scan => "scan",
+            Self::Stage => "stage",
+            Self::Unstage => "unstage",
+            Self::Status => "status",
+            Self::Commit => "commit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorPhase {
+    Parse,
+    Runtime,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CliErrorOutput {
+    pub version: &'static str,
+    pub command: &'static str,
+    pub phase: ErrorPhase,
+    pub code: &'static str,
+    pub message: String,
+    pub exit_code: i32,
+}
+
+impl CliErrorOutput {
+    pub const fn parse(code: &'static str, message: String, exit_code: i32) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: "cli",
+            phase: ErrorPhase::Parse,
+            code,
+            message,
+            exit_code,
+        }
+    }
+
+    pub const fn runtime(
+        command: OutputCommand,
+        code: &'static str,
+        message: String,
+        exit_code: i32,
+    ) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: command.as_str(),
+            phase: ErrorPhase::Runtime,
+            code,
+            message,
+            exit_code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CommitOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub commit_hash: String,
+    pub message: String,
+    pub author: String,
+    pub files_changed: usize,
+    pub insertions: u32,
+    pub deletions: u32,
+}
+
+impl From<CommitResult> for CommitOutput {
+    fn from(result: CommitResult) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::Commit,
+            commit_hash: result.commit_hash,
+            message: result.message,
+            author: result.author,
+            files_changed: result.files_changed,
+            insertions: result.insertions,
+            deletions: result.deletions,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStatusView {
+    Ok,
+    DryRun,
+}
+
+impl From<OperationStatus> for OperationStatusView {
+    fn from(status: OperationStatus) -> Self {
+        match status {
+            OperationStatus::Ok => Self::Ok,
+            OperationStatus::DryRun => Self::DryRun,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct OperationOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub status: OperationStatusView,
+    pub items: Vec<OperationItemView>,
+    pub warnings: Vec<String>,
+    pub backup_id: Option<String>,
+}
+
+impl OperationOutput {
+    pub fn new(
+        command: OutputCommand,
+        status: OperationStatus,
+        items: Vec<OperationItemView>,
+        warnings: Vec<String>,
+        backup_id: Option<String>,
+    ) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command,
+            status: status.into(),
+            items,
+            warnings,
+            backup_id,
+        }
+    }
+
+    pub fn stage(
+        status: OperationStatus,
+        items: Vec<OperationItemView>,
+        warnings: Vec<String>,
+        backup_id: Option<String>,
+    ) -> Self {
+        Self::new(OutputCommand::Stage, status, items, warnings, backup_id)
+    }
+
+    pub fn unstage(
+        status: OperationStatus,
+        items: Vec<OperationItemView>,
+        warnings: Vec<String>,
+        backup_id: Option<String>,
+    ) -> Self {
+        Self::new(OutputCommand::Unstage, status, items, warnings, backup_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct OperationItemView {
+    pub selection: String,
+    pub lines_affected: u32,
+}
+
+impl OperationItemView {
+    pub const fn new(selection: String, lines_affected: u32) -> Self {
+        Self {
+            selection,
+            lines_affected,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanDetail {
+    Compact,
+    Full,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScanOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub detail: ScanDetail,
+    pub files: Vec<ScanFileView>,
+    pub summary: ScanSummaryView,
+}
+
+impl ScanOutput {
+    pub fn compact(result: &ScanResult) -> Self {
+        let CompactScanResult { files, summary } = CompactScanResult::from(result);
+
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::Scan,
+            detail: ScanDetail::Compact,
+            files: files.into_iter().map(ScanFileView::from_compact).collect(),
+            summary: summary.into(),
+        }
+    }
+
+    pub fn full(result: ScanResult) -> Self {
+        let ScanResult { files, summary } = result;
+
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::Scan,
+            detail: ScanDetail::Full,
+            files: files.into_iter().map(ScanFileView::from_full).collect(),
+            summary: summary.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScanFileView {
+    pub path: String,
+    pub status: FileStatusView,
+    pub binary: bool,
+    pub hunks_count: usize,
+    pub lines_added: u32,
+    pub lines_deleted: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    pub hunks: Vec<ScanHunkView>,
+}
+
+impl ScanFileView {
+    fn from_compact(file: CompactFileInfo) -> Self {
+        let CompactFileInfo {
+            path,
+            status,
+            is_binary,
+            hunks,
+            hunks_count,
+            lines_added,
+            lines_deleted,
+        } = file;
+
+        Self {
+            path,
+            status: status.into(),
+            binary: is_binary,
+            hunks_count,
+            lines_added,
+            lines_deleted,
+            checksum: None,
+            hunks: hunks.into_iter().map(ScanHunkView::from_compact).collect(),
+        }
+    }
+
+    fn from_full(file: FileInfo) -> Self {
+        let FileInfo {
+            path,
+            status,
+            file_checksum,
+            is_binary,
+            hunks,
+        } = file;
+
+        let hunks: Vec<ScanHunkView> = hunks.into_iter().map(ScanHunkView::from_full).collect();
+        let (lines_added, lines_deleted) = count_hunk_totals(&hunks);
+        let hunks_count = hunks.len();
+
+        Self {
+            path,
+            status: status.into(),
+            binary: is_binary,
+            hunks_count,
+            lines_added,
+            lines_deleted,
+            checksum: Some(file_checksum),
+            hunks,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScanHunkView {
+    pub id: String,
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    pub header: String,
+    pub additions: u32,
+    pub deletions: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<ScanLineView>>,
+}
+
+impl ScanHunkView {
+    fn from_compact(hunk: CompactHunkInfo) -> Self {
+        let CompactHunkInfo {
+            hunk_id,
+            header,
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+            additions,
+            deletions,
+        } = hunk;
+
+        Self {
+            id: hunk_id,
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+            header,
+            additions,
+            deletions,
+            checksum: None,
+            lines: None,
+        }
+    }
+
+    fn from_full(hunk: HunkInfo) -> Self {
+        let HunkInfo {
+            hunk_id,
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+            header,
+            lines,
+            checksum,
+        } = hunk;
+
+        let (additions, deletions) = count_lines(&lines);
+
+        Self {
+            id: hunk_id,
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+            header,
+            additions,
+            deletions,
+            checksum: Some(checksum),
+            lines: Some(lines.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScanLineView {
+    pub line_number: u32,
+    pub origin: LineOriginView,
+    pub content: String,
+}
+
+impl From<DiffLineInfo> for ScanLineView {
+    fn from(line: DiffLineInfo) -> Self {
+        Self {
+            line_number: line.line_number,
+            origin: line.origin.into(),
+            content: line.content,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub enum LineOriginView {
+    Context,
+    Addition,
+    Deletion,
+}
+
+impl From<LineOrigin> for LineOriginView {
+    fn from(origin: LineOrigin) -> Self {
+        match origin {
+            LineOrigin::Context => Self::Context,
+            LineOrigin::Addition => Self::Addition,
+            LineOrigin::Deletion => Self::Deletion,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScanSummaryView {
+    pub total_files: usize,
+    pub total_hunks: usize,
+    pub added: usize,
+    pub modified: usize,
+    pub deleted: usize,
+    pub renamed: usize,
+    pub binary: usize,
+}
+
+impl From<ScanSummary> for ScanSummaryView {
+    fn from(summary: ScanSummary) -> Self {
+        Self {
+            total_files: summary.total_files,
+            total_hunks: summary.total_hunks,
+            added: summary.added,
+            modified: summary.modified,
+            deleted: summary.deleted,
+            renamed: summary.renamed,
+            binary: summary.binary,
+        }
+    }
+}
+
+fn count_hunk_totals(hunks: &[ScanHunkView]) -> (u32, u32) {
+    let lines_added = hunks.iter().map(|hunk| hunk.additions).sum();
+    let lines_deleted = hunks.iter().map(|hunk| hunk.deletions).sum();
+    (lines_added, lines_deleted)
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn count_lines(lines: &[DiffLineInfo]) -> (u32, u32) {
+    let additions = lines
+        .iter()
+        .filter(|line| line.origin == LineOrigin::Addition)
+        .count() as u32;
+    let deletions = lines
+        .iter()
+        .filter(|line| line.origin == LineOrigin::Deletion)
+        .count() as u32;
+
+    (additions, deletions)
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StatusOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub files: Vec<StatusFileView>,
+    pub summary: StatusSummaryView,
+}
+
+impl From<StatusReport> for StatusOutput {
+    fn from(report: StatusReport) -> Self {
+        let StatusReport {
+            staged_files,
+            summary,
+        } = report;
+
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::Status,
+            files: staged_files.into_iter().map(Into::into).collect(),
+            summary: summary.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StatusFileView {
+    pub path: String,
+    pub status: FileStatusView,
+    pub lines_added: u32,
+    pub lines_deleted: u32,
+}
+
+impl From<StagedFileInfo> for StatusFileView {
+    fn from(file: StagedFileInfo) -> Self {
+        Self {
+            path: file.path,
+            status: file.status.into(),
+            lines_added: file.lines_added,
+            lines_deleted: file.lines_deleted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+pub enum FileStatusView {
+    Added,
+    Modified,
+    Deleted,
+    Renamed { old_path: String },
+}
+
+impl From<FileStatus> for FileStatusView {
+    fn from(status: FileStatus) -> Self {
+        match status {
+            FileStatus::Added => Self::Added,
+            FileStatus::Modified => Self::Modified,
+            FileStatus::Deleted => Self::Deleted,
+            FileStatus::Renamed { old_path } => Self::Renamed { old_path },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
+pub struct StatusSummaryView {
+    pub total_files: usize,
+    pub total_additions: u32,
+    pub total_deletions: u32,
+}
+
+impl From<StatusSummary> for StatusSummaryView {
+    fn from(summary: StatusSummary) -> Self {
+        Self {
+            total_files: summary.total_files,
+            total_additions: summary.total_additions,
+            total_deletions: summary.total_deletions,
+        }
+    }
+}

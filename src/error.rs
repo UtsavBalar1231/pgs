@@ -114,6 +114,27 @@ pub enum AgstageError {
 }
 
 impl AgstageError {
+    /// Stable machine-readable error code for output rendering.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::NoChanges => "no_changes",
+            Self::SelectionEmpty => "selection_empty",
+            Self::InvalidSelection { .. } => "invalid_selection",
+            Self::InvalidLineRange { .. } => "invalid_line_range",
+            Self::UnknownHunkId { .. } => "unknown_hunk_id",
+            Self::FileNotInDiff { .. } => "file_not_in_diff",
+            Self::BinaryFileGranular { .. } => "binary_file_granular",
+            Self::GranularOnWholeFile { .. } => "granular_on_whole_file",
+            Self::StaleScan { .. } => "stale_scan",
+            Self::IndexLocked => "index_locked",
+            Self::StagingFailed { .. } => "staging_failed",
+            Self::Git(_) => "git_error",
+            Self::Io { .. } => "io_error",
+            Self::Json(_) => "json_error",
+            Self::Internal(_) => "internal_error",
+        }
+    }
+
     /// Map this error to the appropriate CLI exit code.
     pub const fn exit_code(&self) -> i32 {
         match self {
@@ -226,5 +247,13 @@ mod tests {
         assert_eq!(err.exit_code(), 2);
         let msg = err.to_string();
         assert!(msg.contains("new_file.rs"), "message was: {msg}");
+    }
+
+    #[test]
+    fn stale_scan_maps_to_stable_code() {
+        let err = AgstageError::StaleScan {
+            path: "src/main.rs".into(),
+        };
+        assert_eq!(err.code(), "stale_scan");
     }
 }

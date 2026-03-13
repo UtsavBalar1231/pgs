@@ -5,9 +5,9 @@ use clap::Args;
 use crate::error::AgstageError;
 use crate::git::{diff, repo, staging};
 use crate::models::{
-    FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, StageResult, StagedItem,
-    format_selection,
+    FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
 };
+use crate::output::view::{CommandOutput, OperationItemView, OperationOutput};
 use crate::safety::{backup, lock};
 use crate::selection::{parse, resolve};
 
@@ -26,7 +26,11 @@ pub struct StageArgs {
 }
 
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
-pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result<(), AgstageError> {
+pub fn execute(
+    repo_path: Option<&str>,
+    context: u32,
+    args: StageArgs,
+) -> Result<CommandOutput, AgstageError> {
     // 1. Open repo
     let repository = repo::open(repo_path)?;
 
@@ -97,7 +101,12 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
             .retain(|&idx| !exclusion_set.contains(&(resolved.file_path.clone(), idx)));
     }
 
-    // 14. Dedup: merge selections by file_path
+    let reportable_items: Vec<(SelectionSpec, ResolvedSelection)> = spec_resolved
+        .iter()
+        .filter(|(_, resolved)| is_reportable_selection(&scan, resolved))
+        .cloned()
+        .collect();
+
     let mut merged: HashMap<String, (SelectionSpec, ResolvedSelection)> = HashMap::new();
     for (spec, resolved) in spec_resolved {
         let entry = merged
@@ -123,7 +132,6 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
 
     let work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
 
-    // 15. Guard: no resolved work remains
     let has_work = work_items
         .iter()
         .any(|(_, r)| !r.hunk_indices.is_empty() || is_whole_file_operation(&scan, &r.file_path));
@@ -131,45 +139,24 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
         return Err(AgstageError::SelectionEmpty);
     }
 
-    // 16. Validate freshness for each unique file_path
     for (_, resolved) in &work_items {
         resolve::validate_freshness(&repository, &scan, &resolved.file_path)?;
     }
 
-    // 17. Dry-run: build result without modifying index
     if args.dry_run {
-        let succeeded: Vec<StagedItem> = work_items
+        let items: Vec<OperationItemView> = reportable_items
             .iter()
-            .filter(|(_, resolved)| {
-                !resolved.hunk_indices.is_empty()
-                    || is_whole_file_operation(&scan, &resolved.file_path)
-            })
             .map(|(spec, resolved)| {
-                let lines = estimate_lines(&scan, resolved);
-                StagedItem {
-                    selection: format_selection(spec),
-                    lines_staged: lines,
-                }
+                operation_item(format_selection(spec), estimate_lines(&scan, resolved))
             })
             .collect();
 
-        let result = StageResult {
-            status: OperationStatus::DryRun,
-            succeeded,
-            failed: vec![],
-            warnings: vec![],
-            backup_id: String::new(),
-        };
-        let json = serde_json::to_string_pretty(&result)?;
-        println!("{json}");
-        return Ok(());
+        return Ok(OperationOutput::stage(OperationStatus::DryRun, items, vec![], None).into());
     }
 
-    // 18. Create backup
     let backup_info = backup::create_backup(&repository)?;
 
-    // 19. Execute staging for each resolved selection
-    let mut succeeded: Vec<StagedItem> = Vec::new();
+    let mut actual_lines_by_file: HashMap<String, u32> = HashMap::new();
 
     for (spec, resolved) in &work_items {
         // Skip work items whose hunks were fully excluded (but not whole-file ops)
@@ -198,11 +185,8 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
         );
 
         match stage_result {
-            Ok(lines_staged) => {
-                succeeded.push(StagedItem {
-                    selection: format_selection(spec),
-                    lines_staged,
-                });
+            Ok(lines_affected) => {
+                actual_lines_by_file.insert(file_path.clone(), lines_affected);
             }
             Err(e) => {
                 // Rollback on failure
@@ -212,17 +196,43 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: StageArgs) -> Result
         }
     }
 
-    // 20-21. Build and output result
-    let result = StageResult {
-        status: OperationStatus::Ok,
-        succeeded,
-        failed: vec![],
-        warnings: vec![],
-        backup_id: backup_info.backup_id,
-    };
-    let json = serde_json::to_string_pretty(&result)?;
-    println!("{json}");
-    Ok(())
+    let mut selection_count_by_file: HashMap<String, usize> = HashMap::new();
+    for (_spec, resolved) in &reportable_items {
+        *selection_count_by_file
+            .entry(resolved.file_path.clone())
+            .or_insert(0) += 1;
+    }
+
+    let items: Vec<OperationItemView> = reportable_items
+        .iter()
+        .map(|(spec, resolved)| {
+            let file_selection_count = selection_count_by_file
+                .get(&resolved.file_path)
+                .copied()
+                .unwrap_or(0);
+            let lines_affected = if file_selection_count == 1 {
+                actual_lines_by_file
+                    .get(&resolved.file_path)
+                    .copied()
+                    .unwrap_or_else(|| estimate_lines(&scan, resolved))
+            } else {
+                estimate_lines(&scan, resolved)
+            };
+            operation_item(format_selection(spec), lines_affected)
+        })
+        .collect();
+
+    Ok(OperationOutput::stage(
+        OperationStatus::Ok,
+        items,
+        vec![],
+        Some(backup_info.backup_id),
+    )
+    .into())
+}
+
+const fn operation_item(selection: String, lines_affected: u32) -> OperationItemView {
+    OperationItemView::new(selection, lines_affected)
 }
 
 /// Execute staging for a single resolved selection based on file status and selection type.
@@ -315,6 +325,10 @@ fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) ->
                     FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
                 ))
     })
+}
+
+fn is_reportable_selection(scan: &crate::models::ScanResult, resolved: &ResolvedSelection) -> bool {
+    !resolved.hunk_indices.is_empty() || is_whole_file_operation(scan, &resolved.file_path)
 }
 
 /// Estimate lines staged for dry-run reporting.

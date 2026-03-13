@@ -1,6 +1,14 @@
 mod common;
 
-use common::{commit_file, run_agstage, setup_repo, write_file};
+use common::{commit_file, run_agstage, run_agstage_raw, setup_repo, write_file};
+
+fn parse_marker(line: &str) -> (&str, serde_json::Value) {
+    let mut parts = line.splitn(3, ' ');
+    assert_eq!(parts.next(), Some("@@agstage:v1"));
+    let kind = parts.next().unwrap();
+    let payload = serde_json::from_str(parts.next().unwrap()).unwrap();
+    (kind, payload)
+}
 
 #[test]
 fn scan_stage_status_commit_workflow() {
@@ -32,16 +40,16 @@ fn scan_stage_status_commit_workflow() {
     let stage_output = run_agstage(dir.path(), &["stage", "feature.rs"]).success();
     let stage_stdout = String::from_utf8(stage_output.get_output().stdout.clone()).unwrap();
     let stage_json: serde_json::Value = serde_json::from_str(&stage_stdout).unwrap();
-    assert_eq!(stage_json["status"], "Ok");
+    assert_eq!(stage_json["status"], "ok");
 
     // 3. Status — verify staged
     let status_output = run_agstage(dir.path(), &["status"]).success();
     let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
     let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
 
-    let staged = status_json["staged_files"].as_array().unwrap();
-    assert_eq!(staged.len(), 1);
-    assert_eq!(staged[0]["path"], "feature.rs");
+    let files = status_json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], "feature.rs");
 
     // 4. Commit — create commit
     let commit_output = run_agstage(dir.path(), &["commit", "-m", "feat: add println"]).success();
@@ -54,9 +62,9 @@ fn scan_stage_status_commit_workflow() {
     let final_status = run_agstage(dir.path(), &["status"]).success();
     let final_stdout = String::from_utf8(final_status.get_output().stdout.clone()).unwrap();
     let final_json: serde_json::Value = serde_json::from_str(&final_stdout).unwrap();
-    let final_staged = final_json["staged_files"].as_array().unwrap();
+    let final_files = final_json["files"].as_array().unwrap();
     assert!(
-        final_staged.is_empty(),
+        final_files.is_empty(),
         "after commit, nothing should be staged"
     );
 
@@ -68,6 +76,76 @@ fn scan_stage_status_commit_workflow() {
         final_code == 0 || final_code == 1,
         "expected exit 0 or 1 after full commit, got {final_code}"
     );
+}
+
+#[test]
+fn text_mode_scan_stage_status_commit_workflow() {
+    let (dir, repo) = setup_repo();
+    commit_file(
+        &repo,
+        dir.path(),
+        "feature.rs",
+        "fn main() {\n}\n",
+        "initial feature",
+    );
+    write_file(
+        dir.path(),
+        "feature.rs",
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    );
+
+    let scan_output = run_agstage_raw(dir.path(), &["scan"]).success();
+    let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
+    let scan_lines: Vec<&str> = scan_stdout.lines().collect();
+    let (scan_begin_kind, scan_begin_payload) = parse_marker(scan_lines[0]);
+    assert_eq!(scan_begin_kind, "scan.begin");
+    assert_eq!(scan_begin_payload["command"], "scan");
+    let (scan_end_kind, scan_end_payload) = parse_marker(scan_lines[scan_lines.len() - 1]);
+    assert_eq!(scan_end_kind, "scan.end");
+    assert_eq!(scan_end_payload["command"], "scan");
+
+    let stage_output = run_agstage_raw(dir.path(), &["stage", "feature.rs"]).success();
+    let stage_stdout = String::from_utf8(stage_output.get_output().stdout.clone()).unwrap();
+    let stage_lines: Vec<&str> = stage_stdout.lines().collect();
+    let (stage_begin_kind, stage_begin_payload) = parse_marker(stage_lines[0]);
+    assert_eq!(stage_begin_kind, "stage.begin");
+    assert_eq!(stage_begin_payload["command"], "stage");
+    assert_eq!(stage_begin_payload["status"], "ok");
+
+    let status_output = run_agstage_raw(dir.path(), &["status"]).success();
+    let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let status_lines: Vec<&str> = status_stdout.lines().collect();
+    let (status_begin_kind, status_begin_payload) = parse_marker(status_lines[0]);
+    assert_eq!(status_begin_kind, "status.begin");
+    assert_eq!(status_begin_payload["command"], "status");
+    assert_eq!(status_begin_payload["items"], 1);
+
+    let commit_output =
+        run_agstage_raw(dir.path(), &["commit", "-m", "feat: add println"]).success();
+    let commit_stdout = String::from_utf8(commit_output.get_output().stdout.clone()).unwrap();
+    let commit_lines: Vec<&str> = commit_stdout.lines().collect();
+    assert_eq!(commit_lines.len(), 1);
+    let (commit_kind, commit_payload) = parse_marker(commit_lines[0]);
+    assert_eq!(commit_kind, "commit.result");
+    assert_eq!(commit_payload["command"], "commit");
+    assert_eq!(commit_payload["message"], "feat: add println");
+
+    let final_status = run_agstage_raw(dir.path(), &["status"]).success();
+    let final_stdout = String::from_utf8(final_status.get_output().stdout.clone()).unwrap();
+    let final_lines: Vec<&str> = final_stdout.lines().collect();
+    let (final_begin_kind, final_begin_payload) = parse_marker(final_lines[0]);
+    assert_eq!(final_begin_kind, "status.begin");
+    assert_eq!(final_begin_payload["items"], 0);
+
+    let final_scan = run_agstage_raw(dir.path(), &["scan"]).code(1);
+    let final_scan_stdout = String::from_utf8(final_scan.get_output().stdout.clone()).unwrap();
+    let final_scan_lines: Vec<&str> = final_scan_stdout.lines().collect();
+    let (error_kind, error_payload) = parse_marker(final_scan_lines[0]);
+    assert_eq!(error_kind, "error");
+    assert_eq!(error_payload["command"], "scan");
+    assert_eq!(error_payload["phase"], "runtime");
+    assert_eq!(error_payload["code"], "no_changes");
+    assert_eq!(error_payload["exit_code"], 1);
 }
 
 #[test]
@@ -140,15 +218,15 @@ fn scan_stage_commit_untracked_file_workflow() {
     let stage_output = run_agstage(dir.path(), &["stage", "new_feature.rs"]).success();
     let stage_stdout = String::from_utf8(stage_output.get_output().stdout.clone()).unwrap();
     let stage_json: serde_json::Value = serde_json::from_str(&stage_stdout).unwrap();
-    assert_eq!(stage_json["status"], "Ok");
+    assert_eq!(stage_json["status"], "ok");
 
     // 3. Status — verify staged as Added
     let status_output = run_agstage(dir.path(), &["status"]).success();
     let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
     let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
 
-    let staged = status_json["staged_files"].as_array().unwrap();
-    let staged_file = staged
+    let files = status_json["files"].as_array().unwrap();
+    let staged_file = files
         .iter()
         .find(|f| f["path"] == "new_feature.rs")
         .expect("new_feature.rs should be staged");

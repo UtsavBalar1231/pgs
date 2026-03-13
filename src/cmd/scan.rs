@@ -2,7 +2,7 @@ use clap::Args;
 
 use crate::error::AgstageError;
 use crate::git::{diff, repo};
-use crate::models::CompactScanResult;
+use crate::output::view::{CommandOutput, ScanOutput};
 
 #[derive(Args)]
 pub struct ScanArgs {
@@ -15,7 +15,11 @@ pub struct ScanArgs {
 }
 
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
-pub fn execute(repo_path: Option<&str>, context: u32, args: ScanArgs) -> Result<(), AgstageError> {
+pub fn execute(
+    repo_path: Option<&str>,
+    context: u32,
+    args: ScanArgs,
+) -> Result<CommandOutput, AgstageError> {
     let repository = repo::open(repo_path)?;
     let d = diff::diff_index_to_workdir(&repository, context)?;
 
@@ -31,13 +35,11 @@ pub fn execute(repo_path: Option<&str>, context: u32, args: ScanArgs) -> Result<
         return Err(AgstageError::NoChanges);
     }
 
-    let json = if args.full {
-        serde_json::to_string_pretty(&result)?
+    let output = if args.full {
+        ScanOutput::full(result)
     } else {
-        let compact = CompactScanResult::from(&result);
-        serde_json::to_string_pretty(&compact)?
+        ScanOutput::compact(&result)
     };
 
-    println!("{json}");
-    Ok(())
+    Ok(output.into())
 }

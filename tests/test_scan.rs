@@ -10,7 +10,7 @@ fn scan_empty_repo_returns_exit_code_1() {
 }
 
 #[test]
-fn scan_modified_file_returns_compact_json() {
+fn scan_modified_file_returns_compact_contract() {
     let (dir, repo) = setup_repo();
     commit_file(
         &repo,
@@ -25,7 +25,10 @@ fn scan_modified_file_returns_compact_json() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    // Compact format: has files array
+    assert_eq!(json["version"], "v1");
+    assert_eq!(json["command"], "scan");
+    assert_eq!(json["detail"], "compact");
+
     assert!(json["files"].is_array(), "expected files array");
     let files = json["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
@@ -33,24 +36,24 @@ fn scan_modified_file_returns_compact_json() {
     let file = &files[0];
     assert_eq!(file["path"], "hello.txt");
     assert_eq!(file["status"]["type"], "Modified");
-    assert_eq!(file["is_binary"], false);
+    assert_eq!(file["binary"], false);
+    assert!(file.get("is_binary").is_none());
+    assert_eq!(file["hunks_count"], 1);
+    assert!(file.get("checksum").is_none());
 
-    // Compact format should NOT have a "lines" field in hunks
     let hunks = file["hunks"].as_array().unwrap();
     assert!(!hunks.is_empty(), "expected at least one hunk");
     assert!(
         hunks[0].get("lines").is_none(),
         "compact format should not include lines field"
     );
+    assert!(hunks[0].get("checksum").is_none());
 
-    // Should have hunk_id
-    assert!(
-        hunks[0]["hunk_id"].is_string(),
-        "expected hunk_id to be a string"
-    );
+    assert!(hunks[0]["id"].is_string(), "expected id to be a string");
+    assert!(hunks[0].get("hunk_id").is_none());
 
-    // Summary should be present
     assert_eq!(json["summary"]["total_files"], 1);
+    assert_eq!(json["summary"]["total_hunks"], 1);
     assert_eq!(json["summary"]["modified"], 1);
 }
 
@@ -70,24 +73,29 @@ fn scan_full_flag_includes_line_content() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
+    assert_eq!(json["version"], "v1");
+    assert_eq!(json["command"], "scan");
+    assert_eq!(json["detail"], "full");
+
     let files = json["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["binary"], false);
 
-    // Full format: hunks should have a "lines" array
     let hunks = files[0]["hunks"].as_array().unwrap();
     assert!(!hunks.is_empty());
     let lines = hunks[0]["lines"].as_array().unwrap();
     assert!(!lines.is_empty(), "expected lines in full output");
+    assert!(hunks[0]["id"].is_string());
+    assert!(hunks[0].get("hunk_id").is_none());
+    assert!(hunks[0]["checksum"].is_string());
 
-    // Each line should have origin and content
     let first_line = &lines[0];
     assert!(first_line["origin"].is_string());
     assert!(first_line["content"].is_string());
 
-    // Full format should have file_checksum
     assert!(
-        files[0]["file_checksum"].is_string(),
-        "expected file_checksum in full output"
+        files[0]["checksum"].is_string(),
+        "expected checksum in full output"
     );
 }
 
@@ -107,6 +115,7 @@ fn scan_file_filter_restricts_output() {
     let files = json["files"].as_array().unwrap();
     assert_eq!(files.len(), 1, "expected only one file in filtered output");
     assert_eq!(files[0]["path"], "a.txt");
+    assert_eq!(json["detail"], "compact");
 }
 
 #[test]
@@ -125,8 +134,8 @@ fn scan_binary_file_is_flagged() {
 
     let files = json["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0]["is_binary"], true, "expected is_binary to be true");
-    // Binary files should have empty hunks
+    assert_eq!(files[0]["binary"], true, "expected binary to be true");
+    assert!(files[0].get("is_binary").is_none());
     let hunks = files[0]["hunks"].as_array().unwrap();
     assert!(hunks.is_empty(), "binary files should have no hunks");
 }
@@ -150,9 +159,9 @@ fn scan_untracked_file_detected_as_added() {
         .find(|f| f["path"] == "new_file.txt")
         .expect("untracked file should appear in scan");
     assert_eq!(new_file["status"]["type"], "Added");
-    assert_eq!(new_file["is_binary"], false);
+    assert_eq!(new_file["binary"], false);
+    assert!(new_file.get("is_binary").is_none());
 
-    // Full scan should include hunks with lines
     let full_output = run_agstage(dir.path(), &["scan", "--full"]).success();
     let full_stdout = String::from_utf8(full_output.get_output().stdout.clone()).unwrap();
     let full_json: serde_json::Value = serde_json::from_str(&full_stdout).unwrap();
@@ -162,6 +171,7 @@ fn scan_untracked_file_detected_as_added() {
         .iter()
         .find(|f| f["path"] == "new_file.txt")
         .expect("untracked file in full scan");
+    assert!(full_new["checksum"].is_string());
     let hunks = full_new["hunks"].as_array().unwrap();
     assert!(!hunks.is_empty(), "untracked file should have hunks");
     let lines = hunks[0]["lines"].as_array().unwrap();
