@@ -45,7 +45,7 @@ impl RenderableError {
     }
 }
 
-/// Programmatic git staging CLI for AI agents.
+/// Non-interactive git staging at file, hunk, and line granularity.
 #[derive(Parser)]
 #[command(name = "pgs", version, about)]
 pub struct Cli {

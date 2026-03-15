@@ -1,61 +1,69 @@
 # pgs
 
-Programmatic git staging CLI for AI agents. Text-first output, explicit JSON opt-in, no interactive UI.
+Non-interactive git staging at file, hunk, and line granularity.
 
-`pgs` lets coding agents stage git changes at file, hunk, and line-range granularity without `git add -p`.
-It is machine-parseable in both modes:
-- text (default): marker records beginning with `@@pgs:v1`
-- json (opt-in): `--json` or `--output json`
+`git add -p` requires a TTY. `pgs` doesn't.
 
-Compact scan is default for `scan`; use `--full` only when line-level diff content is required.
+## Why
 
-## Output Contract
+- `git add -p` is interactive — AI agents and scripts have no TTY
+- Manual patch construction via `git apply --cached` is fragile — one off-by-one line number and the patch fails
+- `git diff` output is unstructured — no stable way to reference a specific hunk across commands
 
-Text mode uses this exact grammar for machine-significant records:
-
-`@@pgs:v1 <kind> <minified-json-payload>`
-
-Examples of record kinds:
-- `scan.begin`, `file`, `hunk`, `summary`, `scan.end`
-- `stage.begin`, `item`, `warning`, `stage.end`
-- `unstage.begin`, `item`, `unstage.end`
-- `status.begin`, `status.file`, `status.end`
-- `commit.result`
-- `error`
-
-Errors are structured in both text and JSON modes with:
-`version`, `command`, `phase`, `code`, `message`, `exit_code`.
-
-Parse failures use `command: "cli"` + `phase: "parse"`; runtime failures use the real command and `phase: "runtime"`.
+`pgs` provides content-addressed hunk IDs (SHA-256), atomic staging with automatic backup/restore, and structured output parseable by both humans and machines.
 
 ## Quick Start
 
 ```bash
-# Text default (marker output)
-pgs scan
-
-# Full scan with diff body framed by markers
-pgs scan --full
-
-# JSON mode (explicit opt-in)
-pgs --json scan
-
-# Stage by file, hunk ID, or line range (auto-detected positional syntax)
-pgs stage src/lib.rs
-pgs stage abc123def456
-pgs stage src/lib.rs:10-20,30-40
-
-# Commit staged changes
-pgs commit -m "feat: add feature X"
+pgs scan                              # list unstaged changes
+pgs scan src/main.rs --full           # line-level diff for one file
+pgs stage src/main.rs                 # stage entire file
+pgs stage abc123def456                # stage specific hunk by ID
+pgs stage src/main.rs:10-20           # stage line range (1-indexed, inclusive)
+pgs stage src/main.rs --dry-run       # validate without modifying index
+pgs unstage src/main.rs               # remove file from index
+pgs status                            # show staged changes (HEAD vs index)
+pgs commit -m "feat: add feature"     # commit
 ```
+
+## Selection Syntax
+
+Positional arguments are auto-detected:
+
+| Pattern | Example | Meaning |
+|---------|---------|---------|
+| File path | `src/main.rs` | Entire file |
+| Hunk ID | `abc123def456` | 12-hex content-addressed ID from scan |
+| Line range | `src/main.rs:10-20,30-40` | 1-indexed, inclusive |
+
+`--exclude` uses the same syntax: `pgs stage src/main.rs --exclude abc123def456`
+
+## Output
+
+Default: structured text markers — `@@pgs:v1 <kind> <json>`.
+JSON: opt-in via `--json` or `--output json`.
+
+See `docs/CLI_SPEC.md` for the full output contract.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | No effect (nothing to stage, empty selection) |
+| 2 | User error (bad syntax, binary file constraint) |
+| 3 | Conflict — re-scan and retry (stale scan, locked index) |
+| 4 | Internal error |
 
 ## Build
 
 ```bash
-cargo build
-cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+cargo build                        # compile
+cargo test                         # all tests
+cargo clippy -- -D warnings        # lint (zero warnings)
+cargo fmt --check                  # format check
 ```
 
-See `docs/CLI_SPEC.md` for the complete contract and `docs/ARCHITECTURE.md` for system design.
+Requires Rust 1.85+ and a C compiler (for libgit2).
+
+See `docs/CLI_SPEC.md` for the complete output contract and `docs/ARCHITECTURE.md` for system design.

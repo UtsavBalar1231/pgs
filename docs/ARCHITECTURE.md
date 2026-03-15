@@ -2,11 +2,11 @@
 
 ## Overview
 
-`pgs` is a Rust CLI for programmatic git staging.
+`pgs` is a Rust CLI for non-interactive git staging at file, hunk, and line granularity.
 
 Key properties:
 
-- text-default output with optional JSON mode via `--json`/`--output json`
+- structured output: text markers by default, JSON via `--json`
 - centralized renderer boundary and shared view-model contracts in `src/output/*`
 - command handlers return typed outputs (no direct printing)
 - all git operations via libgit2

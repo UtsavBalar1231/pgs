@@ -2,9 +2,11 @@
 *.swp
 *.swo
 .DS_Store
+TODO.md
 
 # AI
 .omc/
+.omca/
 .serena/
 .sisyphus/
 AGENTS.md

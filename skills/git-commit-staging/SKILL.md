@@ -1,11 +1,9 @@
 ---
 name: git-commit-staging
 description: >
-  Use pgs to create atomic git commits with surgical staging
-  at file, hunk, or line-range granularity. Invoke when staging
-  changes, splitting commits, creating atomic commits, selective
-  staging, composing commits, organizing git changes, or committing
-  specific hunks/lines. Requires pgs CLI.
+  Non-interactive git staging at file, hunk, or line-range granularity.
+  Use for staging changes, splitting commits, creating atomic commits,
+  selective staging, or committing specific hunks/lines. Requires pgs CLI.
 allowed-tools:
   - Bash
 ---
@@ -16,12 +14,12 @@ allowed-tools:
 
 AI agents cannot stage changes at hunk or line granularity using standard git:
 
-- **`git add -p` is impossible** — it requires interactive TTY input (y/n/s/e/q keypresses). AI agents have no TTY. This is the fundamental problem.
-- **Manual patch construction is fragile** — building valid unified diffs for `git apply --cached` requires exact context lines, correct `@@` header math, and proper `---/+++` prefixes. One off-by-one line number = failed patch.
-- **`git diff` output is unstructured** — no stable way to reference a specific hunk across commands.
-- **No verification loop** — `git diff --cached` returns unstructured text that's hard to programmatically validate.
+- `git add -p` requires interactive TTY input (y/n/s/e/q). AI agents have no TTY.
+- Manual patch construction (`git apply --cached`) requires exact context lines and correct `@@` header math. One off-by-one = failed patch.
+- `git diff` output is unstructured — no stable way to reference a specific hunk across commands.
+- `git diff --cached` returns unstructured text — no programmatic verification loop.
 
-`pgs` solves all of these. It provides non-interactive staging with content-based hunk IDs, dry-run validation, automatic backup/restore, and structured text output by default with `--json` as opt-in.
+`pgs` provides content-addressed hunk IDs, dry-run validation, automatic backup/restore, and structured output (text markers by default, JSON via `--json`).
 
 ## PREREQUISITES
 
@@ -53,7 +51,7 @@ Do NOT use when:
 3. **Never use raw git commands for analysis or staging** — no `git diff`, `git diff --stat`, `git status`, `git add`. Use pgs exclusively (only `git log` is allowed for commit history context).
 4. **Always verify after staging** — run `pgs status` to confirm staged content matches intent
 5. **Use `--dry-run` first** for multi-selection or complex staging operations
-6. **Parse structured output programmatically** — text mode uses `@@pgs:v1` marker records and JSON mode is opt-in
+6. **Parse structured output programmatically** — default text markers (`@@pgs:v1`), JSON via `--json`
 7. **Re-scan after exit code 3** — stale scan, index locked, or staging failure all require fresh data
 
 ---
@@ -64,11 +62,11 @@ When this skill is active, do NOT use these commands — pgs replaces them:
 
 | Instead of... | Use... | Why |
 |---------------|--------|-----|
-| `git status -s` | `pgs scan` | Scan gives structured marker output (or JSON with `--json`) with hunk IDs |
-| `git diff` | `pgs scan --full` | Full scan gives structured line-level diffs |
-| `git diff --stat` | `pgs scan` (compact) | Compact scan already has per-file stats |
-| `git diff -- path` | `pgs scan path --full` | Filtered scan with structured output |
-| `git diff --cached` | `pgs status` | Status gives structured staged info |
+| `git status -s` | `pgs scan` | Structured output with hunk IDs |
+| `git diff` | `pgs scan --full` | Structured line-level diffs |
+| `git diff --stat` | `pgs scan` (compact) | Per-file stats included |
+| `git diff -- path` | `pgs scan path --full` | Filtered structured output |
+| `git diff --cached` | `pgs status` | Structured staged info |
 | `git add -p` | `pgs stage HUNK_ID` | Non-interactive hunk staging |
 | `git add file` | `pgs stage path` | Consistent workflow with backup |
 | `git reset HEAD file` | `pgs unstage path` | Consistent workflow with backup |
@@ -195,7 +193,7 @@ pgs scan src/auth.rs src/login.rs     # Filter to specific files
 pgs scan src/auth.rs --full           # Get line-level diff content
 ```
 
-Parse structured output (marker records by default, JSON when `--json` is used). Each file has `hunks[]` with stable `id` values you can pass directly to `stage`.
+Each file in the output has `hunks[]` with stable `id` values you pass directly to `stage`.
 
 ### Phase 2: PLAN
 
@@ -317,13 +315,10 @@ Breaking changes: `feat!: remove deprecated API` or add `BREAKING CHANGE:` in bo
 
 ## OUTPUT HANDLING
 
-Text mode output is machine-parseable marker records:
+Default output is structured text markers: `@@pgs:v1 <kind> <json>`.
+JSON: opt-in via `--json` or `--output json`.
 
-`@@pgs:v1 <kind> <minified-json-payload>`
-
-Use `--json` or `--output json` when raw JSON envelopes are required by your workflow.
-
-Parse failures use `command: "cli"` + `phase: "parse"`; runtime failures use `command` for the resolved command and `phase: "runtime"`.
+Errors use `command: "cli"` + `phase: "parse"` for parse failures; resolved command + `phase: "runtime"` for runtime failures.
 
 For large repos:
 - Default compact scan output is already small (metadata only, no line content)
