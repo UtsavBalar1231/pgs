@@ -1,6 +1,6 @@
 mod common;
 
-use common::{commit_file, run_agstage, setup_repo, write_file};
+use common::{commit_file, run_pgs, setup_repo, write_file};
 
 #[test]
 fn commit_staged_changes() {
@@ -9,10 +9,10 @@ fn commit_staged_changes() {
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
     // Stage the file
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
     // Commit with a message
-    let output = run_agstage(dir.path(), &["commit", "-m", "feat: add line2"]).success();
+    let output = run_pgs(dir.path(), &["commit", "-m", "feat: add line2"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -37,5 +37,5 @@ fn commit_nothing_staged_returns_exit_code_1() {
     let (dir, _repo) = setup_repo();
 
     // No staged changes — should exit 1.
-    run_agstage(dir.path(), &["commit", "-m", "empty commit"]).code(1);
+    run_pgs(dir.path(), &["commit", "-m", "empty commit"]).code(1);
 }

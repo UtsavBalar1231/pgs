@@ -8,7 +8,7 @@ mod unstage;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::output;
 use crate::output::view::{CliErrorOutput, OutputCommand};
 
@@ -47,7 +47,7 @@ impl RenderableError {
 
 /// Programmatic git staging CLI for AI agents.
 #[derive(Parser)]
-#[command(name = "agstage", version, about)]
+#[command(name = "pgs", version, about)]
 pub struct Cli {
     /// Repository path (auto-discover via .git if omitted).
     #[arg(long, global = true)]
@@ -204,7 +204,7 @@ pub fn detect_output_mode(args: &[OsString]) -> Option<OutputMode> {
 /// # Errors
 ///
 /// Returns any runtime error produced by the selected command handler.
-pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, AgstageError> {
+pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
     let Cli {
         repo,
         output: _,
@@ -241,10 +241,7 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, AgstageError> 
     }
 }
 
-pub fn render(
-    renderable: &RenderableOutput,
-    output_mode: OutputMode,
-) -> Result<String, AgstageError> {
+pub fn render(renderable: &RenderableOutput, output_mode: OutputMode) -> Result<String, PgsError> {
     output::render(&renderable.0, output_mode)
 }
 
@@ -268,7 +265,7 @@ pub fn parse_failure(error: &clap::Error) -> RenderableError {
     ))
 }
 
-pub fn runtime_failure(command: OutputCommand, error: &AgstageError) -> RenderableError {
+pub fn runtime_failure(command: OutputCommand, error: &PgsError) -> RenderableError {
     RenderableError::new(CliErrorOutput::runtime(
         command,
         error.code(),
@@ -280,7 +277,7 @@ pub fn runtime_failure(command: OutputCommand, error: &AgstageError) -> Renderab
 pub fn render_error(
     renderable: &RenderableError,
     output_mode: OutputMode,
-) -> Result<String, AgstageError> {
+) -> Result<String, PgsError> {
     match output_mode {
         OutputMode::Json => output::json::render_error(&renderable.0),
         OutputMode::Text => output::text::render_error(&renderable.0),

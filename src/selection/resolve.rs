@@ -2,7 +2,7 @@
 /// produce concrete [`ResolvedSelection`] values ready for staging.
 use sha2::{Digest, Sha256};
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::models::{FileStatus, LineRange, ResolvedSelection, ScanResult, SelectionSpec};
 
 /// Resolve a [`SelectionSpec`] against the provided scan result.
@@ -12,13 +12,13 @@ use crate::models::{FileStatus, LineRange, ResolvedSelection, ScanResult, Select
 ///
 /// # Errors
 ///
-/// - [`AgstageError::FileNotInDiff`] when the referenced path is absent.
-/// - [`AgstageError::UnknownHunkId`] when the referenced hunk ID is absent.
-/// - [`AgstageError::SelectionEmpty`] when a line-range selection matches no hunks.
+/// - [`PgsError::FileNotInDiff`] when the referenced path is absent.
+/// - [`PgsError::UnknownHunkId`] when the referenced hunk ID is absent.
+/// - [`PgsError::SelectionEmpty`] when a line-range selection matches no hunks.
 pub fn resolve_selection(
     scan: &ScanResult,
     spec: &SelectionSpec,
-) -> Result<ResolvedSelection, AgstageError> {
+) -> Result<ResolvedSelection, PgsError> {
     match spec {
         SelectionSpec::File { path } => resolve_file(scan, path),
         SelectionSpec::Hunk { hunk_id } => resolve_hunk(scan, hunk_id),
@@ -27,12 +27,12 @@ pub fn resolve_selection(
 }
 
 /// Resolve a file-level selection: all hunks in the file.
-fn resolve_file(scan: &ScanResult, path: &str) -> Result<ResolvedSelection, AgstageError> {
+fn resolve_file(scan: &ScanResult, path: &str) -> Result<ResolvedSelection, PgsError> {
     let file =
         scan.files
             .iter()
             .find(|f| f.path == path)
-            .ok_or_else(|| AgstageError::FileNotInDiff {
+            .ok_or_else(|| PgsError::FileNotInDiff {
                 path: path.to_owned(),
             })?;
 
@@ -46,7 +46,7 @@ fn resolve_file(scan: &ScanResult, path: &str) -> Result<ResolvedSelection, Agst
 }
 
 /// Resolve a hunk-level selection by content-based ID.
-fn resolve_hunk(scan: &ScanResult, hunk_id: &str) -> Result<ResolvedSelection, AgstageError> {
+fn resolve_hunk(scan: &ScanResult, hunk_id: &str) -> Result<ResolvedSelection, PgsError> {
     for file in &scan.files {
         for (idx, hunk) in file.hunks.iter().enumerate() {
             if hunk.hunk_id == hunk_id {
@@ -59,7 +59,7 @@ fn resolve_hunk(scan: &ScanResult, hunk_id: &str) -> Result<ResolvedSelection, A
         }
     }
 
-    Err(AgstageError::UnknownHunkId {
+    Err(PgsError::UnknownHunkId {
         hunk_id: hunk_id.to_owned(),
     })
 }
@@ -69,12 +69,12 @@ fn resolve_lines(
     scan: &ScanResult,
     path: &str,
     ranges: &[LineRange],
-) -> Result<ResolvedSelection, AgstageError> {
+) -> Result<ResolvedSelection, PgsError> {
     let file =
         scan.files
             .iter()
             .find(|f| f.path == path)
-            .ok_or_else(|| AgstageError::FileNotInDiff {
+            .ok_or_else(|| PgsError::FileNotInDiff {
                 path: path.to_owned(),
             })?;
 
@@ -106,7 +106,7 @@ fn resolve_lines(
         .collect();
 
     if hunk_indices.is_empty() {
-        return Err(AgstageError::SelectionEmpty);
+        return Err(PgsError::SelectionEmpty);
     }
 
     Ok(ResolvedSelection {
@@ -123,12 +123,12 @@ fn resolve_lines(
 ///
 /// # Errors
 ///
-/// Returns [`AgstageError::BinaryFileGranular`] when a hunk or lines
+/// Returns [`PgsError::BinaryFileGranular`] when a hunk or lines
 /// selection targets a binary file.
 pub fn validate_binary_constraints(
     scan: &ScanResult,
     spec: &SelectionSpec,
-) -> Result<(), AgstageError> {
+) -> Result<(), PgsError> {
     let path = match spec {
         SelectionSpec::File { .. } => return Ok(()),
         SelectionSpec::Hunk { hunk_id } => {
@@ -148,7 +148,7 @@ pub fn validate_binary_constraints(
     if let Some(p) = path {
         if let Some(file) = scan.files.iter().find(|f| f.path == p) {
             if file.is_binary {
-                return Err(AgstageError::BinaryFileGranular { path: p.to_owned() });
+                return Err(PgsError::BinaryFileGranular { path: p.to_owned() });
             }
         }
     }
@@ -163,12 +163,12 @@ pub fn validate_binary_constraints(
 ///
 /// # Errors
 ///
-/// Returns [`AgstageError::GranularOnWholeFile`] when a hunk or lines
+/// Returns [`PgsError::GranularOnWholeFile`] when a hunk or lines
 /// selection targets an added, deleted, or renamed file.
 pub fn validate_whole_file_constraints(
     scan: &ScanResult,
     spec: &SelectionSpec,
-) -> Result<(), AgstageError> {
+) -> Result<(), PgsError> {
     let target_path: Option<&str> = match spec {
         SelectionSpec::File { .. } => return Ok(()),
         SelectionSpec::Hunk { hunk_id } => scan
@@ -190,7 +190,7 @@ pub fn validate_whole_file_constraints(
                 FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
             );
             if is_whole_file_only {
-                return Err(AgstageError::GranularOnWholeFile { path: p.to_owned() });
+                return Err(PgsError::GranularOnWholeFile { path: p.to_owned() });
             }
         }
     }
@@ -207,14 +207,14 @@ pub fn validate_whole_file_constraints(
 ///
 /// # Errors
 ///
-/// - [`AgstageError::StaleScan`] when the working-tree content differs from
+/// - [`PgsError::StaleScan`] when the working-tree content differs from
 ///   the scan-time checksum.
-/// - [`AgstageError::Io`] when the file cannot be read from disk.
+/// - [`PgsError::Io`] when the file cannot be read from disk.
 pub fn validate_freshness(
     repo: &git2::Repository,
     scan: &ScanResult,
     file_path: &str,
-) -> Result<(), AgstageError> {
+) -> Result<(), PgsError> {
     let Some(file_info) = scan.files.iter().find(|f| f.path == file_path) else {
         return Ok(()); // Not in scan — nothing to validate.
     };
@@ -230,11 +230,11 @@ pub fn validate_freshness(
     }
 
     let workdir = repo.workdir().ok_or_else(|| {
-        AgstageError::Internal("repository has no working directory (bare repo)".into())
+        PgsError::Internal("repository has no working directory (bare repo)".into())
     })?;
 
     let abs_path = workdir.join(file_path);
-    let content = std::fs::read(&abs_path).map_err(|e| AgstageError::Io {
+    let content = std::fs::read(&abs_path).map_err(|e| PgsError::Io {
         path: abs_path.clone(),
         source: e,
     })?;
@@ -244,7 +244,7 @@ pub fn validate_freshness(
     let digest = format!("{:x}", hasher.finalize());
 
     if digest != file_info.file_checksum {
-        return Err(AgstageError::StaleScan {
+        return Err(PgsError::StaleScan {
             path: file_path.to_owned(),
         });
     }
@@ -373,7 +373,7 @@ mod tests {
         };
         let err = resolve_selection(&scan, &spec).unwrap_err();
         assert!(
-            matches!(err, AgstageError::FileNotInDiff { .. }),
+            matches!(err, PgsError::FileNotInDiff { .. }),
             "unexpected: {err}"
         );
     }
@@ -399,7 +399,7 @@ mod tests {
         };
         let err = resolve_selection(&scan, &spec).unwrap_err();
         assert!(
-            matches!(err, AgstageError::UnknownHunkId { .. }),
+            matches!(err, PgsError::UnknownHunkId { .. }),
             "unexpected: {err}"
         );
     }
@@ -439,7 +439,7 @@ mod tests {
         };
         let err = validate_binary_constraints(&scan, &spec).unwrap_err();
         assert!(
-            matches!(err, AgstageError::BinaryFileGranular { .. }),
+            matches!(err, PgsError::BinaryFileGranular { .. }),
             "unexpected: {err}"
         );
     }
@@ -473,7 +473,7 @@ mod tests {
         };
         let err = validate_whole_file_constraints(&scan, &spec).unwrap_err();
         assert!(
-            matches!(err, AgstageError::GranularOnWholeFile { .. }),
+            matches!(err, PgsError::GranularOnWholeFile { .. }),
             "unexpected: {err}"
         );
     }
@@ -487,7 +487,7 @@ mod tests {
         };
         let err = validate_whole_file_constraints(&scan, &spec).unwrap_err();
         assert!(
-            matches!(err, AgstageError::GranularOnWholeFile { .. }),
+            matches!(err, PgsError::GranularOnWholeFile { .. }),
             "unexpected: {err}"
         );
     }
@@ -559,7 +559,7 @@ mod tests {
 
         let err = validate_freshness(&repo, &scan, "file.txt").unwrap_err();
         assert!(
-            matches!(err, AgstageError::StaleScan { .. }),
+            matches!(err, PgsError::StaleScan { .. }),
             "unexpected: {err}"
         );
     }

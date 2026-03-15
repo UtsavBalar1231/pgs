@@ -1,4 +1,4 @@
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use git2::Repository;
 use std::thread;
 use std::time::Duration;
@@ -15,8 +15,8 @@ pub fn is_index_locked(repo: &Repository) -> bool {
 ///
 /// # Errors
 ///
-/// Returns [`AgstageError::IndexLocked`] if the lock is still held after all retries.
-pub fn wait_for_lock_release(repo: &Repository, max_retries: u32) -> Result<(), AgstageError> {
+/// Returns [`PgsError::IndexLocked`] if the lock is still held after all retries.
+pub fn wait_for_lock_release(repo: &Repository, max_retries: u32) -> Result<(), PgsError> {
     for attempt in 0..max_retries {
         if !is_index_locked(repo) {
             return Ok(());
@@ -25,7 +25,7 @@ pub fn wait_for_lock_release(repo: &Repository, max_retries: u32) -> Result<(), 
         thread::sleep(Duration::from_millis(delay_ms));
     }
     if is_index_locked(repo) {
-        Err(AgstageError::IndexLocked)
+        Err(PgsError::IndexLocked)
     } else {
         Ok(())
     }
@@ -73,6 +73,6 @@ mod tests {
         fs::write(&lock_path, b"").unwrap();
         // max_retries=2 keeps the test fast; lock is never removed.
         let result = wait_for_lock_release(&repo, 2);
-        assert!(matches!(result, Err(AgstageError::IndexLocked)));
+        assert!(matches!(result, Err(PgsError::IndexLocked)));
     }
 }

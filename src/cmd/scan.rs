@@ -1,6 +1,6 @@
 use clap::Args;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::git::{diff, repo};
 use crate::output::view::{CommandOutput, ScanOutput};
 
@@ -19,7 +19,7 @@ pub fn execute(
     repo_path: Option<&str>,
     context: u32,
     args: ScanArgs,
-) -> Result<CommandOutput, AgstageError> {
+) -> Result<CommandOutput, PgsError> {
     let repository = repo::open(repo_path)?;
     let d = diff::diff_index_to_workdir(&repository, context)?;
 
@@ -32,7 +32,7 @@ pub fn execute(
     let result = diff::build_scan_result(&repository, &d, file_filter)?;
 
     if result.files.is_empty() {
-        return Err(AgstageError::NoChanges);
+        return Err(PgsError::NoChanges);
     }
 
     let output = if args.full {

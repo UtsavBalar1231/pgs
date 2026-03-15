@@ -1,6 +1,6 @@
 use clap::Args;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::git::repo;
 use crate::models::CommitResult;
 use crate::output::view::{CommandOutput, CommitOutput};
@@ -14,7 +14,7 @@ pub struct CommitArgs {
 
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
-pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutput, AgstageError> {
+pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutput, PgsError> {
     let repository = repo::open(repo_path)?;
     let sig = repository.signature()?;
 
@@ -28,7 +28,7 @@ pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutpu
 
     // Check if nothing staged: compare tree OIDs
     if tree_oid == parent_tree.id() {
-        return Err(AgstageError::NoChanges);
+        return Err(PgsError::NoChanges);
     }
 
     let commit_oid =

@@ -1,9 +1,9 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use agstage::cmd;
-use agstage::cmd::OutputMode;
 use clap::error::ErrorKind;
+use pgs::cmd;
+use pgs::cmd::OutputMode;
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();

@@ -3,7 +3,7 @@
 /// Converts a bare string (file path, hunk ID, or `path:ranges`) into
 /// a [`SelectionSpec`] without requiring explicit `--file`/`--hunk`/`--lines`
 /// flags.
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::models::{LineRange, SelectionSpec};
 
 /// Auto-detect a positional argument into a [`SelectionSpec`].
@@ -18,12 +18,12 @@ use crate::models::{LineRange, SelectionSpec};
 ///
 /// # Errors
 ///
-/// Returns [`AgstageError::InvalidSelection`] for an empty argument, and
-/// [`AgstageError::InvalidLineRange`] when a range segment is malformed or
+/// Returns [`PgsError::InvalidSelection`] for an empty argument, and
+/// [`PgsError::InvalidLineRange`] when a range segment is malformed or
 /// has `start > end` / `start < 1`.
-pub fn detect_selection(arg: &str) -> Result<SelectionSpec, AgstageError> {
+pub fn detect_selection(arg: &str) -> Result<SelectionSpec, PgsError> {
     if arg.is_empty() {
-        return Err(AgstageError::InvalidSelection {
+        return Err(PgsError::InvalidSelection {
             detail: "selection argument must not be empty".into(),
         });
     }
@@ -57,16 +57,16 @@ pub fn detect_selection(arg: &str) -> Result<SelectionSpec, AgstageError> {
 ///
 /// # Errors
 ///
-/// Returns [`AgstageError::InvalidSelection`] when a segment is not in
-/// `START-END` form, and [`AgstageError::InvalidLineRange`] when the
+/// Returns [`PgsError::InvalidSelection`] when a segment is not in
+/// `START-END` form, and [`PgsError::InvalidLineRange`] when the
 /// numbers are out of range or `start > end`.
-fn parse_ranges(path: &str, ranges_str: &str) -> Result<Vec<LineRange>, AgstageError> {
+fn parse_ranges(path: &str, ranges_str: &str) -> Result<Vec<LineRange>, PgsError> {
     let mut ranges = Vec::new();
 
     for segment in ranges_str.split(',') {
         let segment = segment.trim();
         let Some(dash_pos) = segment.find('-') else {
-            return Err(AgstageError::InvalidSelection {
+            return Err(PgsError::InvalidSelection {
                 detail: format!("expected START-END range, got {segment:?} in {path}"),
             });
         };
@@ -74,26 +74,22 @@ fn parse_ranges(path: &str, ranges_str: &str) -> Result<Vec<LineRange>, AgstageE
         let start_str = &segment[..dash_pos];
         let end_str = &segment[dash_pos + 1..];
 
-        let start: u32 = start_str
-            .parse()
-            .map_err(|_| AgstageError::InvalidSelection {
-                detail: format!("invalid line number {start_str:?} in {path}"),
-            })?;
-        let end: u32 = end_str
-            .parse()
-            .map_err(|_| AgstageError::InvalidSelection {
-                detail: format!("invalid line number {end_str:?} in {path}"),
-            })?;
+        let start: u32 = start_str.parse().map_err(|_| PgsError::InvalidSelection {
+            detail: format!("invalid line number {start_str:?} in {path}"),
+        })?;
+        let end: u32 = end_str.parse().map_err(|_| PgsError::InvalidSelection {
+            detail: format!("invalid line number {end_str:?} in {path}"),
+        })?;
 
         if start < 1 {
-            return Err(AgstageError::InvalidLineRange {
+            return Err(PgsError::InvalidLineRange {
                 path: path.to_owned(),
                 start,
                 end,
             });
         }
         if start > end {
-            return Err(AgstageError::InvalidLineRange {
+            return Err(PgsError::InvalidLineRange {
                 path: path.to_owned(),
                 start,
                 end,
@@ -257,7 +253,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                AgstageError::InvalidLineRange {
+                PgsError::InvalidLineRange {
                     start: 20,
                     end: 10,
                     ..
@@ -271,7 +267,7 @@ mod tests {
     fn detect_start_zero_returns_invalid_line_range() {
         let err = detect_selection("file.rs:0-5").unwrap_err();
         assert!(
-            matches!(err, AgstageError::InvalidLineRange { start: 0, .. }),
+            matches!(err, PgsError::InvalidLineRange { start: 0, .. }),
             "unexpected error: {err}"
         );
     }
@@ -280,7 +276,7 @@ mod tests {
     fn detect_empty_arg_returns_invalid_selection() {
         let err = detect_selection("").unwrap_err();
         assert!(
-            matches!(err, AgstageError::InvalidSelection { .. }),
+            matches!(err, PgsError::InvalidSelection { .. }),
             "unexpected error: {err}"
         );
     }

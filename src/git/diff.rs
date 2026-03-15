@@ -1,9 +1,9 @@
-/// Diff engine — index-to-workdir and HEAD-to-index diffs for agstage.
+/// Diff engine — index-to-workdir and HEAD-to-index diffs for pgs.
 use sha2::{Digest, Sha256};
 
 use git2::{Delta, Diff, DiffOptions, Patch, Repository};
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::models::{
     DiffLineInfo, FileInfo, FileStatus, HunkInfo, LineOrigin, ScanResult, ScanSummary,
     StagedFileInfo, StatusReport, StatusSummary,
@@ -13,10 +13,7 @@ use crate::models::{
 ///
 /// This is the diff base for `scan`: it shows only unstaged changes,
 /// correctly excluding content that has already been staged.
-pub fn diff_index_to_workdir(
-    repo: &Repository,
-    context_lines: u32,
-) -> Result<Diff<'_>, AgstageError> {
+pub fn diff_index_to_workdir(repo: &Repository, context_lines: u32) -> Result<Diff<'_>, PgsError> {
     let mut opts = DiffOptions::new();
     opts.context_lines(context_lines);
     opts.include_untracked(true);
@@ -30,7 +27,7 @@ pub fn diff_index_to_workdir(
 ///
 /// This is the diff base for `status`: it shows what is currently staged
 /// for the next commit.
-pub fn diff_head_to_index(repo: &Repository, context_lines: u32) -> Result<Diff<'_>, AgstageError> {
+pub fn diff_head_to_index(repo: &Repository, context_lines: u32) -> Result<Diff<'_>, PgsError> {
     let head_commit = repo.head()?.peel_to_commit()?;
     let head_tree = head_commit.tree()?;
     let mut opts = DiffOptions::new();
@@ -47,7 +44,7 @@ pub fn build_scan_result(
     repo: &Repository,
     diff: &Diff<'_>,
     file_filter: Option<&[String]>,
-) -> Result<ScanResult, AgstageError> {
+) -> Result<ScanResult, PgsError> {
     let mut files: Vec<FileInfo> = Vec::new();
     let mut summary = ScanSummary::default();
 
@@ -115,7 +112,7 @@ pub fn build_scan_result(
 }
 
 /// Build a `StatusReport` from a HEAD-to-index diff.
-pub fn build_status_report(diff: &Diff<'_>) -> Result<StatusReport, AgstageError> {
+pub fn build_status_report(diff: &Diff<'_>) -> Result<StatusReport, PgsError> {
     let mut staged_files: Vec<StagedFileInfo> = Vec::new();
     let mut summary = StatusSummary::default();
 
@@ -153,7 +150,7 @@ pub fn build_status_report(diff: &Diff<'_>) -> Result<StatusReport, AgstageError
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Extract the file path from a diff delta (new path for non-deletions, old path for deletions).
-fn delta_path(delta: &git2::DiffDelta<'_>) -> Result<String, AgstageError> {
+fn delta_path(delta: &git2::DiffDelta<'_>) -> Result<String, PgsError> {
     // Use new_file for everything except pure deletions
     let file = if delta.status() == Delta::Deleted {
         delta.old_file()
@@ -163,10 +160,10 @@ fn delta_path(delta: &git2::DiffDelta<'_>) -> Result<String, AgstageError> {
     file.path()
         .and_then(|p| p.to_str())
         .map(ToString::to_string)
-        .ok_or_else(|| AgstageError::Internal("diff delta has non-UTF-8 path".into()))
+        .ok_or_else(|| PgsError::Internal("diff delta has non-UTF-8 path".into()))
 }
 
-/// Convert a git2 delta status to agstage `FileStatus`.
+/// Convert a git2 delta status to pgs `FileStatus`.
 fn delta_to_file_status(delta: &git2::DiffDelta<'_>) -> FileStatus {
     match delta.status() {
         Delta::Added | Delta::Untracked => FileStatus::Added,
@@ -186,7 +183,7 @@ fn delta_to_file_status(delta: &git2::DiffDelta<'_>) -> FileStatus {
 
 /// Extract `HunkInfo` entries from a `Patch`.
 #[allow(clippy::cast_possible_truncation)]
-fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, AgstageError> {
+fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, PgsError> {
     let hunk_count = patch.num_hunks();
     let mut hunks = Vec::with_capacity(hunk_count);
 

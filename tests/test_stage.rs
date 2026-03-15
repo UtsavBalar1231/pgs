@@ -1,6 +1,6 @@
 mod common;
 
-use common::{commit_file, run_agstage, setup_repo, write_file};
+use common::{commit_file, run_pgs, setup_repo, write_file};
 
 #[test]
 fn stage_file_by_path() {
@@ -8,7 +8,7 @@ fn stage_file_by_path() {
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
-    let output = run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    let output = run_pgs(dir.path(), &["stage", "hello.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -32,14 +32,14 @@ fn stage_hunk_by_id() {
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
     // First scan to get hunk IDs
-    let scan_output = run_agstage(dir.path(), &["scan"]).success();
+    let scan_output = run_pgs(dir.path(), &["scan"]).success();
     let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
     let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
 
     let hunk_id = scan_json["files"][0]["hunks"][0]["id"].as_str().unwrap();
 
     // Stage by hunk ID
-    let output = run_agstage(dir.path(), &["stage", hunk_id]).success();
+    let output = run_pgs(dir.path(), &["stage", hunk_id]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -65,7 +65,7 @@ fn stage_line_range() {
     );
 
     // Stage lines 2-2 (the modified line)
-    let output = run_agstage(dir.path(), &["stage", "multi.txt:2-2"]).success();
+    let output = run_pgs(dir.path(), &["stage", "multi.txt:2-2"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -79,7 +79,7 @@ fn stage_dry_run_does_not_modify_index() {
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
     // Stage with --dry-run
-    let output = run_agstage(dir.path(), &["stage", "--dry-run", "hello.txt"]).success();
+    let output = run_pgs(dir.path(), &["stage", "--dry-run", "hello.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -87,7 +87,7 @@ fn stage_dry_run_does_not_modify_index() {
     assert_eq!(json["backup_id"], serde_json::Value::Null);
 
     // Verify status shows nothing staged
-    let status_output = run_agstage(dir.path(), &["status"]).success();
+    let status_output = run_pgs(dir.path(), &["status"]).success();
     let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
     let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
 
@@ -102,7 +102,7 @@ fn stage_unknown_hunk_returns_exit_code_2() {
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
     // Stage a nonexistent hunk ID (12 hex chars to look like a valid hunk ID)
-    run_agstage(dir.path(), &["stage", "deadbeef0000"]).code(2);
+    run_pgs(dir.path(), &["stage", "deadbeef0000"]).code(2);
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn stage_stale_file_returns_exit_code_3() {
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
     // Scan to get hunk IDs (captures file checksum)
-    let scan_output = run_agstage(dir.path(), &["scan", "--full"]).success();
+    let scan_output = run_pgs(dir.path(), &["scan", "--full"]).success();
     let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
     let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
 
@@ -132,7 +132,7 @@ fn stage_stale_file_returns_exit_code_3() {
     // Note: the exact behavior depends on implementation; the hunk ID may not
     // match anymore, which could be exit 2 (UnknownHunkId). We accept either
     // exit 2 or 3 since both indicate the scan is stale.
-    let result = run_agstage(dir.path(), &["stage", &hunk_id]);
+    let result = run_pgs(dir.path(), &["stage", &hunk_id]);
     let code = result.get_output().status.code().unwrap();
     assert!(
         code == 2 || code == 3,
@@ -153,7 +153,7 @@ fn stage_exclude_hunk() {
     write_file(dir.path(), "multi.txt", "aaa\nNEW1\n\n\n\nbbb\nNEW2\n");
 
     // Scan to discover hunks
-    let scan_output = run_agstage(dir.path(), &["scan"]).success();
+    let scan_output = run_pgs(dir.path(), &["scan"]).success();
     let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
     let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
 
@@ -167,8 +167,7 @@ fn stage_exclude_hunk() {
     let exclude_id = hunks[0]["id"].as_str().unwrap();
 
     // Stage entire file but exclude the first hunk
-    let output =
-        run_agstage(dir.path(), &["stage", "--exclude", exclude_id, "multi.txt"]).success();
+    let output = run_pgs(dir.path(), &["stage", "--exclude", exclude_id, "multi.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -184,7 +183,7 @@ fn stage_untracked_file_by_path() {
     write_file(dir.path(), "new_file.txt", "brand new content\n");
 
     // Stage it
-    let output = run_agstage(dir.path(), &["stage", "new_file.txt"]).success();
+    let output = run_pgs(dir.path(), &["stage", "new_file.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -193,7 +192,7 @@ fn stage_untracked_file_by_path() {
     assert!(!items.is_empty(), "expected succeeded items");
 
     // Verify status shows the file as staged Added
-    let status_output = run_agstage(dir.path(), &["status"]).success();
+    let status_output = run_pgs(dir.path(), &["status"]).success();
     let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
     let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
 
@@ -221,7 +220,7 @@ fn stage_multiple_line_selections_same_file_reports_each_selection_item() {
         "line1\nchanged-2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nchanged-12\nline13\nline14\nline15\n",
     );
 
-    let output = run_agstage(dir.path(), &["stage", "multi.txt:2-2", "multi.txt:12-12"]).success();
+    let output = run_pgs(dir.path(), &["stage", "multi.txt:2-2", "multi.txt:12-12"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 

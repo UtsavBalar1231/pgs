@@ -1,8 +1,8 @@
-# agstage Architecture
+# pgs Architecture
 
 ## Overview
 
-`agstage` is a Rust CLI for programmatic git staging.
+`pgs` is a Rust CLI for programmatic git staging.
 
 Key properties:
 
@@ -28,7 +28,7 @@ All command outputs are versioned with `version: "v1"`.
 
 Text mode uses the exact marker grammar:
 
-`@@agstage:v1 <kind> <minified-json-payload>`
+`@@pgs:v1 <kind> <minified-json-payload>`
 
 Recognized marker kinds:
 

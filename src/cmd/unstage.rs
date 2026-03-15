@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use clap::Args;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::git::{diff, repo, unstaging};
 use crate::models::{
     FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
@@ -30,7 +30,7 @@ pub fn execute(
     repo_path: Option<&str>,
     context: u32,
     args: UnstageArgs,
-) -> Result<CommandOutput, AgstageError> {
+) -> Result<CommandOutput, PgsError> {
     // 1. Open repo
     let repository = repo::open(repo_path)?;
 
@@ -43,7 +43,7 @@ pub fn execute(
 
     // 5. Guard: nothing staged
     if scan.files.is_empty() {
-        return Err(AgstageError::NoChanges);
+        return Err(PgsError::NoChanges);
     }
 
     // 6. Parse positional args
@@ -55,7 +55,7 @@ pub fn execute(
 
     // 7. Guard: empty selections
     if specs.is_empty() {
-        return Err(AgstageError::SelectionEmpty);
+        return Err(PgsError::SelectionEmpty);
     }
 
     // 8-9. Validate constraints
@@ -134,7 +134,7 @@ pub fn execute(
         .iter()
         .any(|(_, r)| !r.hunk_indices.is_empty() || is_whole_file_operation(&scan, &r.file_path));
     if !has_work {
-        return Err(AgstageError::SelectionEmpty);
+        return Err(PgsError::SelectionEmpty);
     }
 
     if args.dry_run {
@@ -220,7 +220,7 @@ fn execute_single_unstage(
     spec: &SelectionSpec,
     resolved: &ResolvedSelection,
     file_path: &str,
-) -> Result<u32, AgstageError> {
+) -> Result<u32, PgsError> {
     let is_lines = resolved.line_ranges.is_some();
     let is_hunk = matches!(spec, SelectionSpec::Hunk { .. });
 

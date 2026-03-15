@@ -1,4 +1,4 @@
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::models::BackupInfo;
 use chrono::Utc;
 use git2::Repository;
@@ -8,18 +8,18 @@ use uuid::Uuid;
 
 /// Create a backup of the current git index.
 ///
-/// Writes the raw index file to `.git/agstage/backups/` along with a JSON metadata file.
+/// Writes the raw index file to `.git/pgs/backups/` along with a JSON metadata file.
 ///
 /// # Errors
 ///
 /// Returns an error if the backup directory cannot be created, the index cannot be read,
 /// or writing the backup files fails.
-pub fn create_backup(repo: &Repository) -> Result<BackupInfo, AgstageError> {
-    let backup_dir = repo.path().join("agstage").join("backups");
-    fs::create_dir_all(&backup_dir).map_err(|e| AgstageError::io(&backup_dir, e))?;
+pub fn create_backup(repo: &Repository) -> Result<BackupInfo, PgsError> {
+    let backup_dir = repo.path().join("pgs").join("backups");
+    fs::create_dir_all(&backup_dir).map_err(|e| PgsError::io(&backup_dir, e))?;
 
     let index_path = repo.path().join("index");
-    let index_content = fs::read(&index_path).map_err(|e| AgstageError::io(&index_path, e))?;
+    let index_content = fs::read(&index_path).map_err(|e| PgsError::io(&index_path, e))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&index_content);
@@ -31,7 +31,7 @@ pub fn create_backup(repo: &Repository) -> Result<BackupInfo, AgstageError> {
     let backup_id = format!("backup-{timestamp}-{uuid8}");
 
     let backup_file = backup_dir.join(format!("{backup_id}.index"));
-    fs::write(&backup_file, &index_content).map_err(|e| AgstageError::io(&backup_file, e))?;
+    fs::write(&backup_file, &index_content).map_err(|e| PgsError::io(&backup_file, e))?;
 
     let backup_info = BackupInfo {
         backup_id,
@@ -41,7 +41,7 @@ pub fn create_backup(repo: &Repository) -> Result<BackupInfo, AgstageError> {
 
     let metadata_file = backup_dir.join(format!("{}.json", backup_info.backup_id));
     let metadata_json = serde_json::to_string_pretty(&backup_info)?;
-    fs::write(&metadata_file, metadata_json).map_err(|e| AgstageError::io(&metadata_file, e))?;
+    fs::write(&metadata_file, metadata_json).map_err(|e| PgsError::io(&metadata_file, e))?;
 
     Ok(backup_info)
 }
@@ -53,19 +53,17 @@ pub fn create_backup(repo: &Repository) -> Result<BackupInfo, AgstageError> {
 /// # Errors
 ///
 /// Returns an error if the backup does not exist, or if reading/writing the index file fails.
-pub fn restore_backup(repo: &Repository, backup_id: &str) -> Result<(), AgstageError> {
-    let backup_dir = repo.path().join("agstage").join("backups");
+pub fn restore_backup(repo: &Repository, backup_id: &str) -> Result<(), PgsError> {
+    let backup_dir = repo.path().join("pgs").join("backups");
     let backup_file = backup_dir.join(format!("{backup_id}.index"));
 
     if !backup_file.exists() {
-        return Err(AgstageError::Internal(format!(
-            "backup not found: {backup_id}"
-        )));
+        return Err(PgsError::Internal(format!("backup not found: {backup_id}")));
     }
 
-    let backup_content = fs::read(&backup_file).map_err(|e| AgstageError::io(&backup_file, e))?;
+    let backup_content = fs::read(&backup_file).map_err(|e| PgsError::io(&backup_file, e))?;
     let index_path = repo.path().join("index");
-    fs::write(&index_path, backup_content).map_err(|e| AgstageError::io(&index_path, e))?;
+    fs::write(&index_path, backup_content).map_err(|e| PgsError::io(&index_path, e))?;
 
     Ok(())
 }
@@ -103,7 +101,7 @@ mod tests {
         let (_temp, repo) = setup_test_repo();
         let info = create_backup(&repo).expect("create_backup failed");
 
-        let backup_dir = repo.path().join("agstage").join("backups");
+        let backup_dir = repo.path().join("pgs").join("backups");
         let index_file = backup_dir.join(format!("{}.index", info.backup_id));
         let meta_file = backup_dir.join(format!("{}.json", info.backup_id));
 
@@ -119,7 +117,7 @@ mod tests {
 
         let info = create_backup(&repo).expect("create_backup failed");
 
-        let backup_dir = repo.path().join("agstage").join("backups");
+        let backup_dir = repo.path().join("pgs").join("backups");
         let backup_file = backup_dir.join(format!("{}.index", info.backup_id));
         let backed_up = fs::read(&backup_file).unwrap();
 
@@ -153,7 +151,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, AgstageError::Internal(_)),
+            matches!(err, PgsError::Internal(_)),
             "expected Internal error, got: {err}"
         );
     }

@@ -56,9 +56,9 @@ pub fn commit_file(repo: &Repository, dir: &Path, rel_path: &str, content: &str,
         .unwrap();
 }
 
-/// Build and run agstage with `--repo` pointed at the test repo.
-pub fn run_agstage(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("agstage")
+/// Build and run pgs with `--repo` pointed at the test repo.
+pub fn run_pgs(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("pgs")
         .unwrap()
         .arg("--json")
         .arg("--repo")
@@ -67,8 +67,8 @@ pub fn run_agstage(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
         .assert()
 }
 
-pub fn run_agstage_raw(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("agstage")
+pub fn run_pgs_raw(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("pgs")
         .unwrap()
         .arg("--repo")
         .arg(dir.to_str().unwrap())

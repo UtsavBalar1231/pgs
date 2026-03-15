@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use git2::Repository;
 use similar::TextDiff;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::git::{build_index_entry, read_head_blob, read_index_blob};
 use crate::models::{HunkInfo, LineOrigin};
 
@@ -27,9 +27,9 @@ use crate::models::{HunkInfo, LineOrigin};
 ///
 /// # Errors
 ///
-/// Returns `AgstageError::Git` if libgit2 operations fail, or
-/// `AgstageError::StagingFailed` if the index write fails.
-pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, AgstageError> {
+/// Returns `PgsError::Git` if libgit2 operations fail, or
+/// `PgsError::StagingFailed` if the index write fails.
+pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
     let head_result = read_head_blob(repo, file_path);
     let mut index = repo.index()?;
     let in_index = index.get_path(std::path::Path::new(file_path), 0).is_some();
@@ -78,13 +78,13 @@ pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, AgstageEr
 ///
 /// # Errors
 ///
-/// Returns `AgstageError::Git` if blob reads or index writes fail, or
-/// `AgstageError::FileNotInDiff` if the file is not in the index.
+/// Returns `PgsError::Git` if blob reads or index writes fail, or
+/// `PgsError::FileNotInDiff` if the file is not in the index.
 pub fn unstage_lines<S: ::std::hash::BuildHasher>(
     repo: &Repository,
     file_path: &str,
     selected_lines: &HashSet<u32, S>,
-) -> Result<u32, AgstageError> {
+) -> Result<u32, PgsError> {
     let head_content = read_head_blob(repo, file_path)?;
     let index_content = read_index_blob(repo, file_path)?;
 
@@ -164,11 +164,7 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
 /// # Errors
 ///
 /// Returns any error from `unstage_lines`.
-pub fn unstage_hunk(
-    repo: &Repository,
-    file_path: &str,
-    hunk: &HunkInfo,
-) -> Result<u32, AgstageError> {
+pub fn unstage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result<u32, PgsError> {
     let mut selected = HashSet::new();
     for line in &hunk.lines {
         match line.origin {

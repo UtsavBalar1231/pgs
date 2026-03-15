@@ -1,10 +1,10 @@
 mod common;
 
-use common::{commit_file, run_agstage, run_agstage_raw, setup_repo, write_file};
+use common::{commit_file, run_pgs, run_pgs_raw, setup_repo, write_file};
 
 fn parse_marker(line: &str) -> (&str, serde_json::Value) {
     let mut parts = line.splitn(3, ' ');
-    assert_eq!(parts.next(), Some("@@agstage:v1"));
+    assert_eq!(parts.next(), Some("@@pgs:v1"));
     let kind = parts.next().unwrap();
     let payload = serde_json::from_str(parts.next().unwrap()).unwrap();
     (kind, payload)
@@ -14,7 +14,7 @@ fn parse_marker(line: &str) -> (&str, serde_json::Value) {
 fn output_mode_defaults_to_text() {
     let (dir, _repo) = setup_repo();
 
-    let output = run_agstage_raw(dir.path(), &["scan"]).code(1);
+    let output = run_pgs_raw(dir.path(), &["scan"]).code(1);
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -41,7 +41,7 @@ fn output_mode_defaults_to_text() {
 fn output_mode_json_alias_selects_json() {
     let (dir, _repo) = setup_repo();
 
-    let alias_output = run_agstage_raw(dir.path(), &["--json", "scan"]).code(1);
+    let alias_output = run_pgs_raw(dir.path(), &["--json", "scan"]).code(1);
     let alias_stdout = String::from_utf8(alias_output.get_output().stdout.clone()).unwrap();
     let alias_json: serde_json::Value = serde_json::from_str(&alias_stdout).unwrap();
     assert_eq!(alias_json["version"], "v1");
@@ -51,8 +51,7 @@ fn output_mode_json_alias_selects_json() {
     assert_eq!(alias_json["message"], "no changes detected in working tree");
     assert_eq!(alias_json["exit_code"], 1);
 
-    let redundant_output =
-        run_agstage_raw(dir.path(), &["--json", "--output", "json", "scan"]).code(1);
+    let redundant_output = run_pgs_raw(dir.path(), &["--json", "--output", "json", "scan"]).code(1);
     let redundant_stdout = String::from_utf8(redundant_output.get_output().stdout.clone()).unwrap();
     let redundant_json: serde_json::Value = serde_json::from_str(&redundant_stdout).unwrap();
     assert_eq!(redundant_json["version"], "v1");
@@ -70,7 +69,7 @@ fn output_mode_json_alias_selects_json() {
 fn output_mode_conflicting_flags_return_user_error() {
     let (dir, _repo) = setup_repo();
 
-    let output = run_agstage_raw(dir.path(), &["--json", "--output", "text", "scan"]).code(2);
+    let output = run_pgs_raw(dir.path(), &["--json", "--output", "text", "scan"]).code(2);
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
     let (kind, payload) = parse_marker(lines[0]);
@@ -93,7 +92,7 @@ fn output_mode_conflicting_flags_return_user_error() {
 fn json_parse_error_uses_cli_error_contract() {
     let (dir, _repo) = setup_repo();
 
-    let output = run_agstage_raw(dir.path(), &["--output", "json", "--definitely-invalid"]).code(2);
+    let output = run_pgs_raw(dir.path(), &["--output", "json", "--definitely-invalid"]).code(2);
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -115,7 +114,7 @@ fn text_runtime_error_has_stable_error_marker() {
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
-    let output = run_agstage_raw(dir.path(), &["stage", "deadbeef0000"]).code(2);
+    let output = run_pgs_raw(dir.path(), &["stage", "deadbeef0000"]).code(2);
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -143,9 +142,9 @@ fn text_default_status_uses_v1_markers() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let output = run_agstage_raw(dir.path(), &["status"]).success();
+    let output = run_pgs_raw(dir.path(), &["status"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -154,7 +153,7 @@ fn text_default_status_uses_v1_markers() {
         4,
         "status text output should be marker-only: {stdout}"
     );
-    assert!(lines.iter().all(|line| line.starts_with("@@agstage:v1 ")));
+    assert!(lines.iter().all(|line| line.starts_with("@@pgs:v1 ")));
 
     let (begin_kind, begin_payload) = parse_marker(lines[0]);
     assert_eq!(begin_kind, "status.begin");
@@ -189,9 +188,9 @@ fn json_mode_status_uses_new_contract() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let output = run_agstage(dir.path(), &["status"]).success();
+    let output = run_pgs(dir.path(), &["status"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -214,9 +213,9 @@ fn text_default_commit_uses_single_result_marker() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let output = run_agstage_raw(dir.path(), &["commit", "-m", "feat: add line2"]).success();
+    let output = run_pgs_raw(dir.path(), &["commit", "-m", "feat: add line2"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -250,9 +249,9 @@ fn json_mode_commit_uses_new_contract() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let output = run_agstage(dir.path(), &["commit", "-m", "feat: add line2"]).success();
+    let output = run_pgs(dir.path(), &["commit", "-m", "feat: add line2"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -274,7 +273,7 @@ fn text_default_stage_uses_operation_markers() {
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
-    let output = run_agstage_raw(dir.path(), &["stage", "hello.txt"]).success();
+    let output = run_pgs_raw(dir.path(), &["stage", "hello.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -283,7 +282,7 @@ fn text_default_stage_uses_operation_markers() {
         3,
         "stage text output should be marker-only: {stdout}"
     );
-    assert!(lines.iter().all(|line| line.starts_with("@@agstage:v1 ")));
+    assert!(lines.iter().all(|line| line.starts_with("@@pgs:v1 ")));
 
     let (begin_kind, begin_payload) = parse_marker(lines[0]);
     assert_eq!(begin_kind, "stage.begin");
@@ -317,7 +316,7 @@ fn json_mode_stage_uses_new_contract() {
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
-    let output = run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    let output = run_pgs(dir.path(), &["stage", "hello.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -342,9 +341,9 @@ fn text_default_unstage_uses_operation_markers() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let output = run_agstage_raw(dir.path(), &["unstage", "hello.txt"]).success();
+    let output = run_pgs_raw(dir.path(), &["unstage", "hello.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -353,7 +352,7 @@ fn text_default_unstage_uses_operation_markers() {
         3,
         "unstage text output should be marker-only: {stdout}"
     );
-    assert!(lines.iter().all(|line| line.starts_with("@@agstage:v1 ")));
+    assert!(lines.iter().all(|line| line.starts_with("@@pgs:v1 ")));
 
     let (begin_kind, begin_payload) = parse_marker(lines[0]);
     assert_eq!(begin_kind, "unstage.begin");
@@ -386,9 +385,9 @@ fn json_mode_unstage_uses_new_contract() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let output = run_agstage(dir.path(), &["unstage", "--dry-run", "hello.txt"]).success();
+    let output = run_pgs(dir.path(), &["unstage", "--dry-run", "hello.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -420,7 +419,7 @@ fn text_default_scan_has_v1_markers() {
     );
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
-    let output = run_agstage_raw(dir.path(), &["scan"]).success();
+    let output = run_pgs_raw(dir.path(), &["scan"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
@@ -429,7 +428,7 @@ fn text_default_scan_has_v1_markers() {
         5,
         "compact scan should be marker-only: {stdout}"
     );
-    assert!(lines.iter().all(|line| line.starts_with("@@agstage:v1 ")));
+    assert!(lines.iter().all(|line| line.starts_with("@@pgs:v1 ")));
 
     let (begin_kind, begin_payload) = parse_marker(lines[0]);
     assert_eq!(begin_kind, "scan.begin");
@@ -478,16 +477,16 @@ fn text_full_scan_frames_diff_body_with_markers() {
     );
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
-    let output = run_agstage_raw(dir.path(), &["scan", "--full"]).success();
+    let output = run_pgs_raw(dir.path(), &["scan", "--full"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
     let hunk_end_index = lines
         .iter()
-        .position(|line| line.starts_with("@@agstage:v1 hunk.end "))
+        .position(|line| line.starts_with("@@pgs:v1 hunk.end "))
         .unwrap();
     let file_end_index = lines
         .iter()
-        .position(|line| line.starts_with("@@agstage:v1 file.end "))
+        .position(|line| line.starts_with("@@pgs:v1 file.end "))
         .unwrap();
 
     let (begin_kind, begin_payload) = parse_marker(lines[0]);
@@ -508,7 +507,7 @@ fn text_full_scan_frames_diff_body_with_markers() {
 
     assert!(hunk_end_index > 3, "expected raw diff body lines: {stdout}");
     for raw_line in &lines[3..hunk_end_index] {
-        assert!(!raw_line.starts_with("@@agstage:v1 "));
+        assert!(!raw_line.starts_with("@@pgs:v1 "));
         assert!(
             raw_line.starts_with(' ') || raw_line.starts_with('+') || raw_line.starts_with('-'),
             "unexpected raw diff line: {raw_line}"
@@ -543,7 +542,7 @@ fn text_full_scan_frames_diff_body_with_markers() {
     let non_marker_indices: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter_map(|(index, line)| (!line.starts_with("@@agstage:v1 ")).then_some(index))
+        .filter_map(|(index, line)| (!line.starts_with("@@pgs:v1 ")).then_some(index))
         .collect();
     assert!(
         non_marker_indices
@@ -565,7 +564,7 @@ fn json_mode_scan_uses_new_contract() {
     );
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
-    let output = run_agstage(dir.path(), &["scan"]).success();
+    let output = run_pgs(dir.path(), &["scan"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 

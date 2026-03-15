@@ -1,16 +1,16 @@
 ---
 name: git-commit-staging
 description: >
-  Use agstage to create atomic git commits with surgical staging
+  Use pgs to create atomic git commits with surgical staging
   at file, hunk, or line-range granularity. Invoke when staging
   changes, splitting commits, creating atomic commits, selective
   staging, composing commits, organizing git changes, or committing
-  specific hunks/lines. Requires agstage CLI.
+  specific hunks/lines. Requires pgs CLI.
 allowed-tools:
   - Bash
 ---
 
-# Git Commit Staging with agstage
+# Git Commit Staging with pgs
 
 ## WHY THIS EXISTS
 
@@ -21,17 +21,17 @@ AI agents cannot stage changes at hunk or line granularity using standard git:
 - **`git diff` output is unstructured** — no stable way to reference a specific hunk across commands.
 - **No verification loop** — `git diff --cached` returns unstructured text that's hard to programmatically validate.
 
-`agstage` solves all of these. It provides non-interactive staging with content-based hunk IDs, dry-run validation, automatic backup/restore, and structured text output by default with `--json` as opt-in.
+`pgs` solves all of these. It provides non-interactive staging with content-based hunk IDs, dry-run validation, automatic backup/restore, and structured text output by default with `--json` as opt-in.
 
 ## PREREQUISITES
 
-Before using agstage, verify it is installed:
+Before using pgs, verify it is installed:
 
 ```bash
-which agstage && agstage --version
+which pgs && pgs --version
 ```
 
-If `agstage` is not found, inform the user that this skill requires the `agstage` CLI tool to be installed. Do not fall back to raw git commands — use the standard git staging workflow instead.
+If `pgs` is not found, inform the user that this skill requires the `pgs` CLI tool to be installed. Do not fall back to raw git commands — use the standard git staging workflow instead.
 
 ## WHEN TO USE
 
@@ -50,36 +50,36 @@ Do NOT use when:
 
 1. **Always scan before staging** — hunk IDs are only valid until the file or index changes
 2. **Re-scan after each commit** — previous hunk IDs are now stale because the index changed
-3. **Never use raw git commands for analysis or staging** — no `git diff`, `git diff --stat`, `git status`, `git add`. Use agstage exclusively (only `git log` is allowed for commit history context).
-4. **Always verify after staging** — run `agstage status` to confirm staged content matches intent
+3. **Never use raw git commands for analysis or staging** — no `git diff`, `git diff --stat`, `git status`, `git add`. Use pgs exclusively (only `git log` is allowed for commit history context).
+4. **Always verify after staging** — run `pgs status` to confirm staged content matches intent
 5. **Use `--dry-run` first** for multi-selection or complex staging operations
-6. **Parse structured output programmatically** — text mode uses `@@agstage:v1` marker records and JSON mode is opt-in
+6. **Parse structured output programmatically** — text mode uses `@@pgs:v1` marker records and JSON mode is opt-in
 7. **Re-scan after exit code 3** — stale scan, index locked, or staging failure all require fresh data
 
 ---
 
 ## PROHIBITED COMMANDS (DO NOT USE)
 
-When this skill is active, do NOT use these commands — agstage replaces them:
+When this skill is active, do NOT use these commands — pgs replaces them:
 
 | Instead of... | Use... | Why |
 |---------------|--------|-----|
-| `git status -s` | `agstage scan` | Scan gives structured marker output (or JSON with `--json`) with hunk IDs |
-| `git diff` | `agstage scan --full` | Full scan gives structured line-level diffs |
-| `git diff --stat` | `agstage scan` (compact) | Compact scan already has per-file stats |
-| `git diff -- path` | `agstage scan path --full` | Filtered scan with structured output |
-| `git diff --cached` | `agstage status` | Status gives structured staged info |
-| `git add -p` | `agstage stage HUNK_ID` | Non-interactive hunk staging |
-| `git add file` | `agstage stage path` | Consistent workflow with backup |
-| `git reset HEAD file` | `agstage unstage path` | Consistent workflow with backup |
+| `git status -s` | `pgs scan` | Scan gives structured marker output (or JSON with `--json`) with hunk IDs |
+| `git diff` | `pgs scan --full` | Full scan gives structured line-level diffs |
+| `git diff --stat` | `pgs scan` (compact) | Compact scan already has per-file stats |
+| `git diff -- path` | `pgs scan path --full` | Filtered scan with structured output |
+| `git diff --cached` | `pgs status` | Status gives structured staged info |
+| `git add -p` | `pgs stage HUNK_ID` | Non-interactive hunk staging |
+| `git add file` | `pgs stage path` | Consistent workflow with backup |
+| `git reset HEAD file` | `pgs unstage path` | Consistent workflow with backup |
 
-**The only git command you may use** during this workflow is `git log` (for commit history context). Everything else goes through agstage.
+**The only git command you may use** during this workflow is `git log` (for commit history context). Everything else goes through pgs.
 
 ---
 
 ## SELECTION SYNTAX (Positional Auto-Detection)
 
-agstage uses flat positional arguments with auto-detection. Each argument is parsed as one of three types:
+pgs uses flat positional arguments with auto-detection. Each argument is parsed as one of three types:
 
 | Detection Rule (applied in order) | Example | Parsed As |
 |------------------------------------|---------|-----------|
@@ -89,7 +89,7 @@ agstage uses flat positional arguments with auto-detection. Each argument is par
 
 **Line ranges** are 1-indexed, inclusive: `src/main.rs:1-5,10-15` stages lines 1-5 and 10-15.
 
-**`--exclude`** uses the same auto-detection: `agstage stage src/main.rs --exclude abc123def456` excludes a hunk by ID. Works on both `stage` and `unstage`.
+**`--exclude`** uses the same auto-detection: `pgs stage src/main.rs --exclude abc123def456` excludes a hunk by ID. Works on both `stage` and `unstage`.
 
 **Edge case**: If a file path is exactly 12 hex characters, it will be misdetected as a hunk ID. Use a path prefix: `./abc123def456`.
 
@@ -100,18 +100,18 @@ agstage uses flat positional arguments with auto-detection. Each argument is par
 ### Commands
 
 ```bash
-agstage scan                              # Compact scan (default — metadata only)
-agstage scan --full                       # Full scan with line-level diff content
-agstage scan src/main.rs src/lib.rs       # Filter to specific files (positional)
-agstage stage src/main.rs                 # Stage entire file
-agstage stage abc123def456                # Stage specific hunk (12-hex ID from scan)
-agstage stage src/main.rs:10-20           # Stage line range (1-indexed, inclusive)
-agstage stage src/main.rs --exclude abc123def456  # Stage file, exclude a hunk
-agstage stage src/main.rs --dry-run       # Validate without modifying index
-agstage unstage abc123def456              # Remove hunk from index
-agstage unstage src/main.rs               # Unstage entire file
-agstage status                            # Show what's staged (HEAD vs index)
-agstage commit -m "type: message"         # Commit staged changes
+pgs scan                              # Compact scan (default — metadata only)
+pgs scan --full                       # Full scan with line-level diff content
+pgs scan src/main.rs src/lib.rs       # Filter to specific files (positional)
+pgs stage src/main.rs                 # Stage entire file
+pgs stage abc123def456                # Stage specific hunk (12-hex ID from scan)
+pgs stage src/main.rs:10-20           # Stage line range (1-indexed, inclusive)
+pgs stage src/main.rs --exclude abc123def456  # Stage file, exclude a hunk
+pgs stage src/main.rs --dry-run       # Validate without modifying index
+pgs unstage abc123def456              # Remove hunk from index
+pgs unstage src/main.rs               # Unstage entire file
+pgs status                            # Show what's staged (HEAD vs index)
+pgs commit -m "type: message"         # Commit staged changes
 ```
 
 ### Global Flags
@@ -165,7 +165,7 @@ agstage commit -m "type: message"         # Commit staged changes
 | 0 | Success | Proceed normally |
 | 1 | No effect | Check: are there unstaged changes? Maybe already staged. |
 | 2 | User error | Fix selection syntax. Check: binary file? whole-file constraint? |
-| 3 | Conflict | **Re-scan** (`agstage scan`), then retry with fresh hunk IDs. |
+| 3 | Conflict | **Re-scan** (`pgs scan`), then retry with fresh hunk IDs. |
 | 4 | Internal | Report the error. Check git repo state. |
 
 ---
@@ -175,10 +175,10 @@ agstage commit -m "type: message"         # Commit staged changes
 When all changes belong to **one logical commit**, skip the full workflow:
 
 ```bash
-agstage scan                              # 1. Discover
-agstage stage src/main.rs src/lib.rs      # 2. Stage
-agstage status                            # 3. Verify
-agstage commit -m "feat: add new feature" # 4. Commit
+pgs scan                              # 1. Discover
+pgs stage src/main.rs src/lib.rs      # 2. Stage
+pgs status                            # 3. Verify
+pgs commit -m "feat: add new feature" # 4. Commit
 ```
 
 Use the fast path when the scan shows changes that clearly belong together. Escalate to the full workflow when you see mixed intents.
@@ -190,9 +190,9 @@ Use the fast path when the scan shows changes that clearly belong together. Esca
 ### Phase 1: DISCOVER
 
 ```bash
-agstage scan                              # Compact overview of all changes
-agstage scan src/auth.rs src/login.rs     # Filter to specific files
-agstage scan src/auth.rs --full           # Get line-level diff content
+pgs scan                              # Compact overview of all changes
+pgs scan src/auth.rs src/login.rs     # Filter to specific files
+pgs scan src/auth.rs --full           # Get line-level diff content
 ```
 
 Parse structured output (marker records by default, JSON when `--json` is used). Each file has `hunks[]` with stable `id` values you can pass directly to `stage`.
@@ -211,19 +211,19 @@ Choose the right granularity:
 
 ```bash
 # Entire file — all changes belong to this commit
-agstage stage src/auth.rs
+pgs stage src/auth.rs
 
 # Specific hunks — some hunks belong to different commits
-agstage stage abc123def456 789012abcdef
+pgs stage abc123def456 789012abcdef
 
 # Line ranges — a single hunk mixes two intents
-agstage stage src/main.rs:10-20,35-40
+pgs stage src/main.rs:10-20,35-40
 
 # Exclude — stage a file but skip specific hunks
-agstage stage src/main.rs --exclude abc123def456
+pgs stage src/main.rs --exclude abc123def456
 
 # Dry-run first for complex multi-selection
-agstage stage abc123def456 789012abcdef --dry-run
+pgs stage abc123def456 789012abcdef --dry-run
 ```
 
 **Granularity decision tree:**
@@ -241,26 +241,26 @@ Prefer hunk IDs over line ranges when possible. Hunk IDs are content-addressed (
 ### Phase 4: VERIFY
 
 ```bash
-agstage status
+pgs status
 ```
 
 Check that the correct files are listed and line counts match expectations. If something is wrong, unstage and retry:
 
 ```bash
-agstage unstage abc123def456              # Unstage a specific hunk
-agstage unstage src/wrong_file.rs         # Unstage entire file
+pgs unstage abc123def456              # Unstage a specific hunk
+pgs unstage src/wrong_file.rs         # Unstage entire file
 ```
 
 ### Phase 5: COMMIT + REPEAT
 
 ```bash
-agstage commit -m "feat: add user authentication"
+pgs commit -m "feat: add user authentication"
 ```
 
 **After each commit, re-scan.** Previous hunk IDs are stale because the index changed:
 
 ```bash
-agstage scan                              # Get fresh hunk IDs for remaining changes
+pgs scan                              # Get fresh hunk IDs for remaining changes
 ```
 
 Repeat from Phase 3 for the next commit group until all changes are committed.
@@ -273,7 +273,7 @@ Repeat from Phase 3 for the next commit group until all changes are committed.
 
 **Binary file constraint**: Binary files can only be staged at file level. Hunk or line-range selections return exit code 2.
 
-**Unstage uses a different diff base**: `scan` diffs Index→Workdir (unstaged changes). `unstage` diffs HEAD→Index (staged changes). Hunk IDs from `scan` are NOT valid for `unstage`. Since `agstage status` does not output hunk IDs, prefer file-level unstaging (`agstage unstage src/file.rs`).
+**Unstage uses a different diff base**: `scan` diffs Index→Workdir (unstaged changes). `unstage` diffs HEAD→Index (staged changes). Hunk IDs from `scan` are NOT valid for `unstage`. Since `pgs status` does not output hunk IDs, prefer file-level unstaging (`pgs unstage src/file.rs`).
 
 **Incremental staging is independently atomic**: Each `stage` call has its own backup. If call 1 succeeds and call 2 fails, call 1's changes remain staged. Call 2 is rolled back to its own backup.
 
@@ -286,13 +286,13 @@ Repeat from Phase 3 for the next commit group until all changes are committed.
 ## ANTI-PATTERNS
 
 - **Don't reuse hunk IDs across file edits or commits** — always re-scan after any modification
-- **Don't skip verification** — always run `agstage status` before committing
-- **Don't mix `git add` with `agstage stage`** — use one tool per workflow
+- **Don't skip verification** — always run `pgs status` before committing
+- **Don't mix `git add` with `pgs stage`** — use one tool per workflow
 - **Don't ignore `--dry-run` output** — it catches errors before they happen
 - **Don't stage binary files with hunk IDs or line ranges** — binary files only support file-level staging
 - **Don't compute line ranges manually** — use hunk IDs from scan whenever possible
-- **Don't pipe agstage output through `head`/`tail`/`grep`** — JSON gets truncated and becomes unparseable
-- **Don't use `git diff` to "understand changes"** — `agstage scan` already gives structured per-file stats
+- **Don't pipe pgs output through `head`/`tail`/`grep`** — JSON gets truncated and becomes unparseable
+- **Don't use `git diff` to "understand changes"** — `pgs scan` already gives structured per-file stats
 - **Don't scan the entire repo with `--full`** — use compact scan for overview, filter with positional file args before using `--full`
 - **Don't change `--context` between scan and stage** — it produces different hunk IDs, causing exit code 3
 
@@ -319,7 +319,7 @@ Breaking changes: `feat!: remove deprecated API` or add `BREAKING CHANGE:` in bo
 
 Text mode output is machine-parseable marker records:
 
-`@@agstage:v1 <kind> <minified-json-payload>`
+`@@pgs:v1 <kind> <minified-json-payload>`
 
 Use `--json` or `--output json` when raw JSON envelopes are required by your workflow.
 
@@ -327,7 +327,7 @@ Parse failures use `command: "cli"` + `phase: "parse"`; runtime failures use `co
 
 For large repos:
 - Default compact scan output is already small (metadata only, no line content)
-- Use positional file args to filter: `agstage scan src/auth.rs src/login.rs`
+- Use positional file args to filter: `pgs scan src/auth.rs src/login.rs`
 - Use `--full` only on filtered scans, not on the entire repo
 - If output is very large, process it programmatically (parse JSON, extract fields)
 
@@ -339,7 +339,7 @@ Before each commit, verify:
 - [ ] Scanned with fresh data (no stale hunk IDs)
 - [ ] Changes grouped by single logical intent
 - [ ] Dry-run passed for complex multi-selection staging
-- [ ] `agstage status` confirms correct staged content
+- [ ] `pgs status` confirms correct staged content
 - [ ] Commit message follows conventional commits format
 - [ ] No unrelated changes included (check file list)
 - [ ] No debug/temporary code staged

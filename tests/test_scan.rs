@@ -1,12 +1,12 @@
 mod common;
 
-use common::{commit_file, run_agstage, setup_repo, write_file};
+use common::{commit_file, run_pgs, setup_repo, write_file};
 
 #[test]
 fn scan_empty_repo_returns_exit_code_1() {
     let (dir, _repo) = setup_repo();
     // No changes in working tree — should exit 1.
-    run_agstage(dir.path(), &["scan"]).code(1);
+    run_pgs(dir.path(), &["scan"]).code(1);
 }
 
 #[test]
@@ -21,7 +21,7 @@ fn scan_modified_file_returns_compact_contract() {
     );
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
-    let output = run_agstage(dir.path(), &["scan"]).success();
+    let output = run_pgs(dir.path(), &["scan"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -69,7 +69,7 @@ fn scan_full_flag_includes_line_content() {
     );
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
-    let output = run_agstage(dir.path(), &["scan", "--full"]).success();
+    let output = run_pgs(dir.path(), &["scan", "--full"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -108,7 +108,7 @@ fn scan_file_filter_restricts_output() {
     write_file(dir.path(), "b.txt", "bbb\nmodified\n");
 
     // Scan only a.txt via positional arg
-    let output = run_agstage(dir.path(), &["scan", "a.txt"]).success();
+    let output = run_pgs(dir.path(), &["scan", "a.txt"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -128,7 +128,7 @@ fn scan_binary_file_is_flagged() {
     let full_path = dir.path().join("data.bin");
     std::fs::write(full_path, binary_content).unwrap();
 
-    let output = run_agstage(dir.path(), &["scan"]).success();
+    let output = run_pgs(dir.path(), &["scan"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -149,7 +149,7 @@ fn scan_untracked_file_detected_as_added() {
     write_file(dir.path(), "new_file.txt", "brand new content\n");
 
     // Compact scan
-    let output = run_agstage(dir.path(), &["scan"]).success();
+    let output = run_pgs(dir.path(), &["scan"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -162,7 +162,7 @@ fn scan_untracked_file_detected_as_added() {
     assert_eq!(new_file["binary"], false);
     assert!(new_file.get("is_binary").is_none());
 
-    let full_output = run_agstage(dir.path(), &["scan", "--full"]).success();
+    let full_output = run_pgs(dir.path(), &["scan", "--full"]).success();
     let full_stdout = String::from_utf8(full_output.get_output().stdout.clone()).unwrap();
     let full_json: serde_json::Value = serde_json::from_str(&full_stdout).unwrap();
 

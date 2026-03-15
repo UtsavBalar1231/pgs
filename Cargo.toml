@@ -1,12 +1,12 @@
 [package]
-name = "agstage"
+name = "pgs"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Programmatic git staging CLI for AI agents. JSON in/out, no interactive UI."
+description = "Text-default output, no interactive UI"
 license = "MIT"
-repository = "https://github.com/utsav/agstage"
-homepage = "https://github.com/utsav/agstage"
+repository = "https://github.com/utsav/pgs"
+homepage = "https://github.com/utsav/pgs"
 readme = "README.md"
 keywords = ["git", "staging", "cli", "ai", "agent"]
 categories = ["command-line-utilities", "development-tools"]

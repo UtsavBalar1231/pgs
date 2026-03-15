@@ -1,8 +1,8 @@
-use crate::error::AgstageError;
+use crate::error::PgsError;
 
 use super::view::{CliErrorOutput, CommandOutput};
 
-pub fn render(output: &CommandOutput) -> Result<String, AgstageError> {
+pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
     match output {
         CommandOutput::Scan(scan) => Ok(serde_json::to_string_pretty(scan)?),
         CommandOutput::Operation(operation) => Ok(serde_json::to_string_pretty(operation)?),
@@ -11,6 +11,6 @@ pub fn render(output: &CommandOutput) -> Result<String, AgstageError> {
     }
 }
 
-pub fn render_error(output: &CliErrorOutput) -> Result<String, AgstageError> {
+pub fn render_error(output: &CliErrorOutput) -> Result<String, PgsError> {
     Ok(serde_json::to_string_pretty(output)?)
 }

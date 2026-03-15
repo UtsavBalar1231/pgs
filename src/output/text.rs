@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 
 use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, LineOriginView, OperationOutput,
@@ -8,7 +8,7 @@ use super::view::{
     ScanOutput, StatusOutput,
 };
 
-const MARKER_PREFIX: &str = "@@agstage:v1";
+const MARKER_PREFIX: &str = "@@pgs:v1";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 struct StatusBoundaryRecord {
@@ -84,7 +84,7 @@ struct ScanHunkRecord<'a> {
     checksum: Option<&'a str>,
 }
 
-pub fn render(output: &CommandOutput) -> Result<String, AgstageError> {
+pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
     match output {
         CommandOutput::Scan(scan) => render_scan(scan),
         CommandOutput::Operation(operation) => render_operation(operation),
@@ -93,15 +93,15 @@ pub fn render(output: &CommandOutput) -> Result<String, AgstageError> {
     }
 }
 
-pub fn render_error(output: &CliErrorOutput) -> Result<String, AgstageError> {
+pub fn render_error(output: &CliErrorOutput) -> Result<String, PgsError> {
     render_marker("error", output)
 }
 
-fn render_commit(output: &CommitOutput) -> Result<String, AgstageError> {
+fn render_commit(output: &CommitOutput) -> Result<String, PgsError> {
     render_marker("commit.result", output)
 }
 
-fn render_operation(output: &OperationOutput) -> Result<String, AgstageError> {
+fn render_operation(output: &OperationOutput) -> Result<String, PgsError> {
     let mut lines = Vec::with_capacity(output.items.len() + output.warnings.len() + 2);
     let boundary = OperationBoundaryRecord {
         command: output.command,
@@ -134,7 +134,7 @@ fn render_operation(output: &OperationOutput) -> Result<String, AgstageError> {
     Ok(lines.join("\n"))
 }
 
-fn render_scan(output: &ScanOutput) -> Result<String, AgstageError> {
+fn render_scan(output: &ScanOutput) -> Result<String, PgsError> {
     let mut lines = Vec::new();
     let boundary = ScanBoundaryRecord {
         command: output.command,
@@ -168,7 +168,7 @@ fn render_scan(output: &ScanOutput) -> Result<String, AgstageError> {
     Ok(lines.join("\n"))
 }
 
-fn render_status(output: &StatusOutput) -> Result<String, AgstageError> {
+fn render_status(output: &StatusOutput) -> Result<String, PgsError> {
     let mut lines = Vec::with_capacity(output.files.len() + 3);
     let boundary = StatusBoundaryRecord {
         command: output.command,
@@ -196,7 +196,7 @@ fn render_status(output: &StatusOutput) -> Result<String, AgstageError> {
     Ok(lines.join("\n"))
 }
 
-fn render_scan_compact(lines: &mut Vec<String>, output: &ScanOutput) -> Result<(), AgstageError> {
+fn render_scan_compact(lines: &mut Vec<String>, output: &ScanOutput) -> Result<(), PgsError> {
     for file in &output.files {
         lines.push(render_marker("file", &ScanFileRecord::from(file))?);
 
@@ -208,7 +208,7 @@ fn render_scan_compact(lines: &mut Vec<String>, output: &ScanOutput) -> Result<(
     Ok(())
 }
 
-fn render_scan_full(lines: &mut Vec<String>, output: &ScanOutput) -> Result<(), AgstageError> {
+fn render_scan_full(lines: &mut Vec<String>, output: &ScanOutput) -> Result<(), PgsError> {
     for file in &output.files {
         let file_record = ScanFileRecord::from(file);
         lines.push(render_marker("file.begin", &file_record)?);
@@ -275,7 +275,7 @@ fn operation_marker_kind(command: OutputCommand, suffix: &str) -> String {
     format!("{}.{suffix}", command.as_str())
 }
 
-fn render_marker<T: Serialize>(kind: &str, payload: &T) -> Result<String, AgstageError> {
+fn render_marker<T: Serialize>(kind: &str, payload: &T) -> Result<String, PgsError> {
     let json = serde_json::to_string(payload)?;
     Ok(format!("{MARKER_PREFIX} {kind} {json}"))
 }

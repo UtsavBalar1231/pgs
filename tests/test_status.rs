@@ -1,12 +1,12 @@
 mod common;
 
-use common::{commit_file, run_agstage, setup_repo, write_file};
+use common::{commit_file, run_pgs, setup_repo, write_file};
 
 #[test]
 fn status_empty_returns_empty_contract() {
     let (dir, _repo) = setup_repo();
 
-    let output = run_agstage(dir.path(), &["status"]).success();
+    let output = run_pgs(dir.path(), &["status"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
@@ -29,10 +29,10 @@ fn status_after_stage_shows_file() {
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
     // Stage the file
-    run_agstage(dir.path(), &["stage", "hello.txt"]).success();
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
     // Check status
-    let output = run_agstage(dir.path(), &["status"]).success();
+    let output = run_pgs(dir.path(), &["status"]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 

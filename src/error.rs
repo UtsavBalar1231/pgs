@@ -1,4 +1,4 @@
-/// All error types for agstage v2, mapped to CLI exit codes.
+/// All error types for pgs, mapped to CLI exit codes.
 ///
 /// Exit codes:
 /// - 0: Success
@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Top-level error type for all agstage operations.
+/// Top-level error type for all pgs operations.
 #[derive(Debug, Error)]
-pub enum AgstageError {
+pub enum PgsError {
     // --- Exit code 1: No effect ---
     /// No unstaged changes were detected in the working tree.
     #[error("no changes detected in working tree")]
@@ -113,7 +113,7 @@ pub enum AgstageError {
     Internal(String),
 }
 
-impl AgstageError {
+impl PgsError {
     /// Stable machine-readable error code for output rendering.
     pub const fn code(&self) -> &'static str {
         match self {
@@ -168,31 +168,31 @@ mod tests {
 
     #[test]
     fn no_changes_maps_to_exit_code_1() {
-        assert_eq!(AgstageError::NoChanges.exit_code(), 1);
+        assert_eq!(PgsError::NoChanges.exit_code(), 1);
     }
 
     #[test]
     fn selection_empty_maps_to_exit_code_1() {
-        assert_eq!(AgstageError::SelectionEmpty.exit_code(), 1);
+        assert_eq!(PgsError::SelectionEmpty.exit_code(), 1);
     }
 
     #[test]
     fn all_exit_code_2_variants_consistent() {
-        let variants: Vec<AgstageError> = vec![
-            AgstageError::InvalidSelection { detail: "x".into() },
-            AgstageError::InvalidLineRange {
+        let variants: Vec<PgsError> = vec![
+            PgsError::InvalidSelection { detail: "x".into() },
+            PgsError::InvalidLineRange {
                 path: "f".into(),
                 start: 5,
                 end: 3,
             },
-            AgstageError::UnknownHunkId {
+            PgsError::UnknownHunkId {
                 hunk_id: "abc".into(),
             },
-            AgstageError::FileNotInDiff { path: "f".into() },
-            AgstageError::BinaryFileGranular {
+            PgsError::FileNotInDiff { path: "f".into() },
+            PgsError::BinaryFileGranular {
                 path: "binary.bin".into(),
             },
-            AgstageError::GranularOnWholeFile {
+            PgsError::GranularOnWholeFile {
                 path: "new.rs".into(),
             },
         ];
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn stale_scan_maps_to_exit_code_3() {
-        let err = AgstageError::StaleScan {
+        let err = PgsError::StaleScan {
             path: "src/main.rs".into(),
         };
         assert_eq!(err.exit_code(), 3);
@@ -211,12 +211,12 @@ mod tests {
 
     #[test]
     fn index_locked_maps_to_exit_code_3() {
-        assert_eq!(AgstageError::IndexLocked.exit_code(), 3);
+        assert_eq!(PgsError::IndexLocked.exit_code(), 3);
     }
 
     #[test]
     fn staging_failed_maps_to_exit_code_3() {
-        let err = AgstageError::StagingFailed {
+        let err = PgsError::StagingFailed {
             path: "src/main.rs".into(),
             reason: "blob write failed".into(),
         };
@@ -225,13 +225,13 @@ mod tests {
 
     #[test]
     fn internal_error_maps_to_exit_code_4() {
-        let err = AgstageError::Internal("bug".into());
+        let err = PgsError::Internal("bug".into());
         assert_eq!(err.exit_code(), 4);
     }
 
     #[test]
     fn io_error_includes_path_in_display() {
-        let err = AgstageError::io(
+        let err = PgsError::io(
             "/some/path",
             std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
         );
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn granular_on_whole_file_maps_to_exit_code_2() {
-        let err = AgstageError::GranularOnWholeFile {
+        let err = PgsError::GranularOnWholeFile {
             path: "new_file.rs".into(),
         };
         assert_eq!(err.exit_code(), 2);
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn stale_scan_maps_to_stable_code() {
-        let err = AgstageError::StaleScan {
+        let err = PgsError::StaleScan {
             path: "src/main.rs".into(),
         };
         assert_eq!(err.code(), "stale_scan");

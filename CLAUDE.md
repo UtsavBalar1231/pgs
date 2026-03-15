@@ -27,7 +27,7 @@ Clippy is configured strictly in Cargo.toml: `deny all`, `warn pedantic+nursery`
 src/
   main.rs          — entry, clap args, delegates to cmd::run()
   lib.rs           — pub mod declarations
-  error.rs         — AgstageError enum (14 variants), exit_code() mapping
+  error.rs         — PgsError enum (14 variants), exit_code() mapping
   models.rs        — all serializable types (ScanResult, StageResult, etc.)
 
   cmd/             — command handlers (one file per command)
@@ -101,13 +101,13 @@ For every new function:
 - `setup_repo()` -> `(TempDir, Repository)` with git identity and initial commit
 - `write_file(repo, path, content)` -> write file to working directory
 - `commit_file(repo, path, content, message)` -> write, add, commit
-- `run_agstage(repo, args)` -> run the CLI binary with `--repo` pointed at the test repo
+- `run_pgs(repo, args)` -> run the CLI binary with `--repo` pointed at the test repo
 
 ## Output Contract
 
 Default mode is text with marker records:
 
-`@@agstage:v1 <kind> <minified-json-payload>`
+`@@pgs:v1 <kind> <minified-json-payload>`
 
 JSON is opt-in via `--json` or `--output json`.
 

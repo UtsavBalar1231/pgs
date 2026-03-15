@@ -6,7 +6,7 @@ pub mod unstaging;
 
 use git2::Repository;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 
 /// Build an `IndexEntry` for a file, preserving existing mode/flags from the index.
 ///
@@ -41,7 +41,7 @@ pub fn build_index_entry(
 /// Read a blob from HEAD for the given file path.
 ///
 /// Returns the raw byte content of the file as it exists in HEAD.
-pub fn read_head_blob(repo: &Repository, file_path: &str) -> Result<Vec<u8>, AgstageError> {
+pub fn read_head_blob(repo: &Repository, file_path: &str) -> Result<Vec<u8>, PgsError> {
     let head = repo.head()?;
     let tree = head.peel_to_tree()?;
     let entry = tree.get_path(std::path::Path::new(file_path))?;
@@ -53,11 +53,11 @@ pub fn read_head_blob(repo: &Repository, file_path: &str) -> Result<Vec<u8>, Ags
 /// Read a blob from the current index for the given file path.
 ///
 /// Returns an error if the file is not present in the index.
-pub fn read_index_blob(repo: &Repository, file_path: &str) -> Result<Vec<u8>, AgstageError> {
+pub fn read_index_blob(repo: &Repository, file_path: &str) -> Result<Vec<u8>, PgsError> {
     let index = repo.index()?;
     let entry = index
         .get_path(std::path::Path::new(file_path), 0)
-        .ok_or_else(|| AgstageError::FileNotInDiff {
+        .ok_or_else(|| PgsError::FileNotInDiff {
             path: file_path.to_string(),
         })?;
     let blob = repo.find_blob(entry.id)?;

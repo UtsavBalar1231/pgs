@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use clap::Args;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::git::{diff, repo, staging};
 use crate::models::{
     FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
@@ -30,7 +30,7 @@ pub fn execute(
     repo_path: Option<&str>,
     context: u32,
     args: StageArgs,
-) -> Result<CommandOutput, AgstageError> {
+) -> Result<CommandOutput, PgsError> {
     // 1. Open repo
     let repository = repo::open(repo_path)?;
 
@@ -43,7 +43,7 @@ pub fn execute(
 
     // 5. Guard: no changes
     if scan.files.is_empty() {
-        return Err(AgstageError::NoChanges);
+        return Err(PgsError::NoChanges);
     }
 
     // 6. Parse positional args
@@ -55,7 +55,7 @@ pub fn execute(
 
     // 7. Guard: empty selections
     if specs.is_empty() {
-        return Err(AgstageError::SelectionEmpty);
+        return Err(PgsError::SelectionEmpty);
     }
 
     // 8-9. Validate constraints
@@ -136,7 +136,7 @@ pub fn execute(
         .iter()
         .any(|(_, r)| !r.hunk_indices.is_empty() || is_whole_file_operation(&scan, &r.file_path));
     if !has_work {
-        return Err(AgstageError::SelectionEmpty);
+        return Err(PgsError::SelectionEmpty);
     }
 
     for (_, resolved) in &work_items {
@@ -170,7 +170,7 @@ pub fn execute(
             .files
             .iter()
             .find(|f| f.path == *file_path)
-            .ok_or_else(|| AgstageError::FileNotInDiff {
+            .ok_or_else(|| PgsError::FileNotInDiff {
                 path: file_path.clone(),
             })?;
 
@@ -244,7 +244,7 @@ fn execute_single_stage(
     file_status: &FileStatus,
     file_path: &str,
     is_binary: bool,
-) -> Result<u32, AgstageError> {
+) -> Result<u32, PgsError> {
     // Determine selection type:
     // - If resolved.line_ranges is Some → lines selection
     // - Else if original spec is Hunk → hunk-level staging

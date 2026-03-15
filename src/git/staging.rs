@@ -1,4 +1,4 @@
-/// Index-direct staging operations for agstage v2.
+/// Index-direct staging operations for pgs.
 ///
 /// Stages changes from the working directory into the git index by constructing
 /// blobs directly, without building unified diff patches. Supports file-level,
@@ -10,7 +10,7 @@ use std::path::Path;
 use git2::Repository;
 use similar::TextDiff;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 use crate::git::repo;
 use crate::git::{build_index_entry, read_head_blob};
 use crate::models::{HunkInfo, LineOrigin};
@@ -22,13 +22,13 @@ use crate::models::{HunkInfo, LineOrigin};
 ///
 /// # Errors
 ///
-/// - `AgstageError::Internal` if the repository has no working directory
-/// - `AgstageError::Io` if the file cannot be read from disk
-/// - `AgstageError::Git` if blob creation or index update fails
-pub fn stage_file(repo: &Repository, file_path: &str) -> Result<u32, AgstageError> {
+/// - `PgsError::Internal` if the repository has no working directory
+/// - `PgsError::Io` if the file cannot be read from disk
+/// - `PgsError::Git` if blob creation or index update fails
+pub fn stage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
     let workdir = repo::workdir(repo)?;
     let full_path = workdir.join(file_path);
-    let content = fs::read(&full_path).map_err(|e| AgstageError::io(&full_path, e))?;
+    let content = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
 
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
@@ -60,19 +60,19 @@ pub fn stage_file(repo: &Repository, file_path: &str) -> Result<u32, AgstageErro
 ///
 /// # Errors
 ///
-/// - `AgstageError::Git` if HEAD blob or index operations fail
-/// - `AgstageError::Io` if the workdir file cannot be read
-/// - `AgstageError::Internal` if the repository is bare
+/// - `PgsError::Git` if HEAD blob or index operations fail
+/// - `PgsError::Io` if the workdir file cannot be read
+/// - `PgsError::Internal` if the repository is bare
 #[allow(clippy::implicit_hasher)]
 pub fn stage_lines(
     repo: &Repository,
     file_path: &str,
     selected_lines: &HashSet<u32>,
-) -> Result<u32, AgstageError> {
+) -> Result<u32, PgsError> {
     let head_bytes = read_head_blob(repo, file_path)?;
     let workdir = repo::workdir(repo)?;
     let full_path = workdir.join(file_path);
-    let work_bytes = fs::read(&full_path).map_err(|e| AgstageError::io(&full_path, e))?;
+    let work_bytes = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
 
     let head_text = String::from_utf8_lossy(&head_bytes);
     let work_text = String::from_utf8_lossy(&work_bytes);
@@ -155,11 +155,7 @@ pub fn stage_lines(
 /// # Errors
 ///
 /// Propagates all errors from [`stage_lines`].
-pub fn stage_hunk(
-    repo: &Repository,
-    file_path: &str,
-    hunk: &HunkInfo,
-) -> Result<u32, AgstageError> {
+pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result<u32, PgsError> {
     let mut selected = HashSet::new();
     for line in &hunk.lines {
         match line.origin {
@@ -178,8 +174,8 @@ pub fn stage_hunk(
 ///
 /// # Errors
 ///
-/// - `AgstageError::Git` if the index cannot be updated
-pub fn stage_deletion(repo: &Repository, file_path: &str) -> Result<(), AgstageError> {
+/// - `PgsError::Git` if the index cannot be updated
+pub fn stage_deletion(repo: &Repository, file_path: &str) -> Result<(), PgsError> {
     let mut index = repo.index()?;
     index.remove_path(Path::new(file_path))?;
     index.write()?;
@@ -193,16 +189,16 @@ pub fn stage_deletion(repo: &Repository, file_path: &str) -> Result<(), AgstageE
 ///
 /// # Errors
 ///
-/// - `AgstageError::Git` if index operations fail
-/// - `AgstageError::Io` if the new file cannot be read from disk
-/// - `AgstageError::Internal` if the repository is bare
-pub fn stage_rename(repo: &Repository, old_path: &str, new_path: &str) -> Result<(), AgstageError> {
+/// - `PgsError::Git` if index operations fail
+/// - `PgsError::Io` if the new file cannot be read from disk
+/// - `PgsError::Internal` if the repository is bare
+pub fn stage_rename(repo: &Repository, old_path: &str, new_path: &str) -> Result<(), PgsError> {
     let mut index = repo.index()?;
     index.remove_path(Path::new(old_path))?;
 
     let workdir = repo::workdir(repo)?;
     let full_path = workdir.join(new_path);
-    let content = fs::read(&full_path).map_err(|e| AgstageError::io(&full_path, e))?;
+    let content = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
 
     let oid = repo.blob(&content)?;
 

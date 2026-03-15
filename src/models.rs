@@ -1,4 +1,4 @@
-/// Shared data models for agstage v2.
+/// Shared data models for pgs.
 ///
 /// All serializable types used across commands. Every struct derives
 /// Serialize + Deserialize for JSON round-tripping.
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 // ─── Scan Output ───────────────────────────────────────────────────
 
-/// Result of `agstage scan --full` — all unstaged changes with line content.
+/// Result of `pgs scan --full` — all unstaged changes with line content.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanResult {
     /// List of files with unstaged changes.
@@ -111,7 +111,7 @@ pub enum LineOrigin {
 
 // ─── Compact Scan Output ──────────────────────────────────────────
 
-/// Compact scan result — default output for `agstage scan`.
+/// Compact scan result — default output for `pgs scan`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompactScanResult {
     /// Files with unstaged changes (metadata only).
@@ -216,7 +216,7 @@ impl From<&ScanResult> for CompactScanResult {
 
 // ─── Stage/Unstage Output ─────────────────────────────────────────
 
-/// Result of `agstage stage` or `agstage unstage`.
+/// Result of `pgs stage` or `pgs unstage`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StageResult {
     /// Overall outcome.
@@ -262,7 +262,7 @@ pub struct FailedItem {
 
 // ─── Status Output ─────────────────────────────────────────────────
 
-/// Result of `agstage status`.
+/// Result of `pgs status`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatusReport {
     /// Files currently staged.
@@ -297,7 +297,7 @@ pub struct StatusSummary {
 
 // ─── Commit Output ────────────────────────────────────────────────
 
-/// Result of `agstage commit`.
+/// Result of `pgs commit`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitResult {
     /// Full 40-character SHA-1 hash.

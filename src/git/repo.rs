@@ -1,27 +1,27 @@
-/// Repository discovery helpers for agstage.
+/// Repository discovery helpers for pgs.
 use std::path::Path;
 
 use git2::Repository;
 
-use crate::error::AgstageError;
+use crate::error::PgsError;
 
 /// Discover and open a git repository.
 ///
 /// If `path` is `Some`, opens the repository at that exact path.
 /// If `None`, walks up from the current working directory looking for `.git`.
-pub fn open(path: Option<&str>) -> Result<Repository, AgstageError> {
+pub fn open(path: Option<&str>) -> Result<Repository, PgsError> {
     match path {
-        Some(p) => Repository::open(p).map_err(AgstageError::from),
-        None => Repository::discover(".").map_err(AgstageError::from),
+        Some(p) => Repository::open(p).map_err(PgsError::from),
+        None => Repository::discover(".").map_err(PgsError::from),
     }
 }
 
 /// Return the working directory path for a repository.
 ///
 /// Returns an error for bare repositories, which have no working directory.
-pub fn workdir(repo: &Repository) -> Result<&Path, AgstageError> {
+pub fn workdir(repo: &Repository) -> Result<&Path, PgsError> {
     repo.workdir()
-        .ok_or_else(|| AgstageError::Internal("bare repository has no working directory".into()))
+        .ok_or_else(|| PgsError::Internal("bare repository has no working directory".into()))
 }
 
 #[cfg(test)]

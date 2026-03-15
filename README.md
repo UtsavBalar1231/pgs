@@ -1,10 +1,10 @@
-# agstage
+# pgs
 
 Programmatic git staging CLI for AI agents. Text-first output, explicit JSON opt-in, no interactive UI.
 
-`agstage` lets coding agents stage git changes at file, hunk, and line-range granularity without `git add -p`.
+`pgs` lets coding agents stage git changes at file, hunk, and line-range granularity without `git add -p`.
 It is machine-parseable in both modes:
-- text (default): marker records beginning with `@@agstage:v1`
+- text (default): marker records beginning with `@@pgs:v1`
 - json (opt-in): `--json` or `--output json`
 
 Compact scan is default for `scan`; use `--full` only when line-level diff content is required.
@@ -13,7 +13,7 @@ Compact scan is default for `scan`; use `--full` only when line-level diff conte
 
 Text mode uses this exact grammar for machine-significant records:
 
-`@@agstage:v1 <kind> <minified-json-payload>`
+`@@pgs:v1 <kind> <minified-json-payload>`
 
 Examples of record kinds:
 - `scan.begin`, `file`, `hunk`, `summary`, `scan.end`
@@ -32,21 +32,21 @@ Parse failures use `command: "cli"` + `phase: "parse"`; runtime failures use the
 
 ```bash
 # Text default (marker output)
-agstage scan
+pgs scan
 
 # Full scan with diff body framed by markers
-agstage scan --full
+pgs scan --full
 
 # JSON mode (explicit opt-in)
-agstage --json scan
+pgs --json scan
 
 # Stage by file, hunk ID, or line range (auto-detected positional syntax)
-agstage stage src/lib.rs
-agstage stage abc123def456
-agstage stage src/lib.rs:10-20,30-40
+pgs stage src/lib.rs
+pgs stage abc123def456
+pgs stage src/lib.rs:10-20,30-40
 
 # Commit staged changes
-agstage commit -m "feat: add feature X"
+pgs commit -m "feat: add feature X"
 ```
 
 ## Build

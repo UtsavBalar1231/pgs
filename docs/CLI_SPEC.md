@@ -1,6 +1,6 @@
-# agstage CLI Specification
+# pgs CLI Specification
 
-This document defines the output contract for `agstage` v1 markers and v1 JSON envelopes.
+This document defines the output contract for `pgs` v1 markers and v1 JSON envelopes.
 
 ## Output Modes
 
@@ -15,7 +15,7 @@ This document defines the output contract for `agstage` v1 markers and v1 JSON e
 
 Machine-significant text records use this exact syntax:
 
-`@@agstage:v1 <kind> <minified-json-payload>`
+`@@pgs:v1 <kind> <minified-json-payload>`
 
 Notes:
 - Marker prefix always starts at column 0.
