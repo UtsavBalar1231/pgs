@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 
 mod commit;
+pub mod mcp_adapter;
 mod scan;
 mod stage;
 mod status;

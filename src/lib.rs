@@ -1,6 +1,7 @@
 pub mod cmd;
 pub mod error;
 pub mod git;
+pub mod mcp;
 pub mod models;
 mod output;
 pub mod safety;
