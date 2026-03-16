@@ -55,6 +55,16 @@ See `docs/CLI_SPEC.md` for the full output contract.
 | 3 | Conflict — re-scan and retry (stale scan, locked index) |
 | 4 | Internal error |
 
+## MCP Server
+
+`pgs` also ships `pgs-mcp`, a local stdio MCP server for the same scan/status/stage/unstage/commit workflow.
+
+```bash
+cargo run --bin pgs-mcp
+```
+
+MCP tool calls require an explicit `repo_path`. For full MCP usage, task support, and safety notes, see `docs/MCP_SERVER.md`.
+
 ## Build
 
 ```bash
