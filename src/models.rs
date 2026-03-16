@@ -26,6 +26,10 @@ pub struct FileInfo {
     pub file_checksum: String,
     /// Whether this file contains binary content.
     pub is_binary: bool,
+    /// File mode in the old (index) state (e.g. `0o100644`).
+    pub old_mode: u32,
+    /// File mode in the new (workdir) state (e.g. `0o100755`).
+    pub new_mode: u32,
     /// Diff hunks for this file. Empty for binary files.
     pub hunks: Vec<HunkInfo>,
 }
@@ -47,6 +51,8 @@ pub struct ScanSummary {
     pub renamed: usize,
     /// Count of binary files.
     pub binary: usize,
+    /// Count of files with mode (permission) changes.
+    pub mode_changed: usize,
 }
 
 /// File-level change status.
@@ -129,6 +135,10 @@ pub struct CompactFileInfo {
     pub status: FileStatus,
     /// Whether this file contains binary content.
     pub is_binary: bool,
+    /// File mode in the old (index) state (e.g. `0o100644`).
+    pub old_mode: u32,
+    /// File mode in the new (workdir) state (e.g. `0o100755`).
+    pub new_mode: u32,
     /// Hunk metadata (no line content).
     pub hunks: Vec<CompactHunkInfo>,
     /// Number of hunks in this file.
@@ -200,6 +210,8 @@ impl From<&ScanResult> for CompactScanResult {
                     path: file.path.clone(),
                     status: file.status.clone(),
                     is_binary: file.is_binary,
+                    old_mode: file.old_mode,
+                    new_mode: file.new_mode,
                     hunks,
                     hunks_count,
                     lines_added,
@@ -282,6 +294,10 @@ pub struct StagedFileInfo {
     pub lines_added: u32,
     /// Lines deleted in this file.
     pub lines_deleted: u32,
+    /// File mode in the old (HEAD) state.
+    pub old_mode: u32,
+    /// File mode in the new (index) state.
+    pub new_mode: u32,
 }
 
 /// Summary of staged changes.
@@ -390,6 +406,8 @@ mod tests {
                 status: FileStatus::Modified,
                 file_checksum: "abc123".into(),
                 is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
                 hunks: vec![HunkInfo {
                     hunk_id: "h1".into(),
                     old_start: 1,
@@ -442,6 +460,8 @@ mod tests {
                 status: FileStatus::Added,
                 lines_added: 10,
                 lines_deleted: 0,
+                old_mode: 0,
+                new_mode: 0o100_644,
             }],
             summary: StatusSummary {
                 total_files: 1,
@@ -553,6 +573,8 @@ mod tests {
                     status: FileStatus::Modified,
                     file_checksum: "abc123".into(),
                     is_binary: false,
+                    old_mode: 0o100_644,
+                    new_mode: 0o100_644,
                     hunks: vec![HunkInfo {
                         hunk_id: "h1a2b3c4d5e6".into(),
                         old_start: 10,
@@ -595,6 +617,8 @@ mod tests {
                     status: FileStatus::Modified,
                     file_checksum: "bin999".into(),
                     is_binary: true,
+                    old_mode: 0o100_644,
+                    new_mode: 0o100_644,
                     hunks: vec![],
                 },
             ],
