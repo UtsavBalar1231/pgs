@@ -7,6 +7,8 @@ use assert_cmd::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
+pub const MCP_PROTOCOL_VERSION_BASELINE: &str = pgs::mcp::PROTOCOL_VERSION_BASELINE;
+
 /// Create a test repo with git identity and initial commit so HEAD exists.
 pub fn setup_repo() -> (TempDir, Repository) {
     let dir = TempDir::new().unwrap();
