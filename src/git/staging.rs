@@ -12,7 +12,7 @@ use similar::TextDiff;
 
 use crate::error::PgsError;
 use crate::git::repo;
-use crate::git::{build_index_entry, read_head_blob};
+use crate::git::{build_index_entry, read_head_blob, read_index_blob};
 use crate::models::{HunkInfo, LineOrigin};
 
 /// Stage an entire file from the working directory into the index.
@@ -44,23 +44,13 @@ pub fn stage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
 
 /// Stage specific lines from the working directory into the index.
 ///
-/// Diffs the HEAD blob against the working-tree file using `similar::TextDiff`,
-/// then selectively applies only the lines whose NEW file line numbers (1-indexed)
-/// appear in `selected_lines`. Unselected changes are preserved as they were in HEAD.
-///
-/// # Algorithm
-///
-/// 1. Read HEAD blob (base) and workdir file (target)
-/// 2. Diff HEAD vs workdir line-by-line
-/// 3. Walk all changes:
-///    - **Equal**: always keep
-///    - **Delete**: keep (preserve HEAD line) unless old line is selected for removal
-///    - **Insert**: include only if new line number is in `selected_lines`
-/// 4. Reconstruct result blob preserving trailing-newline semantics
+/// Diffs the current index blob (falling back to HEAD) against the working-tree
+/// file, then selectively applies only the lines whose line numbers (1-indexed)
+/// appear in `selected_lines`. Unselected changes are preserved as-is.
 ///
 /// # Errors
 ///
-/// - `PgsError::Git` if HEAD blob or index operations fail
+/// - `PgsError::Git` if index/HEAD blob or index operations fail
 /// - `PgsError::Io` if the workdir file cannot be read
 /// - `PgsError::Internal` if the repository is bare
 #[allow(clippy::implicit_hasher)]
@@ -69,18 +59,19 @@ pub fn stage_lines(
     file_path: &str,
     selected_lines: &HashSet<u32>,
 ) -> Result<u32, PgsError> {
-    let head_bytes = read_head_blob(repo, file_path)?;
+    let base_bytes = read_index_blob(repo, file_path)
+        .or_else(|_| read_head_blob(repo, file_path))?;
     let workdir = repo::workdir(repo)?;
     let full_path = workdir.join(file_path);
     let work_bytes = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
 
-    let head_text = String::from_utf8_lossy(&head_bytes);
+    let base_text = String::from_utf8_lossy(&base_bytes);
     let work_text = String::from_utf8_lossy(&work_bytes);
 
-    let head_has_trailing_newline = head_text.ends_with('\n');
+    let base_has_trailing_newline = base_text.ends_with('\n');
     let work_has_trailing_newline = work_text.ends_with('\n');
 
-    let diff = TextDiff::from_lines(head_text.as_ref(), work_text.as_ref());
+    let diff = TextDiff::from_lines(base_text.as_ref(), work_text.as_ref());
 
     let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_staged: u32 = 0;
@@ -126,7 +117,7 @@ pub fn stage_lines(
     let should_have_trailing_newline = if lines_staged > 0 {
         work_has_trailing_newline
     } else {
-        head_has_trailing_newline
+        base_has_trailing_newline
     };
 
     if should_have_trailing_newline && !result.ends_with('\n') {
