@@ -22,6 +22,8 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 similar = "2"
+rmcp = { version = "1.2", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]
 tempfile = "3"
