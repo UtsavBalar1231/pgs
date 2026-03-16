@@ -149,8 +149,11 @@ pub fn stage_lines(
 
 /// Stage a single hunk by converting it to selected line numbers.
 ///
-/// Extracts the new-file line numbers for all Addition and Context lines in the
-/// hunk, then delegates to [`stage_lines`].
+/// Extracts line numbers for all lines in the hunk:
+/// - Addition/Context: new-file line numbers (for Insert gating in `stage_lines`)
+/// - Deletion: old-file line numbers (for Delete suppression in `stage_lines`)
+///
+/// Then delegates to [`stage_lines`].
 ///
 /// # Errors
 ///
@@ -159,10 +162,9 @@ pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result
     let mut selected = HashSet::new();
     for line in &hunk.lines {
         match line.origin {
-            LineOrigin::Addition | LineOrigin::Context => {
+            LineOrigin::Addition | LineOrigin::Context | LineOrigin::Deletion => {
                 selected.insert(line.line_number);
             }
-            LineOrigin::Deletion => {}
         }
     }
     stage_lines(repo, file_path, &selected)

@@ -256,6 +256,7 @@ fn execute_single_unstage(
                             line.origin,
                             crate::models::LineOrigin::Addition
                                 | crate::models::LineOrigin::Context
+                                | crate::models::LineOrigin::Deletion
                         ) {
                             selected.insert(line.line_number);
                         }
