@@ -61,6 +61,8 @@ pub fn build_scan_result(
         }
 
         let status = delta_to_file_status(&delta);
+        let old_mode: u32 = delta.old_file().mode().into();
+        let new_mode: u32 = delta.new_file().mode().into();
 
         // Build patch to inspect the diff
         let patch_result = Patch::from_diff(diff, i)?;
@@ -97,12 +99,17 @@ pub fn build_scan_result(
         if is_binary {
             summary.binary += 1;
         }
+        if old_mode != new_mode {
+            summary.mode_changed += 1;
+        }
 
         files.push(FileInfo {
             path,
             status,
             file_checksum,
             is_binary,
+            old_mode,
+            new_mode,
             hunks,
         });
     }
@@ -121,6 +128,8 @@ pub fn build_status_report(diff: &Diff<'_>) -> Result<StatusReport, PgsError> {
         let delta = diff.get_delta(i).expect("delta index in bounds");
         let path = delta_path(&delta)?;
         let status = delta_to_file_status(&delta);
+        let old_mode: u32 = delta.old_file().mode().into();
+        let new_mode: u32 = delta.new_file().mode().into();
 
         let patch_result = Patch::from_diff(diff, i)?;
         let (lines_added, lines_deleted) = if let Some(patch) = patch_result {
@@ -137,6 +146,8 @@ pub fn build_status_report(diff: &Diff<'_>) -> Result<StatusReport, PgsError> {
             status,
             lines_added,
             lines_deleted,
+            old_mode,
+            new_mode,
         });
     }
 

@@ -10,7 +10,7 @@ use git2::Repository;
 use similar::TextDiff;
 
 use crate::error::PgsError;
-use crate::git::{build_index_entry, read_head_blob, read_index_blob};
+use crate::git::{build_index_entry, read_head_blob, read_head_mode, read_index_blob};
 use crate::models::{HunkInfo, LineOrigin};
 
 /// Unstage an entire file — restore the index entry to match HEAD.
@@ -40,8 +40,10 @@ pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError>
         (Ok(head_content), _) => {
             let lines_affected = count_lines(&head_content);
             let oid = repo.blob(&head_content)?;
+            let head_mode = read_head_mode(repo, file_path).ok();
             #[allow(clippy::cast_possible_truncation)]
-            let entry = build_index_entry(&index, file_path, oid, head_content.len() as u32);
+            let entry =
+                build_index_entry(&index, file_path, oid, head_content.len() as u32, head_mode);
             index.add(&entry)?;
             index.write()?;
             Ok(lines_affected)
@@ -147,7 +149,7 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
     let oid = repo.blob(new_content.as_bytes())?;
     let mut index = repo.index()?;
     #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, file_path, oid, new_content.len() as u32);
+    let entry = build_index_entry(&index, file_path, oid, new_content.len() as u32, None);
     index.add(&entry)?;
     index.write()?;
 
@@ -393,10 +395,7 @@ mod tests {
 
         // Verify the deletion is staged
         let staged_before = read_index_content(&repo, "f.txt").expect("in index");
-        assert_eq!(
-            staged_before, "line1\nline3\n",
-            "deletion should be staged"
-        );
+        assert_eq!(staged_before, "line1\nline3\n", "deletion should be staged");
 
         // Build the HEAD→index diff to get the actual hunk metadata
         let diff = crate::git::diff::diff_head_to_index(&repo, 3).expect("diff");
@@ -422,8 +421,9 @@ mod tests {
             };
             let line_number = match origin {
                 crate::models::LineOrigin::Deletion => line.old_lineno().unwrap_or(0),
-                crate::models::LineOrigin::Context
-                | crate::models::LineOrigin::Addition => line.new_lineno().unwrap_or(0),
+                crate::models::LineOrigin::Context | crate::models::LineOrigin::Addition => {
+                    line.new_lineno().unwrap_or(0)
+                }
             };
             lines.push(crate::models::DiffLineInfo {
                 line_number,

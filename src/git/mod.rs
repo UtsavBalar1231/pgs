@@ -10,17 +10,18 @@ use crate::error::PgsError;
 
 /// Build an `IndexEntry` for a file, preserving existing mode/flags from the index.
 ///
-/// If the file is not yet in the index (new file), defaults to mode 0o100644
-/// and zeroed flags.
+/// If the file is not yet in the index (new file), defaults to mode `0o100644`.
+/// Pass `mode_override` to apply a different mode (e.g. for `chmod +x` staging).
 pub fn build_index_entry(
     index: &git2::Index,
     file_path: &str,
     oid: git2::Oid,
     content_len: u32,
+    mode_override: Option<u32>,
 ) -> git2::IndexEntry {
     let (mode, flags, flags_extended) = match index.get_path(std::path::Path::new(file_path), 0) {
-        Some(e) => (e.mode, e.flags, e.flags_extended),
-        None => (0o100_644, 0, 0),
+        Some(e) => (mode_override.unwrap_or(e.mode), e.flags, e.flags_extended),
+        None => (mode_override.unwrap_or(0o100_644), 0, 0),
     };
     git2::IndexEntry {
         ctime: git2::IndexTime::new(0, 0),
@@ -36,6 +37,17 @@ pub fn build_index_entry(
         flags_extended,
         path: file_path.as_bytes().to_vec(),
     }
+}
+
+/// Read the file mode from the HEAD tree entry.
+///
+/// Returns the mode (e.g. `0o100644` or `0o100755`) for the given path in HEAD.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn read_head_mode(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
+    let head = repo.head()?;
+    let tree = head.peel_to_tree()?;
+    let entry = tree.get_path(std::path::Path::new(file_path))?;
+    Ok(entry.filemode() as u32)
 }
 
 /// Read a blob from HEAD for the given file path.
@@ -171,7 +183,7 @@ mod tests {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
         let oid = git2::Oid::zero();
-        let entry = build_index_entry(&index, "new_file.rs", oid, 42);
+        let entry = build_index_entry(&index, "new_file.rs", oid, 42, None);
         assert_eq!(entry.mode, 0o100_644);
         assert_eq!(entry.flags, 0);
         assert_eq!(entry.file_size, 42);
@@ -182,10 +194,40 @@ mod tests {
     fn build_index_entry_existing_file_preserves_mode() {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
-        // file.txt was added in setup, should be in index
         let oid = git2::Oid::zero();
-        let entry = build_index_entry(&index, "file.txt", oid, 10);
-        // Mode should be preserved from the existing entry (regular file = 0o100644)
+        let entry = build_index_entry(&index, "file.txt", oid, 10, None);
         assert_eq!(entry.mode, 0o100_644);
+    }
+
+    #[test]
+    fn build_index_entry_mode_override_applies() {
+        let (_dir, repo) = setup_repo_with_commit("content");
+        let index = repo.index().expect("index");
+        let oid = git2::Oid::zero();
+        let entry = build_index_entry(&index, "file.txt", oid, 10, Some(0o100_755));
+        assert_eq!(entry.mode, 0o100_755);
+    }
+
+    #[test]
+    fn build_index_entry_mode_override_new_file() {
+        let (_dir, repo) = setup_repo_with_commit("content");
+        let index = repo.index().expect("index");
+        let oid = git2::Oid::zero();
+        let entry = build_index_entry(&index, "new_file.rs", oid, 42, Some(0o100_755));
+        assert_eq!(entry.mode, 0o100_755);
+    }
+
+    #[test]
+    fn read_head_mode_returns_file_mode() {
+        let (_dir, repo) = setup_repo_with_commit("content");
+        let mode = read_head_mode(&repo, "file.txt").expect("read_head_mode");
+        assert_eq!(mode, 0o100_644);
+    }
+
+    #[test]
+    fn read_head_mode_missing_file_returns_error() {
+        let (_dir, repo) = setup_repo_with_commit("content");
+        let result = read_head_mode(&repo, "nonexistent.txt");
+        assert!(result.is_err());
     }
 }

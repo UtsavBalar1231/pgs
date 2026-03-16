@@ -25,7 +25,11 @@ use crate::models::{HunkInfo, LineOrigin};
 /// - `PgsError::Internal` if the repository has no working directory
 /// - `PgsError::Io` if the file cannot be read from disk
 /// - `PgsError::Git` if blob creation or index update fails
-pub fn stage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
+pub fn stage_file(
+    repo: &Repository,
+    file_path: &str,
+    mode_override: Option<u32>,
+) -> Result<u32, PgsError> {
     let workdir = repo::workdir(repo)?;
     let full_path = workdir.join(file_path);
     let content = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
@@ -34,7 +38,7 @@ pub fn stage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
     let mut index = repo.index()?;
 
     #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, file_path, oid, content.len() as u32);
+    let entry = build_index_entry(&index, file_path, oid, content.len() as u32, mode_override);
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
 
@@ -59,8 +63,8 @@ pub fn stage_lines(
     file_path: &str,
     selected_lines: &HashSet<u32>,
 ) -> Result<u32, PgsError> {
-    let base_bytes = read_index_blob(repo, file_path)
-        .or_else(|_| read_head_blob(repo, file_path))?;
+    let base_bytes =
+        read_index_blob(repo, file_path).or_else(|_| read_head_blob(repo, file_path))?;
     let workdir = repo::workdir(repo)?;
     let full_path = workdir.join(file_path);
     let work_bytes = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
@@ -131,7 +135,7 @@ pub fn stage_lines(
     let mut index = repo.index()?;
 
     #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, file_path, oid, content.len() as u32);
+    let entry = build_index_entry(&index, file_path, oid, content.len() as u32, None);
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
 
@@ -196,7 +200,7 @@ pub fn stage_rename(repo: &Repository, old_path: &str, new_path: &str) -> Result
     let oid = repo.blob(&content)?;
 
     #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, new_path, oid, content.len() as u32);
+    let entry = build_index_entry(&index, new_path, oid, content.len() as u32, None);
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
     Ok(())
@@ -265,7 +269,7 @@ mod tests {
         let modified = "original\nappended line\n";
         fs::write(dir.path().join("file.txt"), modified).expect("write");
 
-        let bytes = stage_file(&repo, "file.txt").expect("stage_file");
+        let bytes = stage_file(&repo, "file.txt", None).expect("stage_file");
 
         assert_eq!(
             bytes,
@@ -283,7 +287,7 @@ mod tests {
         let new_content = "brand new file\n";
         fs::write(dir.path().join("new_file.txt"), new_content).expect("write");
 
-        let bytes = stage_file(&repo, "new_file.txt").expect("stage_file");
+        let bytes = stage_file(&repo, "new_file.txt", None).expect("stage_file");
 
         assert_eq!(
             bytes,
@@ -576,8 +580,15 @@ mod tests {
             let tree = repo.find_tree(tree_oid).unwrap();
             let sig = repo.signature().unwrap();
             let parent = repo.head().unwrap().peel_to_commit().unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "stage deletion hunk", &tree, &[&parent])
-                .unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "stage deletion hunk",
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
         }
 
         // Final scan — should be empty; bug causes phantom hunk to remain
