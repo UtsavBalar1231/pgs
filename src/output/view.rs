@@ -1,3 +1,4 @@
+use rmcp::schemars::{self, JsonSchema};
 use serde::Serialize;
 
 use crate::models::{
@@ -40,7 +41,7 @@ impl From<CommitOutput> for CommandOutput {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
     Scan,
@@ -62,14 +63,14 @@ impl OutputCommand {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorPhase {
     Parse,
     Runtime,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct CliErrorOutput {
     pub version: &'static str,
     pub command: &'static str,
@@ -108,7 +109,7 @@ impl CliErrorOutput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct CommitOutput {
     pub version: &'static str,
     pub command: OutputCommand,
@@ -135,7 +136,7 @@ impl From<CommitResult> for CommitOutput {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatusView {
     Ok,
@@ -151,7 +152,7 @@ impl From<OperationStatus> for OperationStatusView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct OperationOutput {
     pub version: &'static str,
     pub command: OutputCommand,
@@ -198,7 +199,7 @@ impl OperationOutput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct OperationItemView {
     pub selection: String,
     pub lines_affected: u32,
@@ -213,14 +214,14 @@ impl OperationItemView {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanDetail {
     Compact,
     Full,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ScanOutput {
     pub version: &'static str,
     pub command: OutputCommand,
@@ -255,7 +256,7 @@ impl ScanOutput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ScanFileView {
     pub path: String,
     pub status: FileStatusView,
@@ -318,7 +319,7 @@ impl ScanFileView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ScanHunkView {
     pub id: String,
     pub old_start: u32,
@@ -390,7 +391,7 @@ impl ScanHunkView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ScanLineView {
     pub line_number: u32,
     pub origin: LineOriginView,
@@ -407,7 +408,7 @@ impl From<DiffLineInfo> for ScanLineView {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 pub enum LineOriginView {
     Context,
     Addition,
@@ -424,7 +425,7 @@ impl From<LineOrigin> for LineOriginView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ScanSummaryView {
     pub total_files: usize,
     pub total_hunks: usize,
@@ -469,7 +470,7 @@ fn count_lines(lines: &[DiffLineInfo]) -> (u32, u32) {
     (additions, deletions)
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct StatusOutput {
     pub version: &'static str,
     pub command: OutputCommand,
@@ -493,7 +494,7 @@ impl From<StatusReport> for StatusOutput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct StatusFileView {
     pub path: String,
     pub status: FileStatusView,
@@ -512,7 +513,7 @@ impl From<StagedFileInfo> for StatusFileView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum FileStatusView {
     Added,
@@ -532,7 +533,7 @@ impl From<FileStatus> for FileStatusView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 #[allow(clippy::struct_field_names)]
 pub struct StatusSummaryView {
     pub total_files: usize,
