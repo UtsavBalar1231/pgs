@@ -582,11 +582,13 @@ mod tests {
     fn multiple_hunks_in_single_file() {
         let (dir, repo) = setup_repo();
         // Create file with content separated by many unchanged lines
-        let original: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        let original: String = (1..=30)
+            .map(|i| ["line ", &i.to_string(), "\n"].concat())
+            .collect();
         commit_file(&repo, dir.path(), "multi.rs", &original, "initial");
 
         // Modify line 1 and line 30 — far enough apart to create two hunks
-        let mut modified = original.clone();
+        let mut modified = original;
         modified = modified.replacen("line 1\n", "CHANGED line 1\n", 1);
         modified = modified.replacen("line 30\n", "CHANGED line 30\n", 1);
         write_file(dir.path(), "multi.rs", &modified);
@@ -648,10 +650,12 @@ mod tests {
     fn context_lines_affect_hunk_boundaries() {
         let (dir, repo) = setup_repo();
         // Two changes close together but not adjacent
-        let lines: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+        let lines: String = (1..=20)
+            .map(|i| ["line ", &i.to_string(), "\n"].concat())
+            .collect();
         commit_file(&repo, dir.path(), "ctx.rs", &lines, "initial");
 
-        let mut modified = lines.clone();
+        let mut modified = lines;
         modified = modified.replacen("line 3\n", "CHANGED 3\n", 1);
         modified = modified.replacen("line 8\n", "CHANGED 8\n", 1);
         write_file(dir.path(), "ctx.rs", &modified);

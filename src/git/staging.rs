@@ -274,7 +274,10 @@ mod tests {
 
         let bytes = stage_file(&repo, "file.txt").expect("stage_file");
 
-        assert_eq!(bytes, modified.len() as u32);
+        assert_eq!(
+            bytes,
+            u32::try_from(modified.len()).expect("content fits u32")
+        );
         let staged = read_index_content(&repo, "file.txt");
         assert_eq!(staged, modified.as_bytes());
     }
@@ -289,7 +292,10 @@ mod tests {
 
         let bytes = stage_file(&repo, "new_file.txt").expect("stage_file");
 
-        assert_eq!(bytes, new_content.len() as u32);
+        assert_eq!(
+            bytes,
+            u32::try_from(new_content.len()).expect("content fits u32")
+        );
         let staged = read_index_content(&repo, "new_file.txt");
         assert_eq!(staged, new_content.as_bytes());
     }

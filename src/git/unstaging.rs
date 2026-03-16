@@ -333,7 +333,7 @@ mod tests {
         //   +new line4 (insert, new_index=3 → line 4 in index)
         //
         // To unstage only the modification: select line 2 (HEAD deletion) and line 2 (index insertion).
-        let selected: HashSet<u32> = [2].into_iter().collect();
+        let selected: HashSet<u32> = std::iter::once(2).collect();
         let lines = unstage_lines(&repo, "f.txt", &selected).expect("unstage_lines");
         assert!(lines > 0, "should have affected lines");
 
@@ -350,7 +350,7 @@ mod tests {
 
         // Index content ends with \n. After unstaging the addition (line 2),
         // result should still end with \n.
-        let selected: HashSet<u32> = [2].into_iter().collect();
+        let selected: HashSet<u32> = std::iter::once(2).collect();
         unstage_lines(&repo, "f.txt", &selected).expect("unstage_lines");
 
         let result = read_index_content(&repo, "f.txt").expect("in index");
@@ -368,7 +368,7 @@ mod tests {
 
         // Index content does NOT end with \n. After unstaging the addition,
         // result should also NOT end with \n.
-        let selected: HashSet<u32> = [2].into_iter().collect();
+        let selected: HashSet<u32> = std::iter::once(2).collect();
         unstage_lines(&repo, "f.txt", &selected).expect("unstage_lines");
 
         let result = read_index_content(&repo, "f.txt").expect("in index");

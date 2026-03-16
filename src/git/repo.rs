@@ -86,7 +86,7 @@ mod tests {
         );
     }
 
-    /// Ensure open() with a path inside a repo (not the root) still works.
+    /// Ensure `open()` with a path inside a repo (not the root) still works.
     #[test]
     fn open_subdir_of_repo_succeeds() {
         let (dir, _repo) = init_repo();

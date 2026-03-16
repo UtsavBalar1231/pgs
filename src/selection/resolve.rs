@@ -326,7 +326,7 @@ mod tests {
                 FileInfo {
                     path: "gone.rs".into(),
                     status: FileStatus::Deleted,
-                    file_checksum: "".into(),
+                    file_checksum: String::new(),
                     is_binary: false,
                     hunks: vec![HunkInfo {
                         hunk_id: "del111222333".into(),
@@ -600,7 +600,7 @@ mod tests {
             files: vec![FileInfo {
                 path: "file.txt".into(),
                 status: FileStatus::Modified,
-                file_checksum: "".into(),
+                file_checksum: String::new(),
                 is_binary: false,
                 hunks: vec![],
             }],

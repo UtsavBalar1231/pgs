@@ -513,11 +513,7 @@ fn text_full_scan_frames_diff_body_with_markers() {
             "unexpected raw diff line: {raw_line}"
         );
     }
-    assert!(
-        lines[3..hunk_end_index]
-            .iter()
-            .any(|line| *line == "+line3")
-    );
+    assert!(lines[3..hunk_end_index].contains(&"+line3"));
 
     let (hunk_end_kind, hunk_end_payload) = parse_marker(lines[hunk_end_index]);
     assert_eq!(hunk_end_kind, "hunk.end");
