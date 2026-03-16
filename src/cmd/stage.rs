@@ -285,7 +285,10 @@ fn execute_single_stage(
                 file_info.is_some_and(|fi| resolved.hunk_indices.len() == fi.hunks.len());
 
             if !is_hunk && all_hunks_present {
-                return staging::stage_file(repo, file_path);
+                let mode_override = file_info
+                    .filter(|fi| fi.old_mode != fi.new_mode)
+                    .map(|fi| fi.new_mode);
+                return staging::stage_file(repo, file_path, mode_override);
             }
 
             // Otherwise collect all selected line numbers across hunks
@@ -311,16 +314,18 @@ fn execute_single_stage(
         }
 
         // Binary or Added file-level: stage the whole file
-        (_, _, _, true) | (FileStatus::Added, _, _, _) => staging::stage_file(repo, file_path),
+        (_, _, _, true) | (FileStatus::Added, _, _, _) => {
+            staging::stage_file(repo, file_path, None)
+        }
     }
 }
 
-/// Check if a file requires whole-file handling (binary, added, deleted, renamed).
-/// These file types naturally have empty `hunk_indices` and should not be skipped.
+/// Check if a file requires whole-file handling (binary, added, deleted, renamed, mode-only).
 fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) -> bool {
     scan.files.iter().any(|f| {
         f.path == file_path
             && (f.is_binary
+                || (f.old_mode != f.new_mode && f.hunks.is_empty())
                 || matches!(
                     f.status,
                     FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }

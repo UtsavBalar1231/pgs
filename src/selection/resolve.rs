@@ -269,6 +269,8 @@ mod tests {
                     status: FileStatus::Modified,
                     file_checksum: "aabbcc".into(),
                     is_binary: false,
+                    old_mode: 0o100_644,
+                    new_mode: 0o100_644,
                     hunks: vec![
                         HunkInfo {
                             hunk_id: "aaa111bbb222".into(),
@@ -305,6 +307,8 @@ mod tests {
                     status: FileStatus::Modified,
                     file_checksum: "bin999".into(),
                     is_binary: true,
+                    old_mode: 0o100_644,
+                    new_mode: 0o100_644,
                     hunks: vec![],
                 },
                 FileInfo {
@@ -312,6 +316,8 @@ mod tests {
                     status: FileStatus::Added,
                     file_checksum: "new111".into(),
                     is_binary: false,
+                    old_mode: 0o100_644,
+                    new_mode: 0o100_644,
                     hunks: vec![HunkInfo {
                         hunk_id: "eee555fff666".into(),
                         old_start: 0,
@@ -328,6 +334,8 @@ mod tests {
                     status: FileStatus::Deleted,
                     file_checksum: String::new(),
                     is_binary: false,
+                    old_mode: 0o100_644,
+                    new_mode: 0o100_644,
                     hunks: vec![HunkInfo {
                         hunk_id: "del111222333".into(),
                         old_start: 1,
@@ -525,6 +533,8 @@ mod tests {
                 status: FileStatus::Modified,
                 file_checksum: checksum,
                 is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
                 hunks: vec![],
             }],
             summary: ScanSummary::default(),
@@ -552,6 +562,8 @@ mod tests {
                 file_checksum: "000000000000000000000000000000000000000000000000000000000000dead"
                     .into(),
                 is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
                 hunks: vec![],
             }],
             summary: ScanSummary::default(),
@@ -576,6 +588,8 @@ mod tests {
                 status: FileStatus::Deleted,
                 file_checksum: "some_checksum".into(),
                 is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
                 hunks: vec![],
             }],
             summary: ScanSummary::default(),
@@ -602,6 +616,8 @@ mod tests {
                 status: FileStatus::Modified,
                 file_checksum: String::new(),
                 is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
                 hunks: vec![],
             }],
             summary: ScanSummary::default(),

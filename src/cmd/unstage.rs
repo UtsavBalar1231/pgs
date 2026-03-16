@@ -268,12 +268,12 @@ fn execute_single_unstage(
     }
 }
 
-/// Check if a file requires whole-file handling (binary, added, deleted, renamed).
-/// These file types naturally have empty `hunk_indices` and should not be skipped.
+/// Check if a file requires whole-file handling (binary, added, deleted, renamed, mode-only).
 fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) -> bool {
     scan.files.iter().any(|f| {
         f.path == file_path
             && (f.is_binary
+                || (f.old_mode != f.new_mode && f.hunks.is_empty())
                 || matches!(
                     f.status,
                     FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
