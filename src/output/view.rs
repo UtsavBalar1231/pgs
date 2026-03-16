@@ -266,6 +266,10 @@ pub struct ScanFileView {
     pub lines_deleted: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_mode: Option<String>,
     pub hunks: Vec<ScanHunkView>,
 }
 
@@ -275,11 +279,22 @@ impl ScanFileView {
             path,
             status,
             is_binary,
+            old_mode: old_mode_raw,
+            new_mode: new_mode_raw,
             hunks,
             hunks_count,
             lines_added,
             lines_deleted,
         } = file;
+
+        let (old_mode, new_mode) = if old_mode_raw == new_mode_raw {
+            (None, None)
+        } else {
+            (
+                Some(format!("{old_mode_raw:o}")),
+                Some(format!("{new_mode_raw:o}")),
+            )
+        };
 
         Self {
             path,
@@ -289,6 +304,8 @@ impl ScanFileView {
             lines_added,
             lines_deleted,
             checksum: None,
+            old_mode,
+            new_mode,
             hunks: hunks.into_iter().map(ScanHunkView::from_compact).collect(),
         }
     }
@@ -299,12 +316,23 @@ impl ScanFileView {
             status,
             file_checksum,
             is_binary,
+            old_mode: old_mode_raw,
+            new_mode: new_mode_raw,
             hunks,
         } = file;
 
         let hunks: Vec<ScanHunkView> = hunks.into_iter().map(ScanHunkView::from_full).collect();
         let (lines_added, lines_deleted) = count_hunk_totals(&hunks);
         let hunks_count = hunks.len();
+
+        let (old_mode, new_mode) = if old_mode_raw == new_mode_raw {
+            (None, None)
+        } else {
+            (
+                Some(format!("{old_mode_raw:o}")),
+                Some(format!("{new_mode_raw:o}")),
+            )
+        };
 
         Self {
             path,
@@ -314,6 +342,8 @@ impl ScanFileView {
             lines_added,
             lines_deleted,
             checksum: Some(file_checksum),
+            old_mode,
+            new_mode,
             hunks,
         }
     }
@@ -434,6 +464,7 @@ pub struct ScanSummaryView {
     pub deleted: usize,
     pub renamed: usize,
     pub binary: usize,
+    pub mode_changed: usize,
 }
 
 impl From<ScanSummary> for ScanSummaryView {
@@ -446,6 +477,7 @@ impl From<ScanSummary> for ScanSummaryView {
             deleted: summary.deleted,
             renamed: summary.renamed,
             binary: summary.binary,
+            mode_changed: summary.mode_changed,
         }
     }
 }
@@ -500,15 +532,30 @@ pub struct StatusFileView {
     pub status: FileStatusView,
     pub lines_added: u32,
     pub lines_deleted: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_mode: Option<String>,
 }
 
 impl From<StagedFileInfo> for StatusFileView {
     fn from(file: StagedFileInfo) -> Self {
+        let (old_mode, new_mode) = if file.old_mode == file.new_mode {
+            (None, None)
+        } else {
+            (
+                Some(format!("{:o}", file.old_mode)),
+                Some(format!("{:o}", file.new_mode)),
+            )
+        };
+
         Self {
             path: file.path,
             status: file.status.into(),
             lines_added: file.lines_added,
             lines_deleted: file.lines_deleted,
+            old_mode,
+            new_mode,
         }
     }
 }

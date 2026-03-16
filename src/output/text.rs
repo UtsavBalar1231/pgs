@@ -55,6 +55,7 @@ struct ScanSummaryRecord {
     deleted: usize,
     renamed: usize,
     binary: usize,
+    mode_changed: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +162,7 @@ fn render_scan(output: &ScanOutput) -> Result<String, PgsError> {
             deleted: output.summary.deleted,
             renamed: output.summary.renamed,
             binary: output.summary.binary,
+            mode_changed: output.summary.mode_changed,
         },
     )?);
     lines.push(render_marker("scan.end", &boundary)?);
