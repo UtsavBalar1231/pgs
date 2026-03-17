@@ -177,3 +177,77 @@ fn scan_untracked_file_detected_as_added() {
     let lines = hunks[0]["lines"].as_array().unwrap();
     assert!(!lines.is_empty(), "hunks should have lines in full output");
 }
+
+#[test]
+fn scan_directory_filter_returns_matching_files() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "root.txt", "root\n", "initial");
+    write_file(dir.path(), "subdir/file1.txt", "content1\n");
+    write_file(dir.path(), "subdir/file2.txt", "content2\n");
+
+    let output = run_pgs(dir.path(), &["scan", "subdir"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert!(
+        paths.contains(&"subdir/file1.txt"),
+        "subdir/file1.txt should be present: {paths:?}"
+    );
+    assert!(
+        paths.contains(&"subdir/file2.txt"),
+        "subdir/file2.txt should be present: {paths:?}"
+    );
+}
+
+#[test]
+fn scan_directory_filter_with_trailing_slash() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "root.txt", "root\n", "initial");
+    write_file(dir.path(), "subdir/file1.txt", "content1\n");
+    write_file(dir.path(), "subdir/file2.txt", "content2\n");
+
+    let output = run_pgs(dir.path(), &["scan", "subdir/"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert!(
+        paths.contains(&"subdir/file1.txt"),
+        "subdir/file1.txt should be present with trailing slash: {paths:?}"
+    );
+    assert!(
+        paths.contains(&"subdir/file2.txt"),
+        "subdir/file2.txt should be present with trailing slash: {paths:?}"
+    );
+}
+
+#[test]
+fn scan_exact_file_filter_still_works() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "root.txt", "root\n", "initial");
+    write_file(dir.path(), "subdir/file1.txt", "content1\n");
+    write_file(dir.path(), "subdir/file2.txt", "content2\n");
+
+    let output = run_pgs(dir.path(), &["scan", "subdir/file1.txt"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "only one file should match: {files:?}");
+    assert_eq!(files[0]["path"], "subdir/file1.txt");
+}
+
+#[test]
+fn scan_directory_with_no_changes_returns_no_changes() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "dirA/file.txt", "aaa\n", "add dirA");
+    commit_file(&repo, dir.path(), "dirB/file.txt", "bbb\n", "add dirB");
+    // Modify only dirA
+    write_file(dir.path(), "dirA/file.txt", "aaa modified\n");
+
+    // Scan dirB — no changes there
+    run_pgs(dir.path(), &["scan", "dirB"]).code(1);
+}

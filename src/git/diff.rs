@@ -53,9 +53,12 @@ pub fn build_scan_result(
         let delta = diff.get_delta(i).expect("delta index in bounds");
         let path = delta_path(&delta)?;
 
-        // Apply file filter
+        // Apply file filter — support exact paths and directory prefixes
         if let Some(filter) = file_filter {
-            if !filter.contains(&path) {
+            if !filter.iter().any(|f| {
+                let f_normalized = f.strip_suffix('/').unwrap_or(f);
+                path == *f_normalized || path.starts_with(&format!("{f_normalized}/"))
+            }) {
                 continue;
             }
         }
