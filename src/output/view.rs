@@ -488,16 +488,19 @@ fn count_hunk_totals(hunks: &[ScanHunkView]) -> (u32, u32) {
     (lines_added, lines_deleted)
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn count_lines(lines: &[DiffLineInfo]) -> (u32, u32) {
-    let additions = lines
-        .iter()
-        .filter(|line| line.origin == LineOrigin::Addition)
-        .count() as u32;
-    let deletions = lines
-        .iter()
-        .filter(|line| line.origin == LineOrigin::Deletion)
-        .count() as u32;
+    let additions = crate::saturating_u32(
+        lines
+            .iter()
+            .filter(|line| line.origin == LineOrigin::Addition)
+            .count(),
+    );
+    let deletions = crate::saturating_u32(
+        lines
+            .iter()
+            .filter(|line| line.origin == LineOrigin::Deletion)
+            .count(),
+    );
 
     (additions, deletions)
 }

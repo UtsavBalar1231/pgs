@@ -12,7 +12,6 @@ pub struct CommitArgs {
     pub message: String,
 }
 
-#[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
 pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutput, PgsError> {
     let repository = repo::open(repo_path)?;
@@ -47,8 +46,8 @@ pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutpu
             sig.email().unwrap_or("unknown")
         ),
         files_changed: stats.files_changed(),
-        insertions: stats.insertions() as u32,
-        deletions: stats.deletions() as u32,
+        insertions: crate::saturating_u32(stats.insertions()),
+        deletions: crate::saturating_u32(stats.deletions()),
     };
 
     Ok(CommitOutput::from(result).into())

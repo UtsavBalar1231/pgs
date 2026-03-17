@@ -298,16 +298,15 @@ fn estimate_lines(scan: &crate::models::ScanResult, resolved: &ResolvedSelection
             .iter()
             .filter_map(|&idx| fi.hunks.get(idx))
             .map(|h| {
-                #[allow(clippy::cast_possible_truncation)]
-                let count = h
-                    .lines
-                    .iter()
-                    .filter(|l| {
-                        l.origin == crate::models::LineOrigin::Addition
-                            || l.origin == crate::models::LineOrigin::Deletion
-                    })
-                    .count() as u32;
-                count
+                crate::saturating_u32(
+                    h.lines
+                        .iter()
+                        .filter(|l| {
+                            l.origin == crate::models::LineOrigin::Addition
+                                || l.origin == crate::models::LineOrigin::Deletion
+                        })
+                        .count(),
+                )
             })
             .sum()
     }

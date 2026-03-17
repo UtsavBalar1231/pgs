@@ -42,12 +42,11 @@ pub fn build_index_entry(
 /// Read the file mode from the HEAD tree entry.
 ///
 /// Returns the mode (e.g. `0o100644` or `0o100755`) for the given path in HEAD.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn read_head_mode(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
     let head = repo.head()?;
     let tree = head.peel_to_tree()?;
     let entry = tree.get_path(std::path::Path::new(file_path))?;
-    Ok(entry.filemode() as u32)
+    Ok(u32::try_from(entry.filemode()).unwrap_or(0o100_644))
 }
 
 /// Read a blob from HEAD for the given file path.

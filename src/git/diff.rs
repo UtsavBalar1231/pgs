@@ -193,7 +193,6 @@ fn delta_to_file_status(delta: &git2::DiffDelta<'_>) -> FileStatus {
 }
 
 /// Extract `HunkInfo` entries from a `Patch`.
-#[allow(clippy::cast_possible_truncation)]
 fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, PgsError> {
     let hunk_count = patch.num_hunks();
     let mut hunks = Vec::with_capacity(hunk_count);
@@ -263,7 +262,6 @@ fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, Pg
 }
 
 /// Count added and deleted lines in a patch.
-#[allow(clippy::cast_possible_truncation)]
 fn patch_line_counts(patch: &Patch<'_>) -> (u32, u32) {
     let mut added = 0u32;
     let mut deleted = 0u32;

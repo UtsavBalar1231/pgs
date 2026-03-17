@@ -14,6 +14,7 @@ use crate::error::PgsError;
 use crate::git::repo;
 use crate::git::{build_index_entry, read_head_blob, read_index_blob};
 use crate::models::{HunkInfo, LineOrigin};
+use crate::saturating_u32;
 
 /// Stage an entire file from the working directory into the index.
 ///
@@ -37,13 +38,17 @@ pub fn stage_file(
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, file_path, oid, content.len() as u32, mode_override);
+    let entry = build_index_entry(
+        &index,
+        file_path,
+        oid,
+        saturating_u32(content.len()),
+        mode_override,
+    );
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    Ok(content.len() as u32)
+    Ok(saturating_u32(content.len()))
 }
 
 /// Stage specific lines from the working directory into the index.
@@ -87,8 +92,7 @@ pub fn stage_lines(
             }
             similar::ChangeTag::Delete => {
                 // old_index() is 0-based; convert to 1-based
-                #[allow(clippy::cast_possible_truncation)]
-                let old_line = change.old_index().map_or(0, |i| i + 1) as u32;
+                let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
                 if !selected_lines.contains(&old_line) {
                     // Not selected: keep the HEAD line
                     result_lines.push(change.value());
@@ -97,8 +101,7 @@ pub fn stage_lines(
             }
             similar::ChangeTag::Insert => {
                 // new_index() is 0-based; convert to 1-based
-                #[allow(clippy::cast_possible_truncation)]
-                let new_line = change.new_index().map_or(0, |i| i + 1) as u32;
+                let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
                 if selected_lines.contains(&new_line) {
                     result_lines.push(change.value());
                     lines_staged += 1;
@@ -134,8 +137,7 @@ pub fn stage_lines(
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, file_path, oid, content.len() as u32, None);
+    let entry = build_index_entry(&index, file_path, oid, saturating_u32(content.len()), None);
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
 
@@ -199,8 +201,7 @@ pub fn stage_rename(repo: &Repository, old_path: &str, new_path: &str) -> Result
 
     let oid = repo.blob(&content)?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, new_path, oid, content.len() as u32, None);
+    let entry = build_index_entry(&index, new_path, oid, saturating_u32(content.len()), None);
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
     Ok(())

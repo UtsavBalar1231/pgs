@@ -170,7 +170,6 @@ pub struct CompactHunkInfo {
     pub deletions: u32,
 }
 
-#[allow(clippy::cast_possible_truncation)]
 impl From<&ScanResult> for CompactScanResult {
     fn from(result: &ScanResult) -> Self {
         let files = result
@@ -181,16 +180,18 @@ impl From<&ScanResult> for CompactScanResult {
                     .hunks
                     .iter()
                     .map(|hunk| {
-                        let additions = hunk
-                            .lines
-                            .iter()
-                            .filter(|l| l.origin == LineOrigin::Addition)
-                            .count() as u32;
-                        let deletions = hunk
-                            .lines
-                            .iter()
-                            .filter(|l| l.origin == LineOrigin::Deletion)
-                            .count() as u32;
+                        let additions = crate::saturating_u32(
+                            hunk.lines
+                                .iter()
+                                .filter(|l| l.origin == LineOrigin::Addition)
+                                .count(),
+                        );
+                        let deletions = crate::saturating_u32(
+                            hunk.lines
+                                .iter()
+                                .filter(|l| l.origin == LineOrigin::Deletion)
+                                .count(),
+                        );
                         CompactHunkInfo {
                             hunk_id: hunk.hunk_id.clone(),
                             header: hunk.header.clone(),

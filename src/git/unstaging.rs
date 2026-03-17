@@ -12,6 +12,7 @@ use similar::TextDiff;
 use crate::error::PgsError;
 use crate::git::{build_index_entry, read_head_blob, read_head_mode, read_index_blob};
 use crate::models::{HunkInfo, LineOrigin};
+use crate::saturating_u32;
 
 /// Unstage an entire file — restore the index entry to match HEAD.
 ///
@@ -41,9 +42,13 @@ pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError>
             let lines_affected = count_lines(&head_content);
             let oid = repo.blob(&head_content)?;
             let head_mode = read_head_mode(repo, file_path).ok();
-            #[allow(clippy::cast_possible_truncation)]
-            let entry =
-                build_index_entry(&index, file_path, oid, head_content.len() as u32, head_mode);
+            let entry = build_index_entry(
+                &index,
+                file_path,
+                oid,
+                saturating_u32(head_content.len()),
+                head_mode,
+            );
             index.add(&entry)?;
             index.write()?;
             Ok(lines_affected)
@@ -148,8 +153,13 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
     // Write the new blob and update the index
     let oid = repo.blob(new_content.as_bytes())?;
     let mut index = repo.index()?;
-    #[allow(clippy::cast_possible_truncation)]
-    let entry = build_index_entry(&index, file_path, oid, new_content.len() as u32, None);
+    let entry = build_index_entry(
+        &index,
+        file_path,
+        oid,
+        saturating_u32(new_content.len()),
+        None,
+    );
     index.add(&entry)?;
     index.write()?;
 
@@ -185,9 +195,7 @@ fn count_lines(content: &[u8]) -> u32 {
         return 0;
     }
     let text = String::from_utf8_lossy(content);
-    #[allow(clippy::cast_possible_truncation)]
-    let count = text.lines().count() as u32;
-    count
+    saturating_u32(text.lines().count())
 }
 
 #[cfg(test)]
