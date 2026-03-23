@@ -12,7 +12,9 @@ use crate::models::{LineRange, SelectionSpec};
 /// 1. If the string contains `:` and the character immediately after the
 ///    **last** `:` is an ASCII digit → parse as `Lines { path, ranges }`.
 /// 2. If the string is exactly 12 hexadecimal characters → `Hunk { hunk_id }`.
-/// 3. Otherwise → `File { path }`.
+/// 3. If the string ends with `/` → `Directory { prefix }` (strips trailing `/`
+///    and any leading `./`). Returns [`PgsError::InvalidSelection`] for a bare `/`.
+/// 4. Otherwise → `File { path }`.
 ///
 /// The `--exclude` flag reuses this same function.
 ///
@@ -45,7 +47,20 @@ pub fn detect_selection(arg: &str) -> Result<SelectionSpec, PgsError> {
         });
     }
 
-    // Rule 3: everything else → File
+    // Rule 3: trailing slash → Directory
+    if arg.ends_with('/') {
+        let trimmed = arg.strip_suffix('/').unwrap_or(arg);
+        // Normalize ./prefix to prefix (scan paths are bare relative)
+        let prefix = trimmed.strip_prefix("./").unwrap_or(trimmed).to_owned();
+        if prefix.is_empty() {
+            return Err(PgsError::InvalidSelection {
+                detail: "directory selection must not be empty (got bare '/')".into(),
+            });
+        }
+        return Ok(SelectionSpec::Directory { prefix });
+    }
+
+    // Rule 4: everything else → File
     Ok(SelectionSpec::File {
         path: arg.to_owned(),
     })
@@ -241,6 +256,61 @@ mod tests {
             SelectionSpec::Lines {
                 path: r"C:\Users\test\file.rs".into(),
                 ranges: vec![LineRange { start: 5, end: 10 }],
+            }
+        );
+    }
+
+    // ── Directory detection ───────────────────────────────────────
+
+    #[test]
+    fn detect_trailing_slash_returns_directory() {
+        let spec = detect_selection("tests/").unwrap();
+        assert_eq!(
+            spec,
+            SelectionSpec::Directory {
+                prefix: "tests".into()
+            }
+        );
+    }
+
+    #[test]
+    fn detect_nested_dir_trailing_slash_returns_directory() {
+        let spec = detect_selection("src/cmd/").unwrap();
+        assert_eq!(
+            spec,
+            SelectionSpec::Directory {
+                prefix: "src/cmd".into()
+            }
+        );
+    }
+
+    #[test]
+    fn detect_bare_slash_returns_error() {
+        let err = detect_selection("/").unwrap_err();
+        assert!(
+            matches!(err, PgsError::InvalidSelection { .. }),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn detect_no_trailing_slash_returns_file() {
+        let spec = detect_selection("tests").unwrap();
+        assert_eq!(
+            spec,
+            SelectionSpec::File {
+                path: "tests".into()
+            }
+        );
+    }
+
+    #[test]
+    fn detect_dot_slash_prefix_with_trailing_slash() {
+        let spec = detect_selection("./src/").unwrap();
+        assert_eq!(
+            spec,
+            SelectionSpec::Directory {
+                prefix: "src".into()
             }
         );
     }

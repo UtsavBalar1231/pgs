@@ -345,6 +345,8 @@ pub enum SelectionSpec {
         path: String,
         ranges: Vec<LineRange>,
     },
+    /// Select all files under a directory prefix.
+    Directory { prefix: String },
 }
 
 /// An inclusive line range [start, end] (1-indexed).
@@ -392,6 +394,7 @@ pub fn format_selection(spec: &SelectionSpec) -> String {
                 .collect();
             format!("{path}:{}", ranges_str.join(","))
         }
+        SelectionSpec::Directory { prefix } => format!("{prefix}/"),
     }
 }
 
