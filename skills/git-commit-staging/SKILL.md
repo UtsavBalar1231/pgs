@@ -57,6 +57,7 @@ Global flags: `--repo PATH` (default: CWD), `--context N` (default: 3, min: 1)
 | File path | Anything not matching other rules | `src/main.rs` |
 | Hunk ID | Exactly 12 hex characters | `a1b2c3d4e5f6` |
 | Line range | Path contains `:` followed by digit | `src/main.rs:10-20,30-40` |
+| Directory | Ends with `/` | `tests/` |
 
 Edge case: if a file path is exactly 12 hex chars, prefix with `./`.
 
@@ -192,6 +193,7 @@ Choose the staging command based on file state and hunk count:
 | `hunks_count` >= 2, all hunks same intent | File-level | `pgs stage path` |
 | `hunks_count` >= 2, hunks belong to different commits | Hunk-level — use `id` from scan | `pgs stage a1b2c3d4e5f6` |
 | Single hunk mixes two intents (rare) | Line-level — run `--full` first | `pgs stage path:10-20` |
+| All files in a directory share same intent | Directory-level | `pgs stage tests/` |
 
 **How to determine intent from compact scan:**
 - Read the `header` field — it shows the function/section name (e.g., `@@ -10,5 +10,7 @@ fn authenticate`)
