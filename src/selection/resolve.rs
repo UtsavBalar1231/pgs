@@ -23,7 +23,42 @@ pub fn resolve_selection(
         SelectionSpec::File { path } => resolve_file(scan, path),
         SelectionSpec::Hunk { hunk_id } => resolve_hunk(scan, hunk_id),
         SelectionSpec::Lines { path, ranges } => resolve_lines(scan, path, ranges),
+        SelectionSpec::Directory { .. } => {
+            unreachable!(
+                "Directory specs must be resolved via resolve_directory(), not resolve_selection()"
+            )
+        }
     }
+}
+
+/// Resolve a directory-prefix selection: all files whose path starts with `prefix/`.
+///
+/// Returns every file in `scan` whose path equals `prefix` or starts with `prefix/`.
+///
+/// # Errors
+///
+/// Returns [`PgsError::FileNotInDiff`] when no files match the prefix.
+pub fn resolve_directory(
+    scan: &ScanResult,
+    prefix: &str,
+) -> Result<Vec<ResolvedSelection>, PgsError> {
+    let normalized = prefix.strip_suffix('/').unwrap_or(prefix);
+    let matches: Vec<ResolvedSelection> = scan
+        .files
+        .iter()
+        .filter(|f| f.path == normalized || f.path.starts_with(&format!("{normalized}/")))
+        .map(|f| ResolvedSelection {
+            file_path: f.path.clone(),
+            hunk_indices: (0..f.hunks.len()).collect(),
+            line_ranges: None,
+        })
+        .collect();
+    if matches.is_empty() {
+        return Err(PgsError::FileNotInDiff {
+            path: format!("{normalized}/"),
+        });
+    }
+    Ok(matches)
 }
 
 /// Resolve a file-level selection: all hunks in the file.
@@ -130,7 +165,7 @@ pub fn validate_binary_constraints(
     spec: &SelectionSpec,
 ) -> Result<(), PgsError> {
     let path = match spec {
-        SelectionSpec::File { .. } => return Ok(()),
+        SelectionSpec::File { .. } | SelectionSpec::Directory { .. } => return Ok(()),
         SelectionSpec::Hunk { hunk_id } => {
             // Find the file that owns this hunk.
             scan.files
@@ -170,7 +205,7 @@ pub fn validate_whole_file_constraints(
     spec: &SelectionSpec,
 ) -> Result<(), PgsError> {
     let target_path: Option<&str> = match spec {
-        SelectionSpec::File { .. } => return Ok(()),
+        SelectionSpec::File { .. } | SelectionSpec::Directory { .. } => return Ok(()),
         SelectionSpec::Hunk { hunk_id } => scan
             .files
             .iter()
@@ -628,5 +663,55 @@ mod tests {
             result.is_ok(),
             "expected Ok for empty checksum, got: {result:?}"
         );
+    }
+
+    // ── resolve_directory ─────────────────────────────────────────
+
+    #[test]
+    fn resolve_directory_returns_matching_files() {
+        let scan = make_scan();
+        let results = resolve_directory(&scan, "src").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_path, "src/main.rs");
+        assert_eq!(results[0].hunk_indices, vec![0, 1]);
+        assert!(results[0].line_ranges.is_none());
+    }
+
+    #[test]
+    fn resolve_directory_no_match_returns_error() {
+        let scan = make_scan();
+        let err = resolve_directory(&scan, "nonexistent").unwrap_err();
+        assert!(
+            matches!(err, PgsError::FileNotInDiff { .. }),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_directory_does_not_match_partial_names() {
+        let scan = make_scan();
+        let err = resolve_directory(&scan, "sr").unwrap_err();
+        assert!(
+            matches!(err, PgsError::FileNotInDiff { .. }),
+            "sr should not match src/main.rs: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_binary_allows_directory() {
+        let scan = make_scan();
+        let spec = SelectionSpec::Directory {
+            prefix: "src".into(),
+        };
+        assert!(validate_binary_constraints(&scan, &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_whole_file_allows_directory() {
+        let scan = make_scan();
+        let spec = SelectionSpec::Directory {
+            prefix: "src".into(),
+        };
+        assert!(validate_whole_file_constraints(&scan, &spec).is_ok());
     }
 }
