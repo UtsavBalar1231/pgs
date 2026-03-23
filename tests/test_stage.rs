@@ -232,3 +232,167 @@ fn stage_multiple_line_selections_same_file_reports_each_selection_item() {
     assert!(items[0]["lines_affected"].as_u64().unwrap() > 0);
     assert!(items[1]["lines_affected"].as_u64().unwrap() > 0);
 }
+
+#[test]
+fn stage_directory_stages_all_matching_files() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "subdir/file1.txt", "a\n", "add subdir");
+    commit_file(&repo, dir.path(), "subdir/file2.txt", "b\n", "add file2");
+    write_file(dir.path(), "subdir/file1.txt", "a\nmodified1\n");
+    write_file(dir.path(), "subdir/file2.txt", "b\nmodified2\n");
+
+    run_pgs(dir.path(), &["stage", "subdir/"]).success();
+
+    let status_output = run_pgs(dir.path(), &["status"]).success();
+    let stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2, "both files under subdir/ should be staged");
+    let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"subdir/file1.txt"));
+    assert!(paths.contains(&"subdir/file2.txt"));
+}
+
+#[test]
+fn stage_directory_with_trailing_slash() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "mydir/a.rs", "fn a() {}\n", "add mydir");
+    write_file(dir.path(), "mydir/a.rs", "fn a() {}\nfn b() {}\n");
+
+    let output = run_pgs(dir.path(), &["stage", "mydir/"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "ok");
+    let items = json["items"].as_array().unwrap();
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn stage_directory_no_match_returns_error() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "src/main.rs", "fn main() {}\n", "init");
+    write_file(
+        dir.path(),
+        "src/main.rs",
+        "fn main() { println!(\"hi\"); }\n",
+    );
+
+    run_pgs(dir.path(), &["stage", "nonexistent/"]).code(2);
+}
+
+#[test]
+fn stage_directory_output_shows_individual_files() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "lib/a.rs", "fn a() {}\n", "add lib");
+    commit_file(&repo, dir.path(), "lib/b.rs", "fn b() {}\n", "add b");
+    write_file(dir.path(), "lib/a.rs", "fn a() {}\nfn a2() {}\n");
+    write_file(dir.path(), "lib/b.rs", "fn b() {}\nfn b2() {}\n");
+
+    let output = run_pgs(dir.path(), &["stage", "lib/"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let items = json["items"].as_array().unwrap();
+    let selections: Vec<&str> = items
+        .iter()
+        .map(|i| i["selection"].as_str().unwrap())
+        .collect();
+    assert!(
+        selections.iter().any(|s| *s == "lib/a.rs"),
+        "items should list individual file paths, got: {selections:?}"
+    );
+    assert!(
+        selections.iter().any(|s| *s == "lib/b.rs"),
+        "items should list individual file paths, got: {selections:?}"
+    );
+}
+
+#[test]
+fn stage_directory_with_exclude() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "pkg/file1.rs", "fn f1() {}\n", "add pkg");
+    commit_file(&repo, dir.path(), "pkg/file2.rs", "fn f2() {}\n", "add f2");
+    write_file(dir.path(), "pkg/file1.rs", "fn f1() {}\nfn extra() {}\n");
+    write_file(dir.path(), "pkg/file2.rs", "fn f2() {}\nfn extra() {}\n");
+
+    run_pgs(dir.path(), &["stage", "pkg/", "--exclude", "pkg/file2.rs"]).success();
+
+    let status_output = run_pgs(dir.path(), &["status"]).success();
+    let stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "only file1 should be staged");
+    assert_eq!(files[0]["path"], "pkg/file1.rs");
+}
+
+#[test]
+fn stage_directory_exclude_directory() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "root.rs", "fn root() {}\n", "add root");
+    commit_file(&repo, dir.path(), "excl/x.rs", "fn x() {}\n", "add excl");
+    write_file(dir.path(), "root.rs", "fn root() {}\nfn extra() {}\n");
+    write_file(dir.path(), "excl/x.rs", "fn x() {}\nfn extra() {}\n");
+
+    run_pgs(dir.path(), &["stage", "root.rs", "--exclude", "excl/"]).success();
+
+    let status_output = run_pgs(dir.path(), &["status"]).success();
+    let stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let files = json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], "root.rs");
+}
+
+#[test]
+fn stage_directory_dry_run() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "dry/a.rs", "fn a() {}\n", "add dry");
+    write_file(dir.path(), "dry/a.rs", "fn a() {}\nfn b() {}\n");
+
+    let output = run_pgs(dir.path(), &["stage", "--dry-run", "dry/"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "dry_run");
+    assert_eq!(json["backup_id"], serde_json::Value::Null);
+
+    let items = json["items"].as_array().unwrap();
+    assert!(!items.is_empty(), "dry-run should report expansion");
+    let selections: Vec<&str> = items
+        .iter()
+        .map(|i| i["selection"].as_str().unwrap())
+        .collect();
+    assert!(
+        selections.iter().any(|s| *s == "dry/a.rs"),
+        "dry-run items should list individual file paths, got: {selections:?}"
+    );
+}
+
+#[test]
+fn stage_directory_with_mixed_statuses() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "mix/existing.rs", "old\n", "add mix");
+    write_file(dir.path(), "mix/existing.rs", "old\nnew\n");
+    write_file(dir.path(), "mix/new_file.rs", "brand new\n");
+
+    let output = run_pgs(dir.path(), &["stage", "mix/"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "ok");
+
+    let status_output = run_pgs(dir.path(), &["status"]).success();
+    let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let status_json: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
+
+    let files = status_json["files"].as_array().unwrap();
+    assert_eq!(
+        files.len(),
+        2,
+        "both Added and Modified files should be staged"
+    );
+}

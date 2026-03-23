@@ -118,3 +118,35 @@ fn unstage_multiple_line_selections_same_file_reports_each_selection_item() {
     assert!(items[0]["lines_affected"].as_u64().unwrap() > 0);
     assert!(items[1]["lines_affected"].as_u64().unwrap() > 0);
 }
+
+#[test]
+fn unstage_directory_unstages_all_matching_files() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "subdir/file1.txt", "a\n", "add subdir");
+    commit_file(&repo, dir.path(), "subdir/file2.txt", "b\n", "add file2");
+    write_file(dir.path(), "subdir/file1.txt", "a\nmodified1\n");
+    write_file(dir.path(), "subdir/file2.txt", "b\nmodified2\n");
+
+    run_pgs(dir.path(), &["stage", "subdir/file1.txt"]).success();
+    run_pgs(dir.path(), &["stage", "subdir/file2.txt"]).success();
+
+    let status_before = run_pgs(dir.path(), &["status"]).success();
+    let stdout_before = String::from_utf8(status_before.get_output().stdout.clone()).unwrap();
+    let json_before: serde_json::Value = serde_json::from_str(&stdout_before).unwrap();
+    assert_eq!(
+        json_before["files"].as_array().unwrap().len(),
+        2,
+        "both files should be staged before unstage"
+    );
+
+    run_pgs(dir.path(), &["unstage", "subdir/"]).success();
+
+    let status_after = run_pgs(dir.path(), &["status"]).success();
+    let stdout_after = String::from_utf8(status_after.get_output().stdout.clone()).unwrap();
+    let json_after: serde_json::Value = serde_json::from_str(&stdout_after).unwrap();
+    let files_after = json_after["files"].as_array().unwrap();
+    assert!(
+        files_after.is_empty(),
+        "both files should be unstaged after unstage subdir/"
+    );
+}

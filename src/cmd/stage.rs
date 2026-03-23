@@ -67,8 +67,18 @@ pub fn execute(
     // 10. Resolve each spec (keep paired with original spec)
     let mut spec_resolved: Vec<(SelectionSpec, ResolvedSelection)> = Vec::new();
     for spec in specs {
-        let resolved = resolve::resolve_selection(&scan, &spec)?;
-        spec_resolved.push((spec, resolved));
+        if let SelectionSpec::Directory { prefix } = &spec {
+            let resolved_list = resolve::resolve_directory(&scan, prefix)?;
+            for resolved in resolved_list {
+                let file_spec = SelectionSpec::File {
+                    path: resolved.file_path.clone(),
+                };
+                spec_resolved.push((file_spec, resolved));
+            }
+        } else {
+            let resolved = resolve::resolve_selection(&scan, &spec)?;
+            spec_resolved.push((spec, resolved));
+        }
     }
 
     // 11. Parse --exclude
@@ -82,7 +92,18 @@ pub fn execute(
     let mut exclusion_set: HashSet<(String, usize)> = HashSet::new();
     let mut excluded_files: HashSet<String> = HashSet::new();
     for ex_spec in &exclude_specs {
-        if let Ok(ex_resolved) = resolve::resolve_selection(&scan, ex_spec) {
+        if let SelectionSpec::Directory { prefix } = ex_spec {
+            if let Ok(ex_resolved_list) = resolve::resolve_directory(&scan, prefix) {
+                for ex_resolved in ex_resolved_list {
+                    if ex_resolved.hunk_indices.is_empty() {
+                        excluded_files.insert(ex_resolved.file_path.clone());
+                    }
+                    for &idx in &ex_resolved.hunk_indices {
+                        exclusion_set.insert((ex_resolved.file_path.clone(), idx));
+                    }
+                }
+            }
+        } else if let Ok(ex_resolved) = resolve::resolve_selection(&scan, ex_spec) {
             if ex_resolved.hunk_indices.is_empty() {
                 // File has no hunks (binary/deleted/renamed) — exclude entire file
                 excluded_files.insert(ex_resolved.file_path.clone());
