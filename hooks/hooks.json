@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "diff -q \"${CLAUDE_PLUGIN_ROOT}/VERSION\" \"${CLAUDE_PLUGIN_DATA}/VERSION\" >/dev/null 2>&1 || \"${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

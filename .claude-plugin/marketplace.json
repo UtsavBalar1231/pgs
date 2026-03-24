@@ -1,0 +1,16 @@
+{
+  "name": "pgs-marketplace",
+  "owner": {
+    "name": "UtsavBalar1231"
+  },
+  "metadata": {
+    "description": "pgs — non-interactive git staging plugin for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "pgs",
+      "source": "./",
+      "description": "Non-interactive git staging at file, hunk, and line granularity"
+    }
+  ]
+}
