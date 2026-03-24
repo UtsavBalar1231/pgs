@@ -230,6 +230,119 @@ fn stage_lines_does_not_change_mode() {
 }
 
 #[test]
+fn stage_new_executable_file_preserves_mode() {
+    let (dir, repo) = setup_repo();
+    repo.config()
+        .unwrap()
+        .set_bool("core.filemode", true)
+        .unwrap();
+    // Need an initial commit so HEAD exists — setup_repo() already provides one.
+    commit_file(
+        &repo,
+        dir.path(),
+        "existing.txt",
+        "hello\n",
+        "add existing",
+    );
+
+    // Write a NEW file and make it executable
+    common::write_file(dir.path(), "new_script.sh", "#!/bin/sh\necho hello\n");
+    make_executable(dir.path(), "new_script.sh");
+
+    let output = run_pgs(dir.path(), &["stage", "new_script.sh"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "ok", "staging new executable file should succeed");
+
+    let repo2 = git2::Repository::open(dir.path()).unwrap();
+    let index_mode = read_index_mode(&repo2, "new_script.sh");
+    assert_eq!(
+        index_mode, 0o100_755,
+        "new executable file should have mode 0o100755 in index, got {index_mode:#o}"
+    );
+}
+
+#[test]
+fn stage_new_file_default_mode_unchanged() {
+    let (dir, repo) = setup_repo();
+    repo.config()
+        .unwrap()
+        .set_bool("core.filemode", true)
+        .unwrap();
+    commit_file(
+        &repo,
+        dir.path(),
+        "existing.txt",
+        "hello\n",
+        "add existing",
+    );
+
+    // Write a NEW file without chmod +x
+    common::write_file(dir.path(), "new_script.sh", "#!/bin/sh\necho hello\n");
+
+    let output = run_pgs(dir.path(), &["stage", "new_script.sh"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "ok", "staging new non-executable file should succeed");
+
+    let repo2 = git2::Repository::open(dir.path()).unwrap();
+    let index_mode = read_index_mode(&repo2, "new_script.sh");
+    assert_eq!(
+        index_mode, 0o100_644,
+        "new non-executable file should have mode 0o100644 in index, got {index_mode:#o}"
+    );
+}
+
+#[test]
+fn stage_renamed_executable_file_preserves_mode() {
+    let (dir, repo) = setup_repo();
+    repo.config()
+        .unwrap()
+        .set_bool("core.filemode", true)
+        .unwrap();
+    commit_file(
+        &repo,
+        dir.path(),
+        "old_script.sh",
+        "#!/bin/sh\necho hello\n",
+        "add old script",
+    );
+
+    // Simulate rename: remove old, write new with same content, make executable
+    fs::remove_file(dir.path().join("old_script.sh")).unwrap();
+    common::write_file(dir.path(), "new_script.sh", "#!/bin/sh\necho hello\n");
+    make_executable(dir.path(), "new_script.sh");
+
+    // Check what pgs scan reports so we know how to stage
+    let scan_output = run_pgs(dir.path(), &["scan"]).success();
+    let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
+    let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
+    let files = scan_json["files"].as_array().unwrap();
+
+    // pgs may detect this as Renamed or as Deleted+Added depending on similarity
+    let new_file = files.iter().find(|f| f["path"] == "new_script.sh");
+    if let Some(file) = new_file {
+        let status_type = file["status"]["type"].as_str().unwrap_or("");
+        if status_type == "Renamed" || status_type == "Added" {
+            // Stage new_script.sh (either as rename target or new file)
+            let output = run_pgs(dir.path(), &["stage", "new_script.sh"]).success();
+            let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+            assert_eq!(json["status"], "ok", "staging should succeed");
+
+            let repo2 = git2::Repository::open(dir.path()).unwrap();
+            let index_mode = read_index_mode(&repo2, "new_script.sh");
+            assert_eq!(
+                index_mode, 0o100_755,
+                "renamed/added executable file should have mode 0o100755 in index, got {index_mode:#o}"
+            );
+        }
+    }
+}
+
+#[test]
 fn scan_mode_change_summary_counts() {
     let (dir, repo) = setup_repo();
     repo.config()

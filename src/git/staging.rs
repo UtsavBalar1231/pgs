@@ -191,7 +191,12 @@ pub fn stage_deletion(repo: &Repository, file_path: &str) -> Result<(), PgsError
 /// - `PgsError::Git` if index operations fail
 /// - `PgsError::Io` if the new file cannot be read from disk
 /// - `PgsError::Internal` if the repository is bare
-pub fn stage_rename(repo: &Repository, old_path: &str, new_path: &str) -> Result<(), PgsError> {
+pub fn stage_rename(
+    repo: &Repository,
+    old_path: &str,
+    new_path: &str,
+    mode_override: Option<u32>,
+) -> Result<(), PgsError> {
     let mut index = repo.index()?;
     index.remove_path(Path::new(old_path))?;
 
@@ -201,7 +206,7 @@ pub fn stage_rename(repo: &Repository, old_path: &str, new_path: &str) -> Result
 
     let oid = repo.blob(&content)?;
 
-    let entry = build_index_entry(&index, new_path, oid, saturating_u32(content.len()), None);
+    let entry = build_index_entry(&index, new_path, oid, saturating_u32(content.len()), mode_override);
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
     Ok(())
@@ -401,7 +406,7 @@ mod tests {
         let new_content = "fn renamed() {}\n";
         fs::write(dir.path().join("new_name.rs"), new_content).expect("write new");
 
-        stage_rename(&repo, "old_name.rs", "new_name.rs").expect("stage_rename");
+        stage_rename(&repo, "old_name.rs", "new_name.rs", None).expect("stage_rename");
 
         let index = repo.index().expect("index");
         assert!(

@@ -282,7 +282,9 @@ fn execute_single_stage(
 
         // Renamed files: stage_rename
         (FileStatus::Renamed { old_path }, _, _, _) => {
-            staging::stage_rename(repo, old_path, file_path)?;
+            let file_info = scan.files.iter().find(|f| f.path == file_path);
+            let mode_override = file_info.map(|fi| fi.new_mode);
+            staging::stage_rename(repo, old_path, file_path, mode_override)?;
             Ok(0)
         }
 
@@ -336,7 +338,9 @@ fn execute_single_stage(
 
         // Binary or Added file-level: stage the whole file
         (_, _, _, true) | (FileStatus::Added, _, _, _) => {
-            staging::stage_file(repo, file_path, None)
+            let file_info = scan.files.iter().find(|f| f.path == file_path);
+            let mode_override = file_info.map(|fi| fi.new_mode);
+            staging::stage_file(repo, file_path, mode_override)
         }
     }
 }
