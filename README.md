@@ -55,12 +55,43 @@ See `docs/CLI_SPEC.md` for the full output contract.
 | 3 | Conflict — re-scan and retry (stale scan, locked index) |
 | 4 | Internal error |
 
+## Claude Code Plugin
+
+Install `pgs` as a Claude Code plugin for automatic MCP tool integration and the `git-commit-staging` skill:
+
+```bash
+# Add the marketplace
+/plugin marketplace add UtsavBalar1231/pgs
+
+# Install the plugin
+/plugin install pgs@pgs-marketplace
+```
+
+Or test locally during development:
+
+```bash
+claude --plugin-dir /path/to/pgs
+```
+
+**What you get:**
+- **5 MCP tools**: `pgs_scan`, `pgs_stage`, `pgs_unstage`, `pgs_status`, `pgs_commit` — available automatically via the bundled MCP server
+- **git-commit-staging skill**: teaches Claude the scan → plan → stage → commit workflow with hunk-level precision
+- **Auto-install**: the plugin automatically downloads the correct prebuilt binary for your platform on first session
+
+**Supported platforms:** macOS (Intel + Apple Silicon), Linux (x86_64 + ARM64). Windows binaries are available for standalone use via `claude mcp add`.
+
 ## MCP Server
 
 `pgs` also ships `pgs-mcp`, a local stdio MCP server for the same scan/status/stage/unstage/commit workflow.
 
 ```bash
 cargo run --bin pgs-mcp
+```
+
+Or add it manually to Claude Code without the plugin:
+
+```bash
+claude mcp add --transport stdio pgs -- /path/to/pgs-mcp
 ```
 
 MCP tool calls require an explicit `repo_path`. For full MCP usage, task support, and safety notes, see `docs/MCP_SERVER.md`.
