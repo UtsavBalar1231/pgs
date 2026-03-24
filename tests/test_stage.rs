@@ -300,11 +300,11 @@ fn stage_directory_output_shows_individual_files() {
         .map(|i| i["selection"].as_str().unwrap())
         .collect();
     assert!(
-        selections.iter().any(|s| *s == "lib/a.rs"),
+        selections.contains(&"lib/a.rs"),
         "items should list individual file paths, got: {selections:?}"
     );
     assert!(
-        selections.iter().any(|s| *s == "lib/b.rs"),
+        selections.contains(&"lib/b.rs"),
         "items should list individual file paths, got: {selections:?}"
     );
 }
@@ -367,7 +367,7 @@ fn stage_directory_dry_run() {
         .map(|i| i["selection"].as_str().unwrap())
         .collect();
     assert!(
-        selections.iter().any(|s| *s == "dry/a.rs"),
+        selections.contains(&"dry/a.rs"),
         "dry-run items should list individual file paths, got: {selections:?}"
     );
 }

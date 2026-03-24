@@ -490,7 +490,11 @@ mod tests {
     fn stage_lines_sequential_without_commit_preserves_both() {
         // Reproduce bug: second stage_lines reads HEAD (not updated index),
         // so it overwrites the first call's result.
-        let head: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        let head: String = (1..=30).fold(String::new(), |mut s, i| {
+            use std::fmt::Write;
+            let _ = writeln!(s, "line {i}");
+            s
+        });
         // Modify line 1 and line 30 — far apart enough to produce 2 separate hunks
         let workdir = {
             let mut s = head.clone();
@@ -544,7 +548,11 @@ mod tests {
         // a pure end-of-file deletion (old_lineno not in context new_linenos), staging
         // it leaves the index unchanged. The commit captures nothing for that hunk,
         // and the final scan still reports a file — a phantom hunk.
-        let head: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        let head: String = (1..=30).fold(String::new(), |mut s, i| {
+            use std::fmt::Write;
+            let _ = writeln!(s, "line {i}");
+            s
+        });
         let workdir = {
             let mut s = head.clone();
             // Hunk 0: substitution at line 1 (works fine — Addition covers it)
