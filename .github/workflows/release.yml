@@ -1,0 +1,209 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-13
+            use_zigbuild: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            use_zigbuild: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_zigbuild: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_zigbuild: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_zigbuild: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate version consistency
+        shell: bash
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          FILE_VERSION=$(cat VERSION)
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ "$CARGO_VERSION" != "$FILE_VERSION" ] || [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: Cargo.toml=$CARGO_VERSION VERSION=$FILE_VERSION tag=$TAG_VERSION"
+            exit 1
+          fi
+          echo "Version OK: $CARGO_VERSION"
+
+      - name: Install Rust stable with target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl-tools (Linux musl only)
+        if: matrix.use_zigbuild
+        run: sudo apt-get install -y musl-tools
+
+      - name: Install cargo-zigbuild (Linux only)
+        if: matrix.use_zigbuild
+        run: pip3 install ziglang && cargo install cargo-zigbuild
+
+      - name: Build binaries (zigbuild)
+        if: matrix.use_zigbuild
+        run: cargo zigbuild --release --bin pgs-mcp --bin pgs --target ${{ matrix.target }}
+
+      - name: Build binaries (native)
+        if: "!matrix.use_zigbuild"
+        run: cargo build --release --bin pgs-mcp --bin pgs --target ${{ matrix.target }}
+
+      - name: Rename artifacts (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cp target/${{ matrix.target }}/release/pgs-mcp pgs-mcp-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/pgs pgs-${{ matrix.target }}
+
+      - name: Rename artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/pgs-mcp.exe pgs-mcp-${{ matrix.target }}.exe
+          cp target/${{ matrix.target }}/release/pgs.exe pgs-${{ matrix.target }}.exe
+
+      - name: Upload pgs-mcp artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgs-mcp-${{ matrix.target }}
+          path: pgs-mcp-${{ matrix.target }}
+          if-no-files-found: error
+
+      - name: Upload pgs artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgs-${{ matrix.target }}
+          path: pgs-${{ matrix.target }}
+          if-no-files-found: error
+
+      - name: Upload pgs-mcp artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgs-mcp-${{ matrix.target }}
+          path: pgs-mcp-${{ matrix.target }}.exe
+          if-no-files-found: error
+
+      - name: Upload pgs artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgs-${{ matrix.target }}
+          path: pgs-${{ matrix.target }}.exe
+          if-no-files-found: error
+
+  macos-universal:
+    name: Build macOS Universal Binary
+    runs-on: macos-latest
+    needs: build
+
+    steps:
+      - name: Download x86_64 pgs-mcp artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pgs-mcp-x86_64-apple-darwin
+
+      - name: Download aarch64 pgs-mcp artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pgs-mcp-aarch64-apple-darwin
+
+      - name: Download x86_64 pgs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pgs-x86_64-apple-darwin
+
+      - name: Download aarch64 pgs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pgs-aarch64-apple-darwin
+
+      - name: Create universal pgs-mcp binary
+        run: |
+          lipo -create \
+            -arch x86_64 pgs-mcp-x86_64-apple-darwin \
+            -arch arm64 pgs-mcp-aarch64-apple-darwin \
+            -output pgs-mcp-universal-apple-darwin
+          chmod +x pgs-mcp-universal-apple-darwin
+
+      - name: Create universal pgs binary
+        run: |
+          lipo -create \
+            -arch x86_64 pgs-x86_64-apple-darwin \
+            -arch arm64 pgs-aarch64-apple-darwin \
+            -output pgs-universal-apple-darwin
+          chmod +x pgs-universal-apple-darwin
+
+      - name: Upload universal pgs-mcp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgs-mcp-universal-apple-darwin
+          path: pgs-mcp-universal-apple-darwin
+          if-no-files-found: error
+
+      - name: Upload universal pgs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgs-universal-apple-darwin
+          path: pgs-universal-apple-darwin
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, macos-universal]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/pgs-mcp-x86_64-apple-darwin
+            artifacts/pgs-mcp-aarch64-apple-darwin
+            artifacts/pgs-mcp-universal-apple-darwin
+            artifacts/pgs-mcp-x86_64-unknown-linux-musl
+            artifacts/pgs-mcp-aarch64-unknown-linux-musl
+            artifacts/pgs-mcp-x86_64-pc-windows-msvc.exe
+            artifacts/pgs-x86_64-apple-darwin
+            artifacts/pgs-aarch64-apple-darwin
+            artifacts/pgs-universal-apple-darwin
+            artifacts/pgs-x86_64-unknown-linux-musl
+            artifacts/pgs-aarch64-unknown-linux-musl
+            artifacts/pgs-x86_64-pc-windows-msvc.exe
