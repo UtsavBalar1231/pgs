@@ -91,6 +91,15 @@ pub enum PgsError {
     },
 
     // --- Exit code 4: Internal error ---
+    /// Working directory resolved to the wrong path (non-standard `.git` layout).
+    #[error("working directory mismatch: expected {expected}, got {actual}")]
+    WorkdirMismatch {
+        /// The directory we expected (e.g. the directory containing `.git` file).
+        expected: PathBuf,
+        /// The directory libgit2 resolved (may point to parent of gitdir).
+        actual: PathBuf,
+    },
+
     /// An error from the underlying libgit2 library.
     #[error("git error: {0}")]
     Git(#[from] git2::Error),
@@ -128,6 +137,7 @@ impl PgsError {
             Self::StaleScan { .. } => "stale_scan",
             Self::IndexLocked => "index_locked",
             Self::StagingFailed { .. } => "staging_failed",
+            Self::WorkdirMismatch { .. } => "workdir_mismatch",
             Self::Git(_) => "git_error",
             Self::Io { .. } => "io_error",
             Self::Json(_) => "json_error",
@@ -149,7 +159,11 @@ impl PgsError {
 
             Self::StaleScan { .. } | Self::IndexLocked | Self::StagingFailed { .. } => 3,
 
-            Self::Git(_) | Self::Io { .. } | Self::Json(_) | Self::Internal(_) => 4,
+            Self::WorkdirMismatch { .. }
+            | Self::Git(_)
+            | Self::Io { .. }
+            | Self::Json(_)
+            | Self::Internal(_) => 4,
         }
     }
 
@@ -255,5 +269,18 @@ mod tests {
             path: "src/main.rs".into(),
         };
         assert_eq!(err.code(), "stale_scan");
+    }
+
+    #[test]
+    fn workdir_mismatch_maps_to_exit_code_4() {
+        let err = PgsError::WorkdirMismatch {
+            expected: PathBuf::from("/expected/workdir"),
+            actual: PathBuf::from("/actual/parent"),
+        };
+        assert_eq!(err.exit_code(), 4);
+        assert_eq!(err.code(), "workdir_mismatch");
+        let msg = err.to_string();
+        assert!(msg.contains("/expected/workdir"), "message was: {msg}");
+        assert!(msg.contains("/actual/parent"), "message was: {msg}");
     }
 }

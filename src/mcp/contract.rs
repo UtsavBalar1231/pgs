@@ -493,9 +493,11 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         PgsError::StaleScan { .. } | PgsError::IndexLocked | PgsError::StagingFailed { .. } => {
             PgsToolErrorKind::Retryable
         }
-        PgsError::Git(_) | PgsError::Io { .. } | PgsError::Json(_) | PgsError::Internal(_) => {
-            PgsToolErrorKind::Internal
-        }
+        PgsError::WorkdirMismatch { .. }
+        | PgsError::Git(_)
+        | PgsError::Io { .. }
+        | PgsError::Json(_)
+        | PgsError::Internal(_) => PgsToolErrorKind::Internal,
     };
 
     PgsToolError {
@@ -585,7 +587,11 @@ fn error_guidance(error: &PgsError) -> String {
         PgsError::StagingFailed { .. } => {
             "Retry the request once the repository index is stable.".to_owned()
         }
-        PgsError::Git(_) | PgsError::Io { .. } | PgsError::Json(_) | PgsError::Internal(_) => {
+        PgsError::WorkdirMismatch { .. }
+        | PgsError::Git(_)
+        | PgsError::Io { .. }
+        | PgsError::Json(_)
+        | PgsError::Internal(_) => {
             "Retry once; if the failure persists, inspect repository state and server logs."
                 .to_owned()
         }
