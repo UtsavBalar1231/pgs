@@ -237,13 +237,7 @@ fn stage_new_executable_file_preserves_mode() {
         .set_bool("core.filemode", true)
         .unwrap();
     // Need an initial commit so HEAD exists — setup_repo() already provides one.
-    commit_file(
-        &repo,
-        dir.path(),
-        "existing.txt",
-        "hello\n",
-        "add existing",
-    );
+    commit_file(&repo, dir.path(), "existing.txt", "hello\n", "add existing");
 
     // Write a NEW file and make it executable
     common::write_file(dir.path(), "new_script.sh", "#!/bin/sh\necho hello\n");
@@ -253,7 +247,10 @@ fn stage_new_executable_file_preserves_mode() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    assert_eq!(json["status"], "ok", "staging new executable file should succeed");
+    assert_eq!(
+        json["status"], "ok",
+        "staging new executable file should succeed"
+    );
 
     let repo2 = git2::Repository::open(dir.path()).unwrap();
     let index_mode = read_index_mode(&repo2, "new_script.sh");
@@ -270,13 +267,7 @@ fn stage_new_file_default_mode_unchanged() {
         .unwrap()
         .set_bool("core.filemode", true)
         .unwrap();
-    commit_file(
-        &repo,
-        dir.path(),
-        "existing.txt",
-        "hello\n",
-        "add existing",
-    );
+    commit_file(&repo, dir.path(), "existing.txt", "hello\n", "add existing");
 
     // Write a NEW file without chmod +x
     common::write_file(dir.path(), "new_script.sh", "#!/bin/sh\necho hello\n");
@@ -285,7 +276,10 @@ fn stage_new_file_default_mode_unchanged() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    assert_eq!(json["status"], "ok", "staging new non-executable file should succeed");
+    assert_eq!(
+        json["status"], "ok",
+        "staging new non-executable file should succeed"
+    );
 
     let repo2 = git2::Repository::open(dir.path()).unwrap();
     let index_mode = read_index_mode(&repo2, "new_script.sh");

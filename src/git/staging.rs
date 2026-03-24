@@ -206,7 +206,13 @@ pub fn stage_rename(
 
     let oid = repo.blob(&content)?;
 
-    let entry = build_index_entry(&index, new_path, oid, saturating_u32(content.len()), mode_override);
+    let entry = build_index_entry(
+        &index,
+        new_path,
+        oid,
+        saturating_u32(content.len()),
+        mode_override,
+    );
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
     Ok(())
