@@ -1,56 +1,52 @@
 ---
 name: git-commit-staging
 description: >
-  Non-interactive git staging at file, hunk, or line-range granularity.
+  Non-interactive git staging at file, hunk, or line-range granularity via MCP tools.
   Use when staging changes, splitting commits, creating atomic commits,
   selective staging, or committing specific hunks/lines.
-  Use when user mentions "commit", "stage", "split commits", "granular staging", "atomic commits",
-  or "selective staging". Requires pgs CLI.
+  Use when user mentions "commit", "stage", "split commits", "granular staging",
+  "atomic commits", or "selective staging". Requires pgs MCP server.
 allowed-tools:
-  - Bash
+  - pgs_scan
+  - pgs_stage
+  - pgs_unstage
+  - pgs_status
+  - pgs_commit
+  - pgs_log
 ---
 
 # Git Commit Staging with pgs
 
 Non-interactive git staging at file, hunk, or line-range granularity. Use when splitting
-mixed-intent changes into separate commits. Default output is structured text markers — read
-them directly, no JSON parsing needed.
-
-Prerequisites check:
-```bash
-which pgs && pgs --version
-```
-
-If `pgs` is not found, inform the user and stop — do not fall back to raw git commands.
+mixed-intent changes into separate commits. All operations go through pgs MCP tools —
+no Bash, no CLI binaries, no raw git commands.
 
 ---
 
 ## 1. Core Rules
 
-1. Always scan before staging — hunk IDs are ephemeral, valid only until the file or index changes
-2. Re-scan after each commit — the index changed, previous hunk IDs are stale
-3. Use default text output — text markers are directly readable, no `--json` or parsing needed
-4. Plan all commits before staging — group changes by intent, each group becomes one commit
-5. Verify with `pgs status` before every commit
-6. Use only pgs commands for all diff/staging/status operations — pgs provides diff-base-correct
-   structured output that raw git commands cannot replicate. The only allowed git command is `git log`.
-7. On exit code 3 (stale/conflict): re-scan, then retry with fresh IDs
+1. Always call `pgs_scan` before staging — hunk IDs are ephemeral, valid only until the file or index changes.
+2. Re-scan after each `pgs_commit` — the index changed, previous hunk IDs are stale.
+3. Plan all commits before staging — group changes by intent, each group becomes one commit.
+4. Verify with `pgs_status` before every `pgs_commit`.
+5. Use only pgs MCP tools for all diff/staging/history operations — no Bash, no raw git.
+6. On error with `pgs_error.retryable: true`: re-scan with `pgs_scan`, then retry with fresh IDs.
+7. `repo_path` is required for every tool call. Use the absolute path to the project root (the directory containing `.git`). In Claude Code, this is typically the current working directory.
 
 ---
 
-## 2. Command Reference
+## 2. Tool Reference
 
-| Command | Description |
-|---------|-------------|
-| `pgs scan [files...] [--full]` | Scan unstaged changes (compact by default, `--full` for line content) |
-| `pgs stage <sel...> [--exclude <sel>...] [--dry-run]` | Stage selections |
-| `pgs unstage <sel...> [--exclude <sel>...] [--dry-run]` | Unstage selections |
-| `pgs status` | Show staged changes (HEAD vs index) |
-| `pgs commit -m "message"` | Commit staged changes |
+| Tool | Description | Required Params | Optional Params |
+|------|-------------|-----------------|-----------------|
+| `pgs_scan` | Inspect unstaged changes (Index to Workdir) | `repo_path` | `files`, `full`, `context` |
+| `pgs_stage` | Stage selections into the index | `repo_path`, `selections` | `exclude`, `dry_run`, `context` |
+| `pgs_unstage` | Remove selections from the index | `repo_path`, `selections` | `exclude`, `dry_run`, `context` |
+| `pgs_status` | Show staged changes (HEAD to Index) | `repo_path` | `context` |
+| `pgs_commit` | Create a commit from staged changes | `repo_path`, `message` | — |
+| `pgs_log` | Recent commit history | `repo_path` | `max_count`, `paths` |
 
-Global flags: `--repo PATH` (default: CWD), `--context N` (default: 3, min: 1)
-
-**Selection syntax** (positional, auto-detected):
+### Selection syntax (positional, auto-detected)
 
 | Pattern | Detection Rule | Example |
 |---------|---------------|---------|
@@ -61,91 +57,219 @@ Global flags: `--repo PATH` (default: CWD), `--context N` (default: 3, min: 1)
 
 Edge case: if a file path is exactly 12 hex chars, prefix with `./`.
 
-**pgs equivalents for common git commands:**
-
-| git command | pgs equivalent | What pgs adds |
-|-------------|----------------|---------------|
-| `git status -s` | `pgs scan` | Hunk IDs, structured counts |
-| `git diff` | `pgs scan --full` | Structured line-level output |
-| `git diff --stat` | `pgs scan` (compact) | Per-file + per-hunk stats |
-| `git diff --cached` | `pgs status` | Structured staged info |
-| `git add -p` | `pgs stage HUNK_ID` | Non-interactive, atomic |
-| `git add file` | `pgs stage path` | Automatic backup |
-| `git reset HEAD file` | `pgs unstage path` | Automatic backup |
-
-Only allowed git command: `git log` (for commit history context).
-
 ---
 
-## 3. Reading Scan Output
+## 3. Reading Tool Responses
 
-### Compact scan (default)
+Every pgs MCP tool returns two payloads:
 
+- `structured_content` — the typed JSON envelope. **Read all data from here.**
+- `content` — one-line human summary. Informational only — do not parse it.
+
+### Envelope structure
+
+```json
+{
+  "outcome": "ok | no_effect | error",
+  "pgs": { ... },
+  "pgs_error": { ... }
+}
 ```
-@@pgs:v1 scan.begin {"command":"scan","detail":"compact","items":2}
-@@pgs:v1 file {"path":"src/auth.rs","status":{"type":"Modified"},"binary":false,"hunks_count":2,"lines_added":15,"lines_deleted":3}
-@@pgs:v1 hunk {"path":"src/auth.rs","id":"a1b2c3d4e5f6","old_start":10,"old_lines":5,"new_start":10,"new_lines":7,"header":"@@ -10,5 +10,7 @@ fn authenticate","additions":2,"deletions":0}
-@@pgs:v1 hunk {"path":"src/auth.rs","id":"f6e5d4c3b2a1","old_start":50,"old_lines":8,"new_start":52,"new_lines":5,"header":"@@ -50,8 +52,5 @@ fn validate","additions":0,"deletions":3}
-@@pgs:v1 file {"path":"src/utils.rs","status":{"type":"Added"},"binary":false,"hunks_count":1,"lines_added":20,"lines_deleted":0}
-@@pgs:v1 hunk {"path":"src/utils.rs","id":"1a2b3c4d5e6f","old_start":0,"old_lines":0,"new_start":1,"new_lines":20,"header":"@@ -0,0 +1,20 @@","additions":20,"deletions":0}
-@@pgs:v1 summary {"command":"scan","detail":"compact","total_files":2,"total_hunks":3,"added":1,"modified":1,"deleted":0,"renamed":0,"binary":0,"mode_changed":0}
-@@pgs:v1 scan.end {"command":"scan","detail":"compact","items":2}
+
+- `outcome: "ok"` — success. Read data from `pgs`.
+- `outcome: "no_effect"` — completed but matched nothing. `pgs` is absent; `pgs_error` explains why.
+- `outcome: "error"` — failure. `pgs` is absent; `pgs_error` has `kind`, `code`, `message`, `retryable`, and `guidance`.
+
+### Compact scan response
+
+```json
+{
+  "outcome": "ok",
+  "pgs": {
+    "version": "v1",
+    "command": "scan",
+    "detail": "compact",
+    "files": [
+      {
+        "path": "src/auth.rs",
+        "status": { "type": "Modified" },
+        "binary": false,
+        "hunks_count": 2,
+        "lines_added": 15,
+        "lines_deleted": 3,
+        "hunks": [
+          {
+            "id": "a1b2c3d4e5f6",
+            "old_start": 10,
+            "old_lines": 5,
+            "new_start": 10,
+            "new_lines": 7,
+            "header": "@@ -10,5 +10,7 @@ fn authenticate",
+            "additions": 2,
+            "deletions": 0
+          },
+          {
+            "id": "f6e5d4c3b2a1",
+            "old_start": 50,
+            "old_lines": 8,
+            "new_start": 52,
+            "new_lines": 5,
+            "header": "@@ -50,8 +52,5 @@ fn validate",
+            "additions": 0,
+            "deletions": 3
+          }
+        ]
+      },
+      {
+        "path": "src/utils.rs",
+        "status": { "type": "Added" },
+        "binary": false,
+        "hunks_count": 1,
+        "lines_added": 20,
+        "lines_deleted": 0,
+        "hunks": [
+          {
+            "id": "1a2b3c4d5e6f",
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 20,
+            "header": "@@ -0,0 +1,20 @@",
+            "additions": 20,
+            "deletions": 0
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total_files": 2,
+      "total_hunks": 3,
+      "added": 1,
+      "modified": 1,
+      "deleted": 0,
+      "renamed": 0,
+      "binary": 0,
+      "mode_changed": 0
+    }
+  }
+}
 ```
 
 Key fields:
-- `id` — the 12-hex hunk ID you pass to `pgs stage`
-- `header` — shows the function/section context after the `@@` markers
-- `hunks_count` — how many hunks this file has (drives granularity decision)
-- `status.type` — `Added`, `Modified`, `Deleted`, `Renamed` (Renamed also has `old_path`)
+- `files[].hunks[].id` — the 12-hex hunk ID to pass to `pgs_stage`
+- `files[].hunks[].header` — function/section context after the `@@` markers
+- `files[].hunks_count` — how many hunks this file has (drives granularity decision)
+- `files[].status.type` — `Added`, `Modified`, `Deleted`, `Renamed` (Renamed also carries `old_path`)
 - `summary.mode_changed` — count of file permission-only changes
 
-### Full scan (`--full`)
+### Full scan response (with `full: true`)
 
-```
-@@pgs:v1 scan.begin {"command":"scan","detail":"full","items":1}
-@@pgs:v1 file.begin {"path":"src/auth.rs","status":{"type":"Modified"},"binary":false,"hunks_count":1,"lines_added":2,"lines_deleted":0,"checksum":"abc123..."}
-@@pgs:v1 hunk.begin {"path":"src/auth.rs","id":"a1b2c3d4e5f6","old_start":10,"old_lines":3,"new_start":10,"new_lines":5,"header":"@@ -10,3 +10,5 @@ fn authenticate","additions":2,"deletions":0,"checksum":"def456..."}
- fn authenticate(user: &str) -> bool {
-     let valid = check_password(user);
-+    log::info!("auth attempt for {user}");
-+    audit::record(user, valid);
-     valid
-@@pgs:v1 hunk.end {"path":"src/auth.rs","id":"a1b2c3d4e5f6","old_start":10,"old_lines":3,"new_start":10,"new_lines":5,"header":"@@ -10,3 +10,5 @@ fn authenticate","additions":2,"deletions":0,"checksum":"def456..."}
-@@pgs:v1 file.end {"path":"src/auth.rs","status":{"type":"Modified"},"binary":false,"hunks_count":1,"lines_added":2,"lines_deleted":0,"checksum":"abc123..."}
-@@pgs:v1 summary {"command":"scan","detail":"full","total_files":1,"total_hunks":1,"added":0,"modified":1,"deleted":0,"renamed":0,"binary":0,"mode_changed":0}
-@@pgs:v1 scan.end {"command":"scan","detail":"full","items":1}
-```
+When `full: true` is passed, hunks include a `lines` array and a `checksum` field. Each line has `line_number`, `origin` (`Context`, `Addition`, or `Deletion`), and `content`. Use full scan only on filtered scans (pass `files: ["path"]`), not the whole repo.
 
-Raw diff lines between `hunk.begin` and `hunk.end`: ` ` = context, `+` = addition, `-` = deletion.
-Use `--full` only on filtered scans (`pgs scan path --full`), not the whole repo.
+### Stage response
 
-### Stage output
-
-```
-@@pgs:v1 stage.begin {"command":"stage","status":"ok","items":1,"backup_id":"backup-550e8400-..."}
-@@pgs:v1 item {"selection":"a1b2c3d4e5f6","lines_affected":2}
-@@pgs:v1 stage.end {"command":"stage","status":"ok","items":1,"backup_id":"backup-550e8400-..."}
+```json
+{
+  "outcome": "ok",
+  "pgs": {
+    "version": "v1",
+    "command": "stage",
+    "status": "ok",
+    "items": [
+      { "selection": "a1b2c3d4e5f6", "lines_affected": 2 }
+    ],
+    "warnings": [],
+    "backup_id": "backup-550e8400-e29b-41d4-a716-446655440000"
+  }
+}
 ```
 
-### Status output
+`status` is `"dry_run"` when `dry_run: true` was passed. `backup_id` is a UUID string when the index was mutated, or absent on dry runs.
 
-```
-@@pgs:v1 status.begin {"command":"status","items":1}
-@@pgs:v1 status.file {"path":"src/auth.rs","status":{"type":"Modified"},"lines_added":2,"lines_deleted":0}
-@@pgs:v1 summary {"command":"status","total_files":1,"total_additions":2,"total_deletions":0}
-@@pgs:v1 status.end {"command":"status","items":1}
+### Status response
+
+```json
+{
+  "outcome": "ok",
+  "pgs": {
+    "version": "v1",
+    "command": "status",
+    "files": [
+      {
+        "path": "src/auth.rs",
+        "status": { "type": "Modified" },
+        "lines_added": 2,
+        "lines_deleted": 0
+      }
+    ],
+    "summary": {
+      "total_files": 1,
+      "total_additions": 2,
+      "total_deletions": 0
+    }
+  }
+}
 ```
 
-### Commit output
+Note: `pgs_status` reflects HEAD-to-Index (what is staged). It does not emit hunk IDs — use file-level selections with `pgs_unstage`.
 
-```
-@@pgs:v1 commit.result {"version":"v1","command":"commit","commit_hash":"abc123...40chars","message":"feat: add auth logging","author":"Name <email>","files_changed":1,"insertions":2,"deletions":0}
+### Commit response
+
+```json
+{
+  "outcome": "ok",
+  "pgs": {
+    "version": "v1",
+    "command": "commit",
+    "commit_hash": "abc123def456abc123def456abc123def456abc1",
+    "message": "fix: correct authentication check",
+    "author": "Dev <dev@example.com>",
+    "files_changed": 1,
+    "insertions": 2,
+    "deletions": 0
+  }
+}
 ```
 
-### Error output
+### Log response
 
+```json
+{
+  "outcome": "ok",
+  "pgs": {
+    "version": "v1",
+    "command": "log",
+    "commits": [
+      {
+        "hash": "abc123def456abc123def456abc123def456abc1",
+        "short_hash": "abc123def456",
+        "author": "Dev <dev@example.com>",
+        "date": "2026-03-25T10:00:00Z",
+        "message": "fix: correct authentication check"
+      }
+    ],
+    "total": 1,
+    "truncated": false
+  }
+}
 ```
-@@pgs:v1 error {"version":"v1","command":"scan","phase":"runtime","code":"no_changes","message":"no changes detected in working tree","exit_code":1}
+
+`truncated: true` means the walk limit was reached; use `max_count` to narrow the range.
+
+### Error response
+
+```json
+{
+  "outcome": "error",
+  "pgs_error": {
+    "kind": "retryable",
+    "code": "stale_scan",
+    "message": "hunk checksum mismatch: index changed since last scan",
+    "exit_code": 3,
+    "retryable": true,
+    "guidance": "Re-run pgs_scan to refresh checksums and hunk IDs, then retry."
+  }
+}
 ```
 
 ---
@@ -156,14 +280,15 @@ Every staging session follows three phases: scan, plan, execute.
 
 ### Phase 1 — Scan
 
-Run `pgs scan` to discover all changes (use `pgs scan`, not `git diff` — pgs provides the correct diff base and structured hunk IDs).
+Call `pgs_scan` to discover all changes. This is the source of truth for hunk IDs.
 
 ### Phase 2 — Plan commits
 
 Before staging anything, analyze the scan output and write a commit plan.
-For each file, read `hunks_count` and `header` to determine intent.
+For each file, read `hunks_count` and each hunk's `header` to determine intent.
 
 **Fill in this template** (one entry per commit group):
+
 ```
 Commit 1 (type): file_a, file_b hunk ID — description of logical change
   Evidence: [why these changes belong together]
@@ -171,36 +296,36 @@ Commit 2 (type): file_c — description
   Evidence: [why this is a separate concern]
 ```
 
-Example for a scan showing 2 modified files + 1 added file:
+Example for a scan showing one modified file with two hunks plus one added file:
+
 ```
-Commit 1 (fix): src/auth.rs hunk a1b2c3d4e5f6 — null check in authenticate()
+Commit 1 (fix): src/auth.rs hunk a1b2c3d4e5f6 — null check in fn authenticate
   Evidence: header shows fn authenticate, additions only, isolated bug fix
-Commit 2 (feat): src/api.rs, src/models.rs, src/routes.rs — new user profile endpoint
-  Evidence: all three files relate to the same feature, headers show profile-related functions
+Commit 2 (refactor): src/auth.rs hunk f6e5d4c3b2a1 + src/utils.rs — extract validation
+  Evidence: header shows fn validate, refactoring; utils.rs is new file supporting the extraction
 ```
 
 If all changes belong to one logical intent, write that as a single-group plan.
-Do not assume single intent — verify by reading the headers.
+Do not assume single intent — verify by reading the hunk headers.
 
 ### Phase 3 — Per-file granularity
 
-Choose the staging command based on file state and hunk count:
+Choose the staging granularity based on file state and hunk count:
 
-| Condition | Action | Command |
-|-----------|--------|---------|
-| `status.type` is `Added`, `Deleted`, or `Renamed` | File-level (required) | `pgs stage path` |
-| `hunks_count` = 1, change belongs to this commit | File-level | `pgs stage path` |
-| `hunks_count` >= 2, all hunks same intent | File-level | `pgs stage path` |
-| `hunks_count` >= 2, hunks belong to different commits | Hunk-level — use `id` from scan | `pgs stage a1b2c3d4e5f6` |
-| Single hunk mixes two intents (rare) | Line-level — run `--full` first | `pgs stage path:10-20` |
-| All files in a directory share same intent | Directory-level | `pgs stage tests/` |
+| Condition | Action | Tool Call |
+|-----------|--------|-----------|
+| `status.type` is `Added`, `Deleted`, or `Renamed` | File-level (required) | `pgs_stage(repo_path, selections=["path"])` |
+| `hunks_count` = 1, change belongs to this commit | File-level | `pgs_stage(repo_path, selections=["path"])` |
+| `hunks_count` >= 2, all hunks same intent | File-level | `pgs_stage(repo_path, selections=["path"])` |
+| `hunks_count` >= 2, hunks belong to different commits | Hunk-level — use `id` from scan | `pgs_stage(repo_path, selections=["a1b2c3d4e5f6"])` |
+| Single hunk mixes two intents (rare) | Line-level — use full scan first | `pgs_stage(repo_path, selections=["path:10-20"])` |
 
-**How to determine intent from compact scan:**
-- Read the `header` field — it shows the function/section name (e.g., `@@ -10,5 +10,7 @@ fn authenticate`)
-- If headers show different functions, the hunks likely belong to different commits
-- When unsure, run `pgs scan <file> --full` to inspect actual line changes
+How to determine intent from compact scan:
+- Read the `header` field — it shows the function/section name (e.g., `@@ -10,5 +10,7 @@ fn authenticate`).
+- If headers show different functions, the hunks likely belong to different commits.
+- When unsure, call `pgs_scan` with `files: ["path"]` and `full: true` to inspect actual line changes.
 
-**Hunk IDs vs line ranges:** use hunk IDs by default; use line ranges only when a single hunk mixes two distinct intents.
+Prefer hunk IDs over line ranges. Use line ranges only when a single hunk contains two distinct intents.
 
 ---
 
@@ -210,119 +335,105 @@ Choose the staging command based on file state and hunk count:
 
 Scenario: `src/auth.rs` has a bug fix (hunk in `fn authenticate`) and a refactor (hunk in `fn validate`). New file `src/utils.rs` was added.
 
-```bash
-# Step 1: SCAN
-pgs scan
+**Step 1 — Scan:**
+
 ```
-```
-@@pgs:v1 scan.begin {"command":"scan","detail":"compact","items":2}
-@@pgs:v1 file {"path":"src/auth.rs","status":{"type":"Modified"},"binary":false,"hunks_count":2,"lines_added":5,"lines_deleted":2}
-@@pgs:v1 hunk {"path":"src/auth.rs","id":"a1b2c3d4e5f6","old_start":10,"old_lines":3,"new_start":10,"new_lines":5,"header":"@@ -10,3 +10,5 @@ fn authenticate","additions":2,"deletions":0}
-@@pgs:v1 hunk {"path":"src/auth.rs","id":"f6e5d4c3b2a1","old_start":50,"old_lines":5,"new_start":52,"new_lines":3,"header":"@@ -50,5 +52,3 @@ fn validate","additions":1,"deletions":2}
-@@pgs:v1 file {"path":"src/utils.rs","status":{"type":"Added"},"binary":false,"hunks_count":1,"lines_added":20,"lines_deleted":0}
-@@pgs:v1 hunk {"path":"src/utils.rs","id":"1a2b3c4d5e6f","old_start":0,"old_lines":0,"new_start":1,"new_lines":20,"header":"@@ -0,0 +1,20 @@","additions":20,"deletions":0}
-@@pgs:v1 summary {"command":"scan","detail":"compact","total_files":2,"total_hunks":3,"added":1,"modified":1,"deleted":0,"renamed":0,"binary":0,"mode_changed":0}
-@@pgs:v1 scan.end {"command":"scan","detail":"compact","items":2}
+pgs_scan(repo_path="/path/to/repo")
 ```
 
-**Step 2 — Plan commits** (write out before staging):
+Response `pgs.files`:
+- `src/auth.rs`: `Modified`, `hunks_count: 2`, hunks `a1b2c3d4e5f6` (fn authenticate) and `f6e5d4c3b2a1` (fn validate)
+- `src/utils.rs`: `Added`, `hunks_count: 1`, hunk `1a2b3c4d5e6f`
+
+**Step 2 — Write commit plan:**
+
 ```
 Commit 1 (fix): src/auth.rs hunk a1b2c3d4e5f6 — bug fix in fn authenticate
   Evidence: header shows fn authenticate, additions only, 2 lines added
 Commit 2 (refactor): src/auth.rs hunk f6e5d4c3b2a1 + src/utils.rs — extract validation
-  Evidence: header shows fn validate, refactoring; utils.rs is new file supporting extraction
-```
-Two groups identified — two commits. Execute one at a time.
-
-```bash
-# Step 3: STAGE commit 1
-pgs stage a1b2c3d4e5f6
-```
-```
-@@pgs:v1 stage.begin {"command":"stage","status":"ok","items":1,"backup_id":"backup-..."}
-@@pgs:v1 item {"selection":"a1b2c3d4e5f6","lines_affected":2}
-@@pgs:v1 stage.end {"command":"stage","status":"ok","items":1,"backup_id":"backup-..."}
+  Evidence: header shows fn validate, refactoring; utils.rs supports the extraction
 ```
 
-```bash
-# Step 4: VERIFY
-pgs status
+Two groups — two commits. Execute one at a time.
+
+**Step 3 — Stage commit 1:**
+
 ```
-```
-@@pgs:v1 status.begin {"command":"status","items":1}
-@@pgs:v1 status.file {"path":"src/auth.rs","status":{"type":"Modified"},"lines_added":2,"lines_deleted":0}
-@@pgs:v1 summary {"command":"status","total_files":1,"total_additions":2,"total_deletions":0}
-@@pgs:v1 status.end {"command":"status","items":1}
+pgs_stage(repo_path="/path/to/repo", selections=["a1b2c3d4e5f6"])
 ```
 
-```bash
-# Step 5: COMMIT
-pgs commit -m "fix: correct authentication check"
+**Step 4 — Verify:**
+
 ```
-```
-@@pgs:v1 commit.result {"version":"v1","command":"commit","commit_hash":"abc123...","message":"fix: correct authentication check","author":"Dev <dev@example.com>","files_changed":1,"insertions":2,"deletions":0}
+pgs_status(repo_path="/path/to/repo")
 ```
 
-```bash
-# Step 6: RE-SCAN (use pgs scan — hunk IDs are now stale after the commit)
-pgs scan
+Confirm `pgs.files` shows only `src/auth.rs` with 2 additions.
+
+**Step 5 — Commit:**
+
 ```
-```
-@@pgs:v1 scan.begin {"command":"scan","detail":"compact","items":2}
-@@pgs:v1 file {"path":"src/auth.rs","status":{"type":"Modified"},"binary":false,"hunks_count":1,"lines_added":1,"lines_deleted":2}
-@@pgs:v1 hunk {"path":"src/auth.rs","id":"99887766aabb","old_start":50,"old_lines":5,"new_start":50,"new_lines":3,"header":"@@ -50,5 +50,3 @@ fn validate","additions":1,"deletions":2}
-@@pgs:v1 file {"path":"src/utils.rs","status":{"type":"Added"},"binary":false,"hunks_count":1,"lines_added":20,"lines_deleted":0}
-@@pgs:v1 hunk {"path":"src/utils.rs","id":"ccddee001122","old_start":0,"old_lines":0,"new_start":1,"new_lines":20,"header":"@@ -0,0 +1,20 @@","additions":20,"deletions":0}
-@@pgs:v1 summary {"command":"scan","detail":"compact","total_files":2,"total_hunks":2,"added":1,"modified":1,"deleted":0,"renamed":0,"binary":0,"mode_changed":0}
-@@pgs:v1 scan.end {"command":"scan","detail":"compact","items":2}
+pgs_commit(repo_path="/path/to/repo", message="fix: correct authentication check\n\nAdd null guard before password validation to prevent panic on empty input.")
 ```
 
-Note: the validate hunk ID changed from `f6e5d4c3b2a1` to `99887766aabb`. This is why re-scanning is mandatory.
+**Step 6 — Re-scan with fresh IDs:**
 
-```bash
-# Step 7: STAGE commit 2 (use fresh IDs from re-scan)
-pgs stage src/auth.rs src/utils.rs   # src/auth.rs now has 1 hunk, all same intent
+```
+pgs_scan(repo_path="/path/to/repo")
+```
 
-# Step 8: VERIFY
-pgs status
+The validate hunk ID has changed (e.g., from `f6e5d4c3b2a1` to `99887766aabb`). This is why re-scanning is mandatory after every commit.
 
-# Step 9: COMMIT
-pgs commit -m "refactor: extract validation to utils"
+**Step 7 — Stage commit 2 using fresh IDs:**
+
+```
+pgs_stage(repo_path="/path/to/repo", selections=["src/auth.rs", "src/utils.rs"])
+```
+
+`src/auth.rs` now has 1 hunk (all same intent), so file-level staging is correct.
+
+**Step 8 — Verify and commit:**
+
+```
+pgs_status(repo_path="/path/to/repo")
+pgs_commit(repo_path="/path/to/repo", message="refactor: extract validation logic to utils\n\nMoves the shared validation helper out of auth.rs to eliminate\nduplication across the module boundary.")
 ```
 
 ### Single-commit shortcut
 
 Use only when all of the following are true:
-- Every changed file belongs to the same logical change
-- You verified this by reading the scan output headers (not assumed from file names)
-- The commit type is clear
+- Every changed file belongs to the same logical change.
+- You verified this by reading the scan output headers (not assumed from file names).
+- The commit type is clear.
 
-```bash
-pgs scan                              # 1. Scan
-# Verify: all files/hunks serve one intent
-pgs stage file1 file2 file3           # 2. Stage all
-pgs status                            # 3. Verify
-pgs commit -m "feat: description"     # 4. Commit
+```
+Step 1: pgs_scan(repo_path="/path/to/repo")
+        → read all headers, confirm single intent
+Step 2: pgs_stage(repo_path="/path/to/repo", selections=["file1", "file2"])
+Step 3: pgs_status(repo_path="/path/to/repo")
+        → confirm staged content
+Step 4: pgs_commit(repo_path="/path/to/repo", message="feat: ...")
 ```
 
 ---
 
 ## 6. Constraints & Error Recovery
 
-- **Whole-file constraint**: Added, Deleted, and Renamed files must be staged as whole files. Hunk/line selections return exit 2.
-- **Binary constraint**: Binary files can only be staged at file level. Hunk/line selections return exit 2.
-- **Stale hunk IDs**: After any commit, file edit, or index change, all hunk IDs are stale. Always re-scan.
-- **`--context N` consistency**: Changing `--context` between scan and stage produces different hunk IDs, causing exit 3. Use the same value throughout.
-- **Different diff bases**: `scan` diffs Index->Workdir. `unstage` diffs HEAD->Index. Hunk IDs from `scan` are not valid for `unstage`.
-- **`pgs status` has no hunk IDs** — use file-level unstaging (`pgs unstage path`).
+- **Whole-file constraint**: `Added`, `Deleted`, and `Renamed` files must be staged as whole files. Hunk or line selections on these produce a `user` error.
+- **Binary constraint**: Binary files can only be staged at file level. Hunk or line selections produce a `user` error.
+- **Stale hunk IDs**: After any commit, file edit, or index change, all hunk IDs are stale. Always re-scan before staging.
+- **Context consistency**: If you pass a custom `context` value, use the same value in both scan and stage calls. Mismatches produce different hunk IDs and a `retryable` error.
+- **Different diff bases**: `pgs_scan` diffs Index-to-Workdir. `pgs_unstage` operates on HEAD-to-Index. Hunk IDs from `pgs_scan` are not valid for `pgs_unstage` — use file-level selections with `pgs_unstage`.
 
-| Exit Code | Meaning | Recovery |
-|-----------|---------|----------|
-| 0 | Success | Continue |
-| 1 | No effect | Check: are there unstaged changes? Maybe already staged/committed. |
-| 2 | User error | Fix selection syntax. Check: binary? whole-file constraint? wrong ID? |
-| 3 | Conflict/stale | Re-scan (`pgs scan`), retry with fresh hunk IDs |
-| 4 | Internal error | Report the error. Check git repo state. |
+### Error recovery table
+
+| `outcome` | `pgs_error.kind` | Meaning | Recovery |
+|-----------|------------------|---------|----------|
+| `ok` | — | Success | Continue |
+| `no_effect` | `no_effect` | Nothing matched | Check repo state; may already be staged or committed |
+| `error` | `user` | Bad input | Fix selection (check: binary? whole-file constraint? wrong ID?) |
+| `error` | `retryable` | Stale/conflict | Re-call `pgs_scan`, retry with fresh IDs |
+| `error` | `internal` | Server error | Retry once; if failure persists, inspect repository state |
 
 ---
 
@@ -330,22 +441,70 @@ pgs commit -m "feat: description"     # 4. Commit
 
 | Don't | Do Instead |
 |-------|-----------|
-| `pgs scan --json \| python3 -c "..."` | `pgs scan` — text markers are directly readable |
-| `git diff`, `git status`, `git check-ignore` | `pgs scan`, `pgs status` — structured, diff-base-correct |
-| Reuse hunk IDs after `pgs commit` | Re-scan: `pgs scan` |
-| `pgs scan --full` (entire repo) | `pgs scan path --full` (filter first) |
-| Compute line ranges manually | Use hunk IDs (`pgs stage ID`) whenever possible |
-| Mix `git add` with `pgs stage` | Use one tool per workflow |
-| Stage all files without a commit plan | Write commit plan first, stage per group |
-| Identify N groups then make 1 commit | N groups = N commits, execute sequentially |
-| Assume all changes are one commit | Read scan headers, verify intent per file |
-| Skip the analysis/planning step | Always write the commit plan template before staging |
+| Use Bash for pgs operations | Use pgs MCP tools directly |
+| Reuse hunk IDs after `pgs_commit` | Re-call `pgs_scan` to get fresh IDs |
+| Call `pgs_scan` with `full: true` on the whole repo | Pass `files: ["path"]` to filter first |
+| Skip the commit plan step | Write the plan before any staging call |
+| Stage all files without analyzing headers | Read hunk headers, verify intent per file |
+| Assume all changes are one commit | Read headers — N distinct groups means N commits |
+| Write one-liner commit messages for non-trivial changes | Include a body explaining what and why |
 
 ---
 
 ## 8. Commit Message Convention
 
-Format: `type: short description`
-- Imperative mood, no period, under 72 chars
-- Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `style`, `ci`, `build`
-- Breaking changes: `feat!: description` or `BREAKING CHANGE:` in body
+### Format
+
+```
+<type>(<optional-scope>): <subject>
+
+<body>
+```
+
+**Subject line**: imperative mood, under 72 chars, no period.
+
+**Types**: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `style`, `ci`, `build`.
+
+**Breaking changes**: `feat!: description` or include `BREAKING CHANGE:` in the body.
+
+### Body (required for non-trivial changes)
+
+- Explain **what** changed and **why**, not how the code works.
+- Wrap lines at 72 chars.
+- Use bullet points for multiple distinct changes.
+
+Body is required when: 2+ files changed, 10+ lines affected, behavior changes, or breaking change introduced.
+
+Body is optional for: formatting-only changes, dependency bumps, typo fixes.
+
+### Good example
+
+```
+feat(scan): add binary file detection to compact output
+
+The compact scan output now includes a `binary` field per file entry
+so callers can skip granular staging for binary files without needing
+a full scan.
+
+- Add binary field to CompactFileInfo
+- Update ScanFileView::from_compact to propagate the flag
+- Skip hunk enumeration for binary files
+```
+
+### Bad examples
+
+```
+fix: fix the bug
+feat: add new feature
+update files
+```
+
+### Check recent style before writing
+
+Call `pgs_log` before writing commit messages to see the style used in this repository:
+
+```
+pgs_log(repo_path="/path/to/repo", max_count=10)
+```
+
+Read `pgs.commits[].message` and match the format, type vocabulary, and subject style already established.
