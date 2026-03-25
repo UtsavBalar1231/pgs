@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 
 mod commit;
+pub mod log;
 pub mod mcp_adapter;
 mod scan;
 mod stage;
@@ -78,6 +79,7 @@ impl ParsedCli {
             Command::Unstage(_) => OutputCommand::Unstage,
             Command::Status => OutputCommand::Status,
             Command::Commit(_) => OutputCommand::Commit,
+            Command::Log(_) => OutputCommand::Log,
         }
     }
 }
@@ -94,6 +96,8 @@ pub enum Command {
     Status,
     /// Create a git commit from staged changes.
     Commit(commit::CommitArgs),
+    /// Show recent commit history.
+    Log(log::LogArgs),
 }
 
 impl Cli {
@@ -236,6 +240,10 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
             context,
         )?))),
         Command::Commit(args) => Ok(Some(RenderableOutput::new(commit::execute(
+            repo.as_deref(),
+            args,
+        )?))),
+        Command::Log(args) => Ok(Some(RenderableOutput::new(log::execute(
             repo.as_deref(),
             args,
         )?))),

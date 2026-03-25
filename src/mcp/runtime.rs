@@ -25,8 +25,8 @@ use crate::{
     cmd::mcp_adapter::{self, McpCommandRequest},
     git::repo,
     mcp::contract::{
-        PGS_COMMIT_TOOL, PGS_SCAN_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL,
-        map_execution_result,
+        PGS_COMMIT_TOOL, PGS_LOG_TOOL, PGS_SCAN_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL,
+        PGS_UNSTAGE_TOOL, map_execution_result,
     },
 };
 
@@ -458,6 +458,7 @@ fn maybe_test_delay(tool_name: &str) {
         PGS_STAGE_TOOL => Some("PGS_MCP_TEST_STAGE_DELAY_MS"),
         PGS_UNSTAGE_TOOL => Some("PGS_MCP_TEST_UNSTAGE_DELAY_MS"),
         PGS_COMMIT_TOOL => Some("PGS_MCP_TEST_COMMIT_DELAY_MS"),
+        PGS_LOG_TOOL => Some("PGS_MCP_TEST_LOG_DELAY_MS"),
         _ => None,
     };
 

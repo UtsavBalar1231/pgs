@@ -20,8 +20,9 @@ use rmcp::{
 use crate::{
     cmd::mcp_adapter::McpCommandRequest,
     mcp::contract::{
-        self, CommitToolInput, PGS_COMMIT_TOOL, PGS_SCAN_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL,
-        PGS_UNSTAGE_TOOL, ScanToolInput, StageToolInput, StatusToolInput, UnstageToolInput,
+        self, CommitToolInput, LogToolInput, PGS_COMMIT_TOOL, PGS_LOG_TOOL, PGS_SCAN_TOOL,
+        PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL, ScanToolInput, StageToolInput,
+        StatusToolInput, UnstageToolInput,
     },
     mcp::runtime::PgsMcpRuntime,
 };
@@ -89,6 +90,7 @@ impl ServerHandler for PgsMcpServer {
             stage_tool(),
             unstage_tool(),
             commit_tool(),
+            log_tool(),
         ])))
     }
 
@@ -99,6 +101,7 @@ impl ServerHandler for PgsMcpServer {
             PGS_STAGE_TOOL => Some(stage_tool()),
             PGS_UNSTAGE_TOOL => Some(unstage_tool()),
             PGS_COMMIT_TOOL => Some(commit_tool()),
+            PGS_LOG_TOOL => Some(log_tool()),
             _ => None,
         }
     }
@@ -216,6 +219,13 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
                 command: McpCommandRequest::Commit(input.into()),
             })
         }
+        PGS_LOG_TOOL => {
+            let input: LogToolInput = parse_tool_input(request.arguments)?;
+            Ok(ParsedToolCall::Read {
+                tool_name: PGS_LOG_TOOL,
+                command: McpCommandRequest::Log(input.into()),
+            })
+        }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
     }
 }
@@ -253,6 +263,11 @@ fn unstage_tool() -> Tool {
 fn commit_tool() -> Tool {
     contract::tool_definition(PGS_COMMIT_TOOL)
         .expect("commit tool must be present in frozen MCP contract")
+}
+
+fn log_tool() -> Tool {
+    contract::tool_definition(PGS_LOG_TOOL)
+        .expect("log tool must be present in frozen MCP contract")
 }
 
 /// Start the `pgs-mcp` server over stdio and wait for shutdown.

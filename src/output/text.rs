@@ -91,6 +91,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::Operation(operation) => render_operation(operation),
         CommandOutput::Status(status) => render_status(status),
         CommandOutput::Commit(commit) => render_commit(commit),
+        CommandOutput::Log(log) => render_marker("log", log),
     }
 }
 

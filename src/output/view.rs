@@ -15,6 +15,7 @@ pub enum CommandOutput {
     Operation(OperationOutput),
     Status(StatusOutput),
     Commit(CommitOutput),
+    Log(LogOutput),
 }
 
 impl From<ScanOutput> for CommandOutput {
@@ -41,6 +42,12 @@ impl From<CommitOutput> for CommandOutput {
     }
 }
 
+impl From<LogOutput> for CommandOutput {
+    fn from(output: LogOutput) -> Self {
+        Self::Log(output)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
@@ -49,6 +56,7 @@ pub enum OutputCommand {
     Unstage,
     Status,
     Commit,
+    Log,
 }
 
 impl OutputCommand {
@@ -59,6 +67,7 @@ impl OutputCommand {
             Self::Unstage => "unstage",
             Self::Status => "status",
             Self::Commit => "commit",
+            Self::Log => "log",
         }
     }
 }
@@ -599,4 +608,24 @@ impl From<StatusSummary> for StatusSummaryView {
             total_deletions: summary.total_deletions,
         }
     }
+}
+
+/// A single commit entry for log output.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct CommitEntryView {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
+}
+
+/// Output for the `log` command.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct LogOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub commits: Vec<CommitEntryView>,
+    pub total: usize,
+    pub truncated: bool,
 }

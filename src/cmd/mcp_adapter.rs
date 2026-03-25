@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::PgsError;
 use crate::output::view::{CommandOutput, OutputCommand};
 
-use super::{commit, scan, stage, status, unstage};
+use super::{commit, log, scan, stage, status, unstage};
 
 /// Typed MCP payload for `pgs_scan` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -58,6 +58,17 @@ pub struct McpUnstageRequest {
     pub context: u32,
 }
 
+/// Typed MCP payload for `pgs_log` requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct McpLogRequest {
+    /// Explicit repository path supplied by the MCP caller.
+    pub repo_path: String,
+    /// Maximum number of commits to return.
+    pub max_count: u32,
+    /// Optional file path filters forwarded to the log command.
+    pub paths: Vec<String>,
+}
+
 /// Typed MCP payload for `pgs_commit` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct McpCommitRequest {
@@ -80,6 +91,8 @@ pub enum McpCommandRequest {
     Unstage(McpUnstageRequest),
     /// Run the commit command for currently staged changes.
     Commit(McpCommitRequest),
+    /// Run the log command for recent commit history.
+    Log(McpLogRequest),
 }
 
 /// Typed command output returned to MCP callers without re-parsing CLI markers.
@@ -93,6 +106,8 @@ pub enum McpTypedOutput {
     Status(crate::output::view::StatusOutput),
     /// Structured commit output.
     Commit(crate::output::view::CommitOutput),
+    /// Structured log output.
+    Log(crate::output::view::LogOutput),
 }
 
 impl From<CommandOutput> for McpTypedOutput {
@@ -102,6 +117,7 @@ impl From<CommandOutput> for McpTypedOutput {
             CommandOutput::Operation(output) => Self::Operation(output),
             CommandOutput::Status(output) => Self::Status(output),
             CommandOutput::Commit(output) => Self::Commit(output),
+            CommandOutput::Log(output) => Self::Log(output),
         }
     }
 }
@@ -187,5 +203,14 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
         )
         .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Commit, source)),
+        McpCommandRequest::Log(request) => log::execute(
+            Some(request.repo_path.as_str()),
+            log::LogArgs {
+                max_count: request.max_count,
+                paths: request.paths,
+            },
+        )
+        .map(Into::into)
+        .map_err(|source| McpAdapterError::new(OutputCommand::Log, source)),
     }
 }

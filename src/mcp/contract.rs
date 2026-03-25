@@ -6,11 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cmd::mcp_adapter::{
-        McpAdapterError, McpCommitRequest, McpScanRequest, McpStageRequest, McpStatusRequest,
-        McpTypedOutput, McpUnstageRequest,
+        McpAdapterError, McpCommitRequest, McpLogRequest, McpScanRequest, McpStageRequest,
+        McpStatusRequest, McpTypedOutput, McpUnstageRequest,
     },
     error::PgsError,
-    output::view::{CommitOutput, OperationOutput, OutputCommand, ScanOutput, StatusOutput},
+    output::view::{
+        CommitOutput, LogOutput, OperationOutput, OutputCommand, ScanOutput, StatusOutput,
+    },
 };
 
 /// MCP tool name for repository scan operations.
@@ -23,6 +25,8 @@ pub const PGS_STAGE_TOOL: &str = "pgs_stage";
 pub const PGS_UNSTAGE_TOOL: &str = "pgs_unstage";
 /// MCP tool name for commit creation operations.
 pub const PGS_COMMIT_TOOL: &str = "pgs_commit";
+/// MCP tool name for commit log operations.
+pub const PGS_LOG_TOOL: &str = "pgs_log";
 
 const DEFAULT_CONTEXT: u32 = 3;
 
@@ -141,6 +145,27 @@ impl From<CommitToolInput> for McpCommitRequest {
     }
 }
 
+/// JSON input schema for the `pgs_log` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct LogToolInput {
+    /// Explicit repository path to inspect.
+    pub repo_path: String,
+    /// Maximum number of commits to return.
+    pub max_count: Option<u32>,
+    /// Optional file path filters.
+    pub paths: Option<Vec<String>>,
+}
+
+impl From<LogToolInput> for McpLogRequest {
+    fn from(value: LogToolInput) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            max_count: value.max_count.unwrap_or(20),
+            paths: value.paths.unwrap_or_default(),
+        }
+    }
+}
+
 /// Outcome classification surfaced in MCP tool results.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -205,6 +230,7 @@ define_tool_output!(ScanToolOutput, ScanOutput);
 define_tool_output!(StatusToolOutput, StatusOutput);
 define_tool_output!(OperationToolOutput, OperationOutput);
 define_tool_output!(CommitToolOutput, CommitOutput);
+define_tool_output!(LogToolOutput, LogOutput);
 
 /// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
 pub fn tool_definitions() -> Vec<Tool> {
@@ -214,6 +240,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         stage_tool(),
         unstage_tool(),
         commit_tool(),
+        log_tool(),
     ]
 }
 
@@ -335,6 +362,36 @@ fn commit_tool() -> Tool {
     .with_execution(ToolExecution::new().with_task_support(TaskSupport::Forbidden))
 }
 
+fn log_tool() -> Tool {
+    Tool::new(
+        PGS_LOG_TOOL,
+        "Retrieve recent commit history for an explicit local repository path without mutating the repository.",
+        serde_json::Map::new(),
+    )
+    .with_title("Show commit log")
+    .with_input_schema::<LogToolInput>()
+    .with_output_schema::<LogToolOutput>()
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+}
+
+fn log_summary_text(log: &LogOutput) -> String {
+    if log.truncated {
+        format!(
+            "Found {} commit(s) (truncated; walk limit reached).",
+            log.total
+        )
+    } else {
+        format!("Found {} commit(s).", log.total)
+    }
+}
+
 fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
     match output {
         McpTypedOutput::Scan(scan) => structured_tool_result(
@@ -371,6 +428,15 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
                 pgs_error: None,
             },
             commit_summary_text(&commit),
+            false,
+        ),
+        McpTypedOutput::Log(log) => structured_tool_result(
+            LogToolOutput {
+                outcome: ToolOutcome::Ok,
+                pgs: Some(log.clone()),
+                pgs_error: None,
+            },
+            log_summary_text(&log),
             false,
         ),
     }
@@ -417,6 +483,15 @@ fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError>
             text,
             false,
         ),
+        OutputCommand::Log => structured_tool_result(
+            LogToolOutput {
+                outcome: ToolOutcome::NoEffect,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            false,
+        ),
     }
 }
 
@@ -454,6 +529,15 @@ fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
         ),
         OutputCommand::Status => structured_tool_result(
             StatusToolOutput {
+                outcome: ToolOutcome::Error,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            true,
+        ),
+        OutputCommand::Log => structured_tool_result(
+            LogToolOutput {
                 outcome: ToolOutcome::Error,
                 pgs: None,
                 pgs_error: Some(pgs_error),
@@ -525,7 +609,10 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
     let verb = match operation.command {
         OutputCommand::Stage => "Staged",
         OutputCommand::Unstage => "Unstaged",
-        OutputCommand::Scan | OutputCommand::Status | OutputCommand::Commit => "Applied",
+        OutputCommand::Scan
+        | OutputCommand::Status
+        | OutputCommand::Commit
+        | OutputCommand::Log => "Applied",
     };
     format!("{verb} {} selection(s).", operation.items.len())
 }
@@ -630,6 +717,7 @@ mod tests {
                 PGS_STAGE_TOOL,
                 PGS_UNSTAGE_TOOL,
                 PGS_COMMIT_TOOL,
+                PGS_LOG_TOOL,
             ]
         );
 
@@ -696,11 +784,38 @@ mod tests {
         let stage = tool_definition(PGS_STAGE_TOOL).expect("stage tool should exist");
         let unstage = tool_definition(PGS_UNSTAGE_TOOL).expect("unstage tool should exist");
         let commit = tool_definition(PGS_COMMIT_TOOL).expect("commit tool should exist");
+        let log = tool_definition(PGS_LOG_TOOL).expect("log tool should exist");
 
         assert_eq!(scan.task_support(), TaskSupport::Optional);
         assert_eq!(status.task_support(), TaskSupport::Optional);
+        assert_eq!(log.task_support(), TaskSupport::Optional);
         assert_eq!(stage.task_support(), TaskSupport::Forbidden);
         assert_eq!(unstage.task_support(), TaskSupport::Forbidden);
         assert_eq!(commit.task_support(), TaskSupport::Forbidden);
+    }
+
+    #[test]
+    fn mcp_log_tool_is_read_only() {
+        let log = tool_definition(PGS_LOG_TOOL).expect("log tool should exist");
+        assert_eq!(
+            log.task_support(),
+            TaskSupport::Optional,
+            "log is read-only so task support should be Optional"
+        );
+
+        let annotations = log
+            .annotations
+            .as_ref()
+            .expect("log tool should have annotations");
+        assert_eq!(
+            annotations.read_only_hint,
+            Some(true),
+            "log tool should be annotated as read-only"
+        );
+        assert_eq!(
+            annotations.destructive_hint,
+            Some(false),
+            "log tool should not be annotated as destructive"
+        );
     }
 }
