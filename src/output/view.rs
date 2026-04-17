@@ -18,6 +18,7 @@ pub enum CommandOutput {
     Log(LogOutput),
     Overview(OverviewOutput),
     SplitHunk(SplitHunkOutput),
+    PlanCheck(PlanCheckOutput),
 }
 
 impl From<ScanOutput> for CommandOutput {
@@ -62,6 +63,12 @@ impl From<SplitHunkOutput> for CommandOutput {
     }
 }
 
+impl From<PlanCheckOutput> for CommandOutput {
+    fn from(output: PlanCheckOutput) -> Self {
+        Self::PlanCheck(output)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
@@ -74,6 +81,8 @@ pub enum OutputCommand {
     Overview,
     #[serde(rename = "split")]
     SplitHunk,
+    #[serde(rename = "plan-check")]
+    PlanCheck,
 }
 
 impl OutputCommand {
@@ -87,6 +96,7 @@ impl OutputCommand {
             Self::Log => "log",
             Self::Overview => "overview",
             Self::SplitHunk => "split",
+            Self::PlanCheck => "plan-check",
         }
     }
 }
@@ -732,5 +742,67 @@ impl SplitHunkOutput {
             hunk_id,
             ranges,
         }
+    }
+}
+
+/// A hunk covered by two or more planned commits.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanOverlap {
+    pub hunk_id: String,
+    pub commits: Vec<String>,
+}
+
+/// A hunk's identity inside an uncovered record (`file_path` + `hunk_id`).
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct HunkRef {
+    pub file_path: String,
+    pub hunk_id: String,
+}
+
+/// A selector that plan-check rejects as unsafe (e.g. a line range crossing a hunk boundary).
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct UnsafeSelector {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_id: Option<String>,
+    pub selection: String,
+    pub reason: String,
+}
+
+/// Output for `pgs plan-check` — surfaces every issue the plan has against a fresh scan.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanCheckOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub overlaps: Vec<PlanOverlap>,
+    pub uncovered: Vec<HunkRef>,
+    pub unsafe_selectors: Vec<UnsafeSelector>,
+    pub unknown_paths: Vec<String>,
+}
+
+impl PlanCheckOutput {
+    #[must_use]
+    pub const fn new(
+        overlaps: Vec<PlanOverlap>,
+        uncovered: Vec<HunkRef>,
+        unsafe_selectors: Vec<UnsafeSelector>,
+        unknown_paths: Vec<String>,
+    ) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::PlanCheck,
+            overlaps,
+            uncovered,
+            unsafe_selectors,
+            unknown_paths,
+        }
+    }
+
+    /// `true` when plan-check found any issue and the CLI should exit 1.
+    #[must_use]
+    pub fn has_issues(&self) -> bool {
+        !self.overlaps.is_empty()
+            || !self.uncovered.is_empty()
+            || !self.unsafe_selectors.is_empty()
+            || !self.unknown_paths.is_empty()
     }
 }

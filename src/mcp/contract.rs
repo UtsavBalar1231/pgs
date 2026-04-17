@@ -11,8 +11,8 @@ use crate::{
     },
     error::PgsError,
     output::view::{
-        CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, ScanOutput,
-        SplitHunkOutput, StatusOutput,
+        CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, PlanCheckOutput,
+        ScanOutput, SplitHunkOutput, StatusOutput,
     },
 };
 
@@ -277,6 +277,7 @@ define_tool_output!(CommitToolOutput, CommitOutput);
 define_tool_output!(LogToolOutput, LogOutput);
 define_tool_output!(OverviewToolOutput, OverviewOutput);
 define_tool_output!(SplitHunkToolOutput, SplitHunkOutput);
+define_tool_output!(PlanCheckToolOutput, PlanCheckOutput);
 
 /// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
 pub fn tool_definitions() -> Vec<Tool> {
@@ -543,6 +544,15 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
             split_hunk_summary_text(&split),
             false,
         ),
+        McpTypedOutput::PlanCheck(plan_check) => structured_tool_result(
+            PlanCheckToolOutput {
+                outcome: ToolOutcome::Ok,
+                pgs: Some(plan_check.clone()),
+                pgs_error: None,
+            },
+            plan_check_summary_text(&plan_check),
+            false,
+        ),
     }
 }
 
@@ -607,6 +617,15 @@ fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError>
         ),
         OutputCommand::SplitHunk => structured_tool_result(
             SplitHunkToolOutput {
+                outcome: ToolOutcome::NoEffect,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            false,
+        ),
+        OutputCommand::PlanCheck => structured_tool_result(
+            PlanCheckToolOutput {
                 outcome: ToolOutcome::NoEffect,
                 pgs: None,
                 pgs_error: Some(pgs_error),
@@ -685,6 +704,15 @@ fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
             text,
             true,
         ),
+        OutputCommand::PlanCheck => structured_tool_result(
+            PlanCheckToolOutput {
+                outcome: ToolOutcome::Error,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            true,
+        ),
     }
 }
 
@@ -755,9 +783,20 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
         | OutputCommand::Commit
         | OutputCommand::Log
         | OutputCommand::Overview
-        | OutputCommand::SplitHunk => "Applied",
+        | OutputCommand::SplitHunk
+        | OutputCommand::PlanCheck => "Applied",
     };
     format!("{verb} {} selection(s).", operation.items.len())
+}
+
+fn plan_check_summary_text(output: &PlanCheckOutput) -> String {
+    format!(
+        "Plan check: {} overlap(s), {} uncovered, {} unsafe selector(s), {} unknown path(s).",
+        output.overlaps.len(),
+        output.uncovered.len(),
+        output.unsafe_selectors.len(),
+        output.unknown_paths.len()
+    )
 }
 
 fn split_hunk_summary_text(split: &SplitHunkOutput) -> String {

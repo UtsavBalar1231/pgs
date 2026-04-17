@@ -5,9 +5,10 @@ use crate::error::PgsError;
 use crate::models::{LineOrigin, OperationPreview, PreviewLine};
 
 use super::view::{
-    CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, LineOriginView, OperationOutput,
-    OperationStatusView, OutputCommand, OverviewOutput, ScanDetail, ScanFileView, ScanHunkView,
-    ScanLineView, ScanOutput, SplitHunkOutput, StatusOutput,
+    CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, HunkRef, LineOriginView,
+    OperationOutput, OperationStatusView, OutputCommand, OverviewOutput, PlanCheckOutput,
+    PlanOverlap, ScanDetail, ScanFileView, ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput,
+    StatusOutput, UnsafeSelector,
 };
 
 const MARKER_PREFIX: &str = "@@pgs:v1";
@@ -124,6 +125,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::Log(log) => render_marker("log", log),
         CommandOutput::Overview(overview) => render_overview(overview),
         CommandOutput::SplitHunk(split) => render_split(split),
+        CommandOutput::PlanCheck(plan_check) => render_plan_check(plan_check),
     }
 }
 
@@ -416,6 +418,55 @@ fn render_diff_line(line: &ScanLineView) -> String {
 
 fn operation_marker_kind(command: OutputCommand, suffix: &str) -> String {
     format!("{}.{suffix}", command.as_str())
+}
+
+#[derive(Debug, Serialize)]
+struct PlanCheckBoundaryRecord {
+    command: OutputCommand,
+    overlaps: usize,
+    uncovered: usize,
+    unsafe_selectors: usize,
+    unknown_paths: usize,
+}
+
+fn render_plan_check(output: &PlanCheckOutput) -> Result<String, PgsError> {
+    let boundary = PlanCheckBoundaryRecord {
+        command: output.command,
+        overlaps: output.overlaps.len(),
+        uncovered: output.uncovered.len(),
+        unsafe_selectors: output.unsafe_selectors.len(),
+        unknown_paths: output.unknown_paths.len(),
+    };
+
+    let mut lines = Vec::with_capacity(
+        output.overlaps.len()
+            + output.uncovered.len()
+            + output.unsafe_selectors.len()
+            + output.unknown_paths.len()
+            + 2,
+    );
+    lines.push(render_marker("plan.check.begin", &boundary)?);
+    for overlap in &output.overlaps {
+        lines.push(render_marker::<PlanOverlap>("plan.check.overlap", overlap)?);
+    }
+    for uncovered in &output.uncovered {
+        lines.push(render_marker::<HunkRef>("plan.check.uncovered", uncovered)?);
+    }
+    for unsafe_selector in &output.unsafe_selectors {
+        lines.push(render_marker::<UnsafeSelector>(
+            "plan.check.unsafe",
+            unsafe_selector,
+        )?);
+    }
+    for unknown in &output.unknown_paths {
+        lines.push(render_marker(
+            "plan.check.unknown",
+            &serde_json::json!({ "path": unknown }),
+        )?);
+    }
+    lines.push(render_marker("plan.check.end", &boundary)?);
+
+    Ok(lines.join("\n"))
 }
 
 fn render_marker<T: Serialize>(kind: &str, payload: &T) -> Result<String, PgsError> {

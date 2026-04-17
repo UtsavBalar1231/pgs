@@ -26,13 +26,21 @@ fn run_command(parsed: cmd::ParsedCli) -> ExitCode {
     let command = parsed.command();
 
     match cmd::run(parsed) {
-        Ok(Some(output)) => match cmd::render(&output, output_mode) {
-            Ok(rendered) => write_stdout(&rendered, ExitCode::SUCCESS),
-            Err(e) => {
-                let renderable = cmd::runtime_failure(command, &e);
-                render_error(&renderable, e.exit_code(), output_mode)
+        Ok(Some(output)) => {
+            let override_code = output.exit_override();
+            match cmd::render(&output, output_mode) {
+                Ok(rendered) => {
+                    let exit = override_code.map_or(ExitCode::SUCCESS, |code| {
+                        ExitCode::from(u8::try_from(code).expect("exit code fits in u8"))
+                    });
+                    write_stdout(&rendered, exit)
+                }
+                Err(e) => {
+                    let renderable = cmd::runtime_failure(command, &e);
+                    render_error(&renderable, e.exit_code(), output_mode)
+                }
             }
-        },
+        }
         Ok(None) => ExitCode::SUCCESS,
         Err(e) => {
             let renderable = cmd::runtime_failure(command, &e);

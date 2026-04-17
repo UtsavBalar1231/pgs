@@ -424,6 +424,39 @@ pub struct PreviewLine {
     pub content: String,
 }
 
+// ─── Plan-check input (agent-supplied) ────────────────────────────
+
+/// Agent-supplied commit plan consumed by `pgs plan-check`.
+///
+/// pgs only receives `CommitPlan` — it never emits one — so unknown input
+/// fields are silently ignored (no `deny_unknown_fields`). Additive fields land
+/// with `#[serde(default)]`, letting A6 plan-diff extend v1 without breaking
+/// existing consumers.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct CommitPlan {
+    /// Schema version. Only `"v1"` is currently recognized.
+    pub version: String,
+    /// Ordered planned commits. Empty is valid (will surface every scan hunk as uncovered).
+    pub commits: Vec<PlannedCommit>,
+}
+
+/// A single planned commit inside a [`CommitPlan`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PlannedCommit {
+    /// Optional agent-supplied label used to identify the commit in plan-check
+    /// reports. Defaults to `None` when omitted.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Positional selection strings (file paths, 12-hex hunk IDs, or `path:A-B` ranges).
+    pub selections: Vec<String>,
+    /// Optional selection strings to exclude from this commit's coverage.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Optional commit message preview. Not interpreted by plan-check.
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
 // ─── Backup (internal) ───────────────────────────────────────────
 
 /// Metadata for an index backup.

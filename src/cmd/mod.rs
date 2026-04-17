@@ -4,6 +4,7 @@ mod commit;
 pub mod log;
 pub mod mcp_adapter;
 mod overview;
+pub mod plan_check;
 mod scan;
 pub mod split;
 mod stage;
@@ -40,6 +41,20 @@ pub struct RenderableError(CliErrorOutput);
 impl RenderableOutput {
     const fn new(output: output::view::CommandOutput) -> Self {
         Self(output)
+    }
+
+    /// Post-render exit-code override for commands whose success envelope can
+    /// still signal a non-zero outcome. `plan-check` uses this to surface
+    /// overlaps/uncovered/unsafe/unknown issues as exit code 1 while still
+    /// emitting the full JSON envelope so the caller sees every finding.
+    #[must_use]
+    pub fn exit_override(&self) -> Option<i32> {
+        match &self.0 {
+            output::view::CommandOutput::PlanCheck(plan_check) if plan_check.has_issues() => {
+                Some(1)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -84,6 +99,7 @@ impl ParsedCli {
             Command::Log(_) => OutputCommand::Log,
             Command::Overview => OutputCommand::Overview,
             Command::SplitHunk(_) => OutputCommand::SplitHunk,
+            Command::PlanCheck(_) => OutputCommand::PlanCheck,
         }
     }
 }
@@ -107,6 +123,9 @@ pub enum Command {
     /// Classify a hunk's contiguous runs (addition, deletion, mixed).
     #[command(name = "split-hunk")]
     SplitHunk(split::SplitArgs),
+    /// Validate an agent-supplied `CommitPlan` against a fresh scan.
+    #[command(name = "plan-check")]
+    PlanCheck(plan_check::PlanCheckArgs),
 }
 
 impl Cli {
@@ -261,6 +280,11 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
             context,
         )?))),
         Command::SplitHunk(args) => Ok(Some(RenderableOutput::new(split::execute(
+            repo.as_deref(),
+            context,
+            args,
+        )?))),
+        Command::PlanCheck(args) => Ok(Some(RenderableOutput::new(plan_check::execute(
             repo.as_deref(),
             context,
             args,

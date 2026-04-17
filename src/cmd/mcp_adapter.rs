@@ -136,6 +136,8 @@ pub enum McpTypedOutput {
     Overview(crate::output::view::OverviewOutput),
     /// Structured split-hunk output (descriptive run classification).
     SplitHunk(crate::output::view::SplitHunkOutput),
+    /// Structured plan-check output (overlap / uncovered / unsafe / unknown).
+    PlanCheck(crate::output::view::PlanCheckOutput),
 }
 
 impl From<CommandOutput> for McpTypedOutput {
@@ -148,6 +150,7 @@ impl From<CommandOutput> for McpTypedOutput {
             CommandOutput::Log(output) => Self::Log(output),
             CommandOutput::Overview(output) => Self::Overview(output),
             CommandOutput::SplitHunk(output) => Self::SplitHunk(output),
+            CommandOutput::PlanCheck(output) => Self::PlanCheck(output),
         }
     }
 }
