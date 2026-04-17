@@ -77,6 +77,7 @@ JSON envelope:
           "header": "@@ -1,2 +1,3 @@",
           "additions": 1,
           "deletions": 0,
+          "whitespace_only": false,
           "checksum": "...optional in full...",
           "lines": [
             { "line_number": 1, "origin": "Context", "content": "fn main() {" }
@@ -100,6 +101,9 @@ JSON envelope:
 Text record kinds:
 - compact: `scan.begin`, `file`, `hunk`, `summary`, `scan.end`
 - full: `scan.begin`, `file.begin`, `hunk.begin`, raw diff body lines, `hunk.end`, `file.end`, `summary`, `scan.end`
+
+Hunk payload notes:
+- `whitespace_only` — `true` when every `Addition`/`Deletion` line in the hunk has empty or whitespace-only trimmed content. `false` for binary hunks (binary files emit no hunks at all; the flag is meaningful only on text hunks) and for hunks that carry any non-whitespace change. The field is additive metadata; it does not enter the content-addressed hunk-ID input.
 
 ### `stage` and `unstage`
 

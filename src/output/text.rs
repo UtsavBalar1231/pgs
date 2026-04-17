@@ -81,6 +81,7 @@ struct ScanHunkRecord<'a> {
     header: &'a str,
     additions: u32,
     deletions: u32,
+    whitespace_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     checksum: Option<&'a str>,
 }
@@ -259,6 +260,7 @@ impl<'a> From<(&'a ScanFileView, &'a ScanHunkView)> for ScanHunkRecord<'a> {
             header: &hunk.header,
             additions: hunk.additions,
             deletions: hunk.deletions,
+            whitespace_only: hunk.whitespace_only,
             checksum: hunk.checksum.as_deref(),
         }
     }

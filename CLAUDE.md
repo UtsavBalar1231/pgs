@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Non-interactive git staging at file, hunk, and line granularity.
 
+**Module map & per-subsystem guides**: see @AGENTS.md (full `src/` tree, links to `src/git/AGENTS.md`, `src/mcp/AGENTS.md`, `tests/AGENTS.md`).
+
 ## Build & Test
 
 Requires Rust 1.85+ (edition 2024) and a C compiler (for libgit2).
@@ -21,46 +23,18 @@ cargo install --path .             # install locally
 
 Clippy is configured strictly in Cargo.toml: `deny all`, `warn pedantic+nursery`. Allowed exceptions: `must_use_candidate`, `module_name_repetitions`, `missing_errors_doc`, `option_if_let_else`, `too_many_lines`, `missing_panics_doc`.
 
-## Architecture
+## Architecture Invariants
 
-```
-src/
-  main.rs          — entry, clap args, delegates to cmd::run()
-  lib.rs           — pub mod declarations
-  error.rs         — PgsError enum (14 variants), exit_code() mapping
-  models.rs        — all serializable types (ScanResult, StageResult, etc.)
+Full module map lives in @AGENTS.md. The rules below are what isn't obvious from reading the code:
 
-  cmd/             — command handlers (one file per command)
-    mod.rs         — Cli struct (clap derive), Command enum, run() dispatcher
-    scan.rs        — scan handler
-    stage.rs       — stage handler
-    unstage.rs     — unstage handler
-    status.rs      — status handler
-    commit.rs      — commit handler
-
-  git/             — all git2 operations (no subprocess calls)
-    mod.rs         — shared helpers (build_index_entry, read_head_blob, read_index_blob)
-    repo.rs        — repository discovery (open, workdir)
-    diff.rs        — diff engine (index-to-workdir, HEAD-to-index)
-    staging.rs     — index-direct staging (stage_file, stage_lines, stage_hunk, stage_deletion, stage_rename)
-    unstaging.rs   — index-direct unstaging (unstage_file, unstage_lines, unstage_hunk)
-
-  selection/       — selection parsing + resolution
-    parse.rs       — auto-detect positional args (file/hunk/lines)
-    resolve.rs     — resolve specs, validate binary/whole-file/freshness
-
-  safety/          — lock detection + index backup
-    lock.rs        — is_index_locked(), wait_for_lock_release()
-    backup.rs      — create_backup(), restore_backup()
-```
-
-**Index-direct staging only**: All staging/unstaging uses direct blob construction via `similar::TextDiff` line diffing and `index.add_frombuffer()`. No patch-apply strategy.
-
-**Always atomic**: Stage/unstage operations create a mandatory index backup, stop on first failure, and restore the backup on error.
-
-**Critical diff bases**: `scan` uses Index->Workdir (excludes already-staged content). `status` uses HEAD->Index (shows what's staged). `unstage` matches against HEAD->Index.
-
-**Selection auto-detection**: Positional args are auto-detected as file path, 12-hex hunk ID, or path:range. No `--file`/`--hunk`/`--lines` flags.
+- **Index-direct staging only**: all staging/unstaging builds blobs via `similar::TextDiff` line diffing and `index.add_frombuffer()`. No patch-apply. No `std::process::Command` anywhere in `src/` — all git operations go through libgit2.
+- **Atomic stage/unstage**: every mutation creates a mandatory index backup, stops on first failure, and restores the backup on error.
+- **Critical diff bases** — getting these wrong silently produces wrong results:
+  - `scan` uses Index → Workdir (excludes already-staged content)
+  - `status` uses HEAD → Index (shows what's staged)
+  - `unstage` matches against HEAD → Index
+- **Selection auto-detection**: positional args are auto-detected as file path, 12-hex hunk ID, or `path:range`. No `--file`/`--hunk`/`--lines` flags.
+- **MCP server reuses CLI handlers**: `src/mcp/` (binary `pgs-mcp`) dispatches through `src/cmd/mcp_adapter.rs` to the same command handlers as the CLI. Never reimplement git, selection, or output logic inside `src/mcp/`.
 
 Read @docs/ARCHITECTURE.md before modifying module boundaries.
 Read @docs/CLI_SPEC.md before adding/changing any CLI flag or output contract field.
@@ -96,7 +70,8 @@ Read @docs/CLI_SPEC.md before adding/changing any CLI flag or output contract fi
 - `setup_repo()` -> `(TempDir, Repository)` with git identity and initial commit
 - `write_file(repo, path, content)` -> write file to working directory
 - `commit_file(repo, path, content, message)` -> write, add, commit
-- `run_pgs(repo, args)` -> run the CLI binary with `--repo` pointed at the test repo
+- `run_pgs(repo, args)` -> run the CLI binary with `--repo <dir> --json` (use when asserting on JSON)
+- `run_pgs_raw(repo, args)` -> run the CLI binary with `--repo <dir>` only (text mode, for marker-contract tests)
 
 ## Output Contract
 
@@ -111,7 +86,7 @@ See @docs/CLI_SPEC.md for the full contract.
 
 ### Preventing flaky tests:
 - No sleeps or hardcoded timeouts
-- No shared mutable state — each test creates its own TempDir
+- No shared mutable state — each test creates its own `TempDir`. **`TempDir` must outlive `Repository`** (bind `dir` before `repo` when destructuring, or the workdir gets deleted while the repo still references it)
 - No filesystem paths outside the temp dir
 - No network calls
 
@@ -148,22 +123,10 @@ See @docs/CLI_SPEC.md for the full contract.
 - Prefer exhaustive match over if-let chains for >2 variants.
 - Avoid clone() unless the borrow checker fight isn't worth it. Document why.
 
-## Dependencies (approved list)
+## Dependencies
 
-- clap (derive) — CLI parsing
-- git2 — libgit2 bindings
-- serde + serde_json — JSON serialization
-- thiserror — error derivation
-- sha2 — content checksums
-- similar — line-level diffing for index-direct staging
-- uuid — backup IDs
-- chrono — timestamps
-- tempfile, assert_cmd, predicates, proptest — dev only
-
-Adding a new dep requires: what it does, why hand-written is worse, >100 downloads/day on crates.io.
+Full list lives in `Cargo.toml`. Adding a new dep requires: what it does, why hand-written is worse, >100 downloads/day on crates.io.
 
 ## Git Conventions
 
-- Conventional commits: feat:, fix:, test:, refactor:, docs:, chore:
-- One logical change per commit. Don't mix features with refactors.
-- Imperative mood, no period, under 72 chars.
+Conventional commits (feat/fix/test/refactor/docs/chore), imperative mood, no period, under 72 chars. One logical change per commit — don't mix features with refactors.

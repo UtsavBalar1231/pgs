@@ -272,6 +272,20 @@ fn scan_whitespace_only_hunk_flags_field_true() {
 }
 
 #[test]
+fn scan_text_marker_carries_whitespace_only_flag() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "ws2.txt", "a\nb\n", "add ws2");
+    write_file(dir.path(), "ws2.txt", "a\nb\n\n   \n");
+
+    let output = common::run_pgs_raw(dir.path(), &["scan"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("\"whitespace_only\":true"),
+        "scan text marker must surface whitespace_only:true, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn scan_semantic_hunk_flags_whitespace_only_false() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "sem.txt", "line1\n", "add sem");

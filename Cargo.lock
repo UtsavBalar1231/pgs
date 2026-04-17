@@ -843,6 +843,7 @@ dependencies = [
  "git2",
  "predicates",
  "proptest",
+ "regex",
  "rmcp",
  "serde",
  "serde_json",
