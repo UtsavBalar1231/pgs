@@ -14,7 +14,7 @@ use crate::{
     models::CommitPlan,
     output::view::{
         CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, PlanCheckOutput,
-        ScanOutput, SplitHunkOutput, StatusOutput,
+        PlanDiffOutput, ScanOutput, SplitHunkOutput, StatusOutput,
     },
 };
 
@@ -303,6 +303,7 @@ define_tool_output!(LogToolOutput, LogOutput);
 define_tool_output!(OverviewToolOutput, OverviewOutput);
 define_tool_output!(SplitHunkToolOutput, SplitHunkOutput);
 define_tool_output!(PlanCheckToolOutput, PlanCheckOutput);
+define_tool_output!(PlanDiffToolOutput, PlanDiffOutput);
 
 /// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
 pub fn tool_definitions() -> Vec<Tool> {
@@ -598,6 +599,15 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
             plan_check_summary_text(&plan_check),
             false,
         ),
+        McpTypedOutput::PlanDiff(plan_diff) => structured_tool_result(
+            PlanDiffToolOutput {
+                outcome: ToolOutcome::Ok,
+                pgs: Some(plan_diff.clone()),
+                pgs_error: None,
+            },
+            plan_diff_summary_text(&plan_diff),
+            false,
+        ),
     }
 }
 
@@ -671,6 +681,15 @@ fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError>
         ),
         OutputCommand::PlanCheck => structured_tool_result(
             PlanCheckToolOutput {
+                outcome: ToolOutcome::NoEffect,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            false,
+        ),
+        OutputCommand::PlanDiff => structured_tool_result(
+            PlanDiffToolOutput {
                 outcome: ToolOutcome::NoEffect,
                 pgs: None,
                 pgs_error: Some(pgs_error),
@@ -758,6 +777,15 @@ fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
             text,
             true,
         ),
+        OutputCommand::PlanDiff => structured_tool_result(
+            PlanDiffToolOutput {
+                outcome: ToolOutcome::Error,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            true,
+        ),
     }
 }
 
@@ -829,7 +857,8 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
         | OutputCommand::Log
         | OutputCommand::Overview
         | OutputCommand::SplitHunk
-        | OutputCommand::PlanCheck => "Applied",
+        | OutputCommand::PlanCheck
+        | OutputCommand::PlanDiff => "Applied",
     };
     format!("{verb} {} selection(s).", operation.items.len())
 }
@@ -841,6 +870,15 @@ fn plan_check_summary_text(output: &PlanCheckOutput) -> String {
         output.uncovered.len(),
         output.unsafe_selectors.len(),
         output.unknown_paths.len()
+    )
+}
+
+fn plan_diff_summary_text(output: &PlanDiffOutput) -> String {
+    format!(
+        "Plan diff: {} still valid, {} shifted, {} gone.",
+        output.still_valid.len(),
+        output.shifted.len(),
+        output.gone.len()
     )
 }
 

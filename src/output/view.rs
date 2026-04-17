@@ -19,6 +19,7 @@ pub enum CommandOutput {
     Overview(OverviewOutput),
     SplitHunk(SplitHunkOutput),
     PlanCheck(PlanCheckOutput),
+    PlanDiff(PlanDiffOutput),
 }
 
 impl From<ScanOutput> for CommandOutput {
@@ -69,6 +70,12 @@ impl From<PlanCheckOutput> for CommandOutput {
     }
 }
 
+impl From<PlanDiffOutput> for CommandOutput {
+    fn from(output: PlanDiffOutput) -> Self {
+        Self::PlanDiff(output)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
@@ -83,6 +90,8 @@ pub enum OutputCommand {
     SplitHunk,
     #[serde(rename = "plan-check")]
     PlanCheck,
+    #[serde(rename = "plan-diff")]
+    PlanDiff,
 }
 
 impl OutputCommand {
@@ -97,6 +106,7 @@ impl OutputCommand {
             Self::Overview => "overview",
             Self::SplitHunk => "split",
             Self::PlanCheck => "plan-check",
+            Self::PlanDiff => "plan-diff",
         }
     }
 }
@@ -804,5 +814,75 @@ impl PlanCheckOutput {
             || !self.uncovered.is_empty()
             || !self.unsafe_selectors.is_empty()
             || !self.unknown_paths.is_empty()
+    }
+}
+
+/// Confidence classification for a `shifted` plan-diff match.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanDiffMatchConfidence {
+    /// `expected_checksum` recorded at plan time matches a current hunk.
+    High,
+    /// Same file, old range overlaps a current hunk's range by >=50%.
+    Medium,
+    /// Same file, any other hunk exists but no strong overlap.
+    Low,
+}
+
+/// A plan entry classified as `still_valid` or `gone` by plan-diff.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanDiffEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_id: Option<String>,
+    pub selection: String,
+    pub file_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hunk_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// A plan entry that plan-diff fuzzy-matched to a new hunk id (`shifted`).
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanDiffShift {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_id: Option<String>,
+    pub selection: String,
+    pub file_path: String,
+    pub old_hunk_id: String,
+    pub new_hunk_id: String,
+    pub match_confidence: PlanDiffMatchConfidence,
+}
+
+/// Output for `pgs plan-diff` — reconciles a saved `CommitPlan` against a fresh scan.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanDiffOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub still_valid: Vec<PlanDiffEntry>,
+    pub shifted: Vec<PlanDiffShift>,
+    pub gone: Vec<PlanDiffEntry>,
+}
+
+impl PlanDiffOutput {
+    #[must_use]
+    pub const fn new(
+        still_valid: Vec<PlanDiffEntry>,
+        shifted: Vec<PlanDiffShift>,
+        gone: Vec<PlanDiffEntry>,
+    ) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::PlanDiff,
+            still_valid,
+            shifted,
+            gone,
+        }
+    }
+
+    /// `true` when plan-diff found any shifted or gone entries (exit 1).
+    #[must_use]
+    pub fn has_drift(&self) -> bool {
+        !self.shifted.is_empty() || !self.gone.is_empty()
     }
 }

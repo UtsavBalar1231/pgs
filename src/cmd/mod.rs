@@ -5,6 +5,7 @@ pub mod log;
 pub mod mcp_adapter;
 mod overview;
 pub mod plan_check;
+pub mod plan_diff;
 mod scan;
 pub mod split;
 mod stage;
@@ -53,6 +54,7 @@ impl RenderableOutput {
             output::view::CommandOutput::PlanCheck(plan_check) if plan_check.has_issues() => {
                 Some(1)
             }
+            output::view::CommandOutput::PlanDiff(plan_diff) if plan_diff.has_drift() => Some(1),
             _ => None,
         }
     }
@@ -100,6 +102,7 @@ impl ParsedCli {
             Command::Overview => OutputCommand::Overview,
             Command::SplitHunk(_) => OutputCommand::SplitHunk,
             Command::PlanCheck(_) => OutputCommand::PlanCheck,
+            Command::PlanDiff(_) => OutputCommand::PlanDiff,
         }
     }
 }
@@ -126,6 +129,9 @@ pub enum Command {
     /// Validate an agent-supplied `CommitPlan` against a fresh scan.
     #[command(name = "plan-check")]
     PlanCheck(plan_check::PlanCheckArgs),
+    /// Reconcile a saved `CommitPlan` against a fresh scan: `still_valid` / shifted / gone.
+    #[command(name = "plan-diff")]
+    PlanDiff(plan_diff::PlanDiffArgs),
 }
 
 impl Cli {
@@ -285,6 +291,11 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
             args,
         )?))),
         Command::PlanCheck(args) => Ok(Some(RenderableOutput::new(plan_check::execute(
+            repo.as_deref(),
+            context,
+            args,
+        )?))),
+        Command::PlanDiff(args) => Ok(Some(RenderableOutput::new(plan_diff::execute(
             repo.as_deref(),
             context,
             args,

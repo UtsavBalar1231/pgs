@@ -7,8 +7,8 @@ use crate::models::{LineOrigin, OperationPreview, PreviewLine};
 use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, HunkRef, LineOriginView,
     OperationOutput, OperationStatusView, OutputCommand, OverviewOutput, PlanCheckOutput,
-    PlanOverlap, ScanDetail, ScanFileView, ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput,
-    StatusOutput, UnsafeSelector,
+    PlanDiffEntry, PlanDiffOutput, PlanDiffShift, PlanOverlap, ScanDetail, ScanFileView,
+    ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput, StatusOutput, UnsafeSelector,
 };
 
 const MARKER_PREFIX: &str = "@@pgs:v1";
@@ -126,6 +126,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::Overview(overview) => render_overview(overview),
         CommandOutput::SplitHunk(split) => render_split(split),
         CommandOutput::PlanCheck(plan_check) => render_plan_check(plan_check),
+        CommandOutput::PlanDiff(plan_diff) => render_plan_diff(plan_diff),
     }
 }
 
@@ -465,6 +466,39 @@ fn render_plan_check(output: &PlanCheckOutput) -> Result<String, PgsError> {
         )?);
     }
     lines.push(render_marker("plan.check.end", &boundary)?);
+
+    Ok(lines.join("\n"))
+}
+
+#[derive(Debug, Serialize)]
+struct PlanDiffBoundaryRecord {
+    command: OutputCommand,
+    still_valid: usize,
+    shifted: usize,
+    gone: usize,
+}
+
+fn render_plan_diff(output: &PlanDiffOutput) -> Result<String, PgsError> {
+    let boundary = PlanDiffBoundaryRecord {
+        command: output.command,
+        still_valid: output.still_valid.len(),
+        shifted: output.shifted.len(),
+        gone: output.gone.len(),
+    };
+
+    let mut lines =
+        Vec::with_capacity(output.still_valid.len() + output.shifted.len() + output.gone.len() + 2);
+    lines.push(render_marker("plan.diff.begin", &boundary)?);
+    for entry in &output.still_valid {
+        lines.push(render_marker::<PlanDiffEntry>("plan.diff.valid", entry)?);
+    }
+    for shift in &output.shifted {
+        lines.push(render_marker::<PlanDiffShift>("plan.diff.shifted", shift)?);
+    }
+    for entry in &output.gone {
+        lines.push(render_marker::<PlanDiffEntry>("plan.diff.gone", entry)?);
+    }
+    lines.push(render_marker("plan.diff.end", &boundary)?);
 
     Ok(lines.join("\n"))
 }

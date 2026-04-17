@@ -74,7 +74,7 @@ fn plan_diff_unchanged_scan_reports_all_entries_still_valid() {
     let plan = json!({
         "version": "v1",
         "commits": [
-            { "id": "c1", "selections": [hunk_id.clone()] }
+            { "id": "c1", "selections": [&hunk_id] }
         ]
     });
 
@@ -118,7 +118,7 @@ fn plan_diff_after_commit_reports_covered_entries_as_gone() {
     let plan = json!({
         "version": "v1",
         "commits": [
-            { "id": "c1", "selections": [hunk_id.clone()] }
+            { "id": "c1", "selections": [&hunk_id] }
         ]
     });
 
@@ -165,7 +165,7 @@ fn plan_diff_after_content_edit_reports_shifted_entries() {
     let plan = json!({
         "version": "v1",
         "commits": [
-            { "id": "c1", "selections": [old_hunk_id.clone()] }
+            { "id": "c1", "selections": [&old_hunk_id] }
         ]
     });
 

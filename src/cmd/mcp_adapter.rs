@@ -5,7 +5,7 @@ use crate::error::PgsError;
 use crate::models::CommitPlan;
 use crate::output::view::{CommandOutput, OutputCommand};
 
-use super::{commit, log, overview, plan_check, scan, split, stage, status, unstage};
+use super::{commit, log, overview, plan_check, plan_diff, scan, split, stage, status, unstage};
 
 /// Typed MCP payload for `pgs_scan` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -110,6 +110,17 @@ pub struct McpPlanCheckRequest {
     pub context: u32,
 }
 
+/// Typed MCP payload for `pgs_plan_diff` requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpPlanDiffRequest {
+    /// Explicit repository path supplied by the MCP caller.
+    pub repo_path: String,
+    /// Agent-supplied plan to reconcile against a fresh scan.
+    pub plan: CommitPlan,
+    /// Unified diff context lines forwarded to the fresh scan.
+    pub context: u32,
+}
+
 /// Typed MCP command routed into the existing CLI execution paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpCommandRequest {
@@ -131,6 +142,8 @@ pub enum McpCommandRequest {
     SplitHunk(McpSplitHunkRequest),
     /// Validate an agent-supplied commit plan against a fresh scan.
     PlanCheck(McpPlanCheckRequest),
+    /// Reconcile a saved commit plan against a fresh scan (plan-diff).
+    PlanDiff(McpPlanDiffRequest),
 }
 
 /// Typed command output returned to MCP callers without re-parsing CLI markers.
@@ -152,6 +165,8 @@ pub enum McpTypedOutput {
     SplitHunk(crate::output::view::SplitHunkOutput),
     /// Structured plan-check output (overlap / uncovered / unsafe / unknown).
     PlanCheck(crate::output::view::PlanCheckOutput),
+    /// Structured plan-diff output (`still_valid` / shifted / gone).
+    PlanDiff(crate::output::view::PlanDiffOutput),
 }
 
 impl From<CommandOutput> for McpTypedOutput {
@@ -165,6 +180,7 @@ impl From<CommandOutput> for McpTypedOutput {
             CommandOutput::Overview(output) => Self::Overview(output),
             CommandOutput::SplitHunk(output) => Self::SplitHunk(output),
             CommandOutput::PlanCheck(output) => Self::PlanCheck(output),
+            CommandOutput::PlanDiff(output) => Self::PlanDiff(output),
         }
     }
 }
@@ -282,5 +298,12 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
         )
         .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::PlanCheck, source)),
+        McpCommandRequest::PlanDiff(request) => plan_diff::run_with_plan(
+            Some(request.repo_path.as_str()),
+            request.context.max(1),
+            &request.plan,
+        )
+        .map(Into::into)
+        .map_err(|source| McpAdapterError::new(OutputCommand::PlanDiff, source)),
     }
 }

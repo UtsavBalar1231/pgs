@@ -305,16 +305,15 @@ mod tests {
                 PlannedCommit {
                     id: Some("A".into()),
                     selections: vec!["f.rs".into()],
-                    exclude: Vec::new(),
-                    message: None,
+                    ..PlannedCommit::default()
                 },
                 PlannedCommit {
                     id: Some("B".into()),
                     selections: vec!["aaa111bbb222".into()],
-                    exclude: Vec::new(),
-                    message: None,
+                    ..PlannedCommit::default()
                 },
             ],
+            ..CommitPlan::default()
         };
         let result = check_plan(&plan, &scan);
         assert_eq!(result.overlaps.len(), 1);
@@ -331,6 +330,7 @@ mod tests {
         let plan = CommitPlan {
             version: "v1".into(),
             commits: Vec::new(),
+            ..CommitPlan::default()
         };
         let result = check_plan(&plan, &scan);
         assert_eq!(result.uncovered.len(), 2);
@@ -345,9 +345,9 @@ mod tests {
             commits: vec![PlannedCommit {
                 id: Some("ghost".into()),
                 selections: vec!["does/not/exist.rs".into()],
-                exclude: Vec::new(),
-                message: None,
+                ..PlannedCommit::default()
             }],
+            ..CommitPlan::default()
         };
         let result = check_plan(&plan, &scan);
         assert!(
@@ -370,9 +370,9 @@ mod tests {
             commits: vec![PlannedCommit {
                 id: Some("wide".into()),
                 selections: vec!["f.rs:1-40".into()],
-                exclude: Vec::new(),
-                message: None,
+                ..PlannedCommit::default()
             }],
+            ..CommitPlan::default()
         };
         let result = check_plan(&plan, &scan);
         assert_eq!(result.unsafe_selectors.len(), 1);
