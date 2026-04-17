@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::PgsError;
 use crate::output::view::{CommandOutput, OutputCommand};
 
-use super::{commit, log, scan, stage, status, unstage};
+use super::{commit, log, overview, scan, stage, status, unstage};
 
 /// Typed MCP payload for `pgs_scan` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -78,6 +78,15 @@ pub struct McpCommitRequest {
     pub message: String,
 }
 
+/// Typed MCP payload for `pgs_overview` requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct McpOverviewRequest {
+    /// Explicit repository path supplied by the MCP caller.
+    pub repo_path: String,
+    /// Unified diff context lines forwarded to the scan and status stages.
+    pub context: u32,
+}
+
 /// Typed MCP command routed into the existing CLI execution paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpCommandRequest {
@@ -93,6 +102,8 @@ pub enum McpCommandRequest {
     Commit(McpCommitRequest),
     /// Run the log command for recent commit history.
     Log(McpLogRequest),
+    /// Run the overview command (scan + status fusion).
+    Overview(McpOverviewRequest),
 }
 
 /// Typed command output returned to MCP callers without re-parsing CLI markers.
@@ -215,5 +226,10 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
         )
         .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Log, source)),
+        McpCommandRequest::Overview(request) => {
+            overview::execute(Some(request.repo_path.as_str()), request.context.max(1))
+                .map(Into::into)
+                .map_err(|source| McpAdapterError::new(OutputCommand::Overview, source))
+        }
     }
 }

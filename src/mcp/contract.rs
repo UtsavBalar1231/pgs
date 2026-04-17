@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cmd::mcp_adapter::{
-        McpAdapterError, McpCommitRequest, McpLogRequest, McpScanRequest, McpStageRequest,
-        McpStatusRequest, McpTypedOutput, McpUnstageRequest,
+        McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpScanRequest,
+        McpStageRequest, McpStatusRequest, McpTypedOutput, McpUnstageRequest,
     },
     error::PgsError,
     output::view::{
-        CommitOutput, LogOutput, OperationOutput, OutputCommand, ScanOutput, StatusOutput,
+        CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, ScanOutput,
+        StatusOutput,
     },
 };
 
@@ -27,6 +28,8 @@ pub const PGS_UNSTAGE_TOOL: &str = "pgs_unstage";
 pub const PGS_COMMIT_TOOL: &str = "pgs_commit";
 /// MCP tool name for commit log operations.
 pub const PGS_LOG_TOOL: &str = "pgs_log";
+/// MCP tool name for unified unstaged + staged overview operations.
+pub const PGS_OVERVIEW_TOOL: &str = "pgs_overview";
 
 const DEFAULT_CONTEXT: u32 = 3;
 
@@ -166,6 +169,24 @@ impl From<LogToolInput> for McpLogRequest {
     }
 }
 
+/// JSON input schema for the `pgs_overview` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct OverviewToolInput {
+    /// Explicit repository path to inspect.
+    pub repo_path: String,
+    /// Optional diff context override applied to both scan and status.
+    pub context: Option<u32>,
+}
+
+impl From<OverviewToolInput> for McpOverviewRequest {
+    fn from(value: OverviewToolInput) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            context: value.context.unwrap_or(DEFAULT_CONTEXT),
+        }
+    }
+}
+
 /// Outcome classification surfaced in MCP tool results.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -231,6 +252,7 @@ define_tool_output!(StatusToolOutput, StatusOutput);
 define_tool_output!(OperationToolOutput, OperationOutput);
 define_tool_output!(CommitToolOutput, CommitOutput);
 define_tool_output!(LogToolOutput, LogOutput);
+define_tool_output!(OverviewToolOutput, OverviewOutput);
 
 /// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
 pub fn tool_definitions() -> Vec<Tool> {
@@ -241,6 +263,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         unstage_tool(),
         commit_tool(),
         log_tool(),
+        overview_tool(),
     ]
 }
 
@@ -381,6 +404,25 @@ fn log_tool() -> Tool {
     .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
+fn overview_tool() -> Tool {
+    Tool::new(
+        PGS_OVERVIEW_TOOL,
+        "Return a unified view of both unstaged (scan) and staged (status) changes for an explicit local repository path without mutating the repository.",
+        serde_json::Map::new(),
+    )
+    .with_title("Overview of unstaged and staged changes")
+    .with_input_schema::<OverviewToolInput>()
+    .with_output_schema::<OverviewToolOutput>()
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+}
+
 fn log_summary_text(log: &LogOutput) -> String {
     if log.truncated {
         format!(
@@ -439,9 +481,15 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
             log_summary_text(&log),
             false,
         ),
-        McpTypedOutput::Overview(_) => Err(PgsError::Internal(
-            "overview output has no MCP tool surface yet".to_owned(),
-        )),
+        McpTypedOutput::Overview(overview) => structured_tool_result(
+            OverviewToolOutput {
+                outcome: ToolOutcome::Ok,
+                pgs: Some(overview.clone()),
+                pgs_error: None,
+            },
+            overview_summary_text(&overview),
+            false,
+        ),
     }
 }
 
@@ -495,9 +543,15 @@ fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError>
             text,
             false,
         ),
-        OutputCommand::Overview => Err(PgsError::Internal(
-            "overview command has no MCP tool surface yet".to_owned(),
-        )),
+        OutputCommand::Overview => structured_tool_result(
+            OverviewToolOutput {
+                outcome: ToolOutcome::NoEffect,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            false,
+        ),
     }
 }
 
@@ -551,9 +605,15 @@ fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
             text,
             true,
         ),
-        OutputCommand::Overview => Err(PgsError::Internal(
-            "overview command has no MCP tool surface yet".to_owned(),
-        )),
+        OutputCommand::Overview => structured_tool_result(
+            OverviewToolOutput {
+                outcome: ToolOutcome::Error,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            true,
+        ),
     }
 }
 
@@ -631,6 +691,13 @@ fn status_summary_text(status: &StatusOutput) -> String {
     format!(
         "Found {} staged file(s), {} addition(s), and {} deletion(s).",
         status.summary.total_files, status.summary.total_additions, status.summary.total_deletions
+    )
+}
+
+fn overview_summary_text(overview: &OverviewOutput) -> String {
+    format!(
+        "Overview: {} unstaged file(s), {} staged file(s).",
+        overview.unstaged.summary.total_files, overview.staged.summary.total_files
     )
 }
 
@@ -728,6 +795,7 @@ mod tests {
                 PGS_UNSTAGE_TOOL,
                 PGS_COMMIT_TOOL,
                 PGS_LOG_TOOL,
+                PGS_OVERVIEW_TOOL,
             ]
         );
 
@@ -795,13 +863,46 @@ mod tests {
         let unstage = tool_definition(PGS_UNSTAGE_TOOL).expect("unstage tool should exist");
         let commit = tool_definition(PGS_COMMIT_TOOL).expect("commit tool should exist");
         let log = tool_definition(PGS_LOG_TOOL).expect("log tool should exist");
+        let overview = tool_definition(PGS_OVERVIEW_TOOL).expect("overview tool should exist");
 
         assert_eq!(scan.task_support(), TaskSupport::Optional);
         assert_eq!(status.task_support(), TaskSupport::Optional);
         assert_eq!(log.task_support(), TaskSupport::Optional);
+        assert_eq!(overview.task_support(), TaskSupport::Optional);
         assert_eq!(stage.task_support(), TaskSupport::Forbidden);
         assert_eq!(unstage.task_support(), TaskSupport::Forbidden);
         assert_eq!(commit.task_support(), TaskSupport::Forbidden);
+    }
+
+    #[test]
+    fn mcp_overview_tool_is_read_only_and_requires_repo_path() {
+        let overview = tool_definition(PGS_OVERVIEW_TOOL).expect("overview tool should exist");
+        assert_eq!(overview.task_support(), TaskSupport::Optional);
+
+        let annotations = overview
+            .annotations
+            .as_ref()
+            .expect("overview tool should have annotations");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.destructive_hint, Some(false));
+        assert_eq!(annotations.idempotent_hint, Some(true));
+
+        assert!(required_fields(&overview).iter().any(|f| f == "repo_path"));
+    }
+
+    #[test]
+    fn mcp_overview_no_effect_maps_to_overview_envelope() {
+        let no_changes = map_execution_result(Err(McpAdapterError::new(
+            OutputCommand::Overview,
+            PgsError::NoChanges,
+        )))
+        .expect("no-effect result should serialize");
+        assert_eq!(no_changes.is_error, Some(false));
+        let structured = no_changes
+            .structured_content
+            .expect("overview no-effect must carry structured content");
+        assert_eq!(structured["outcome"], "no_effect");
+        assert_eq!(structured["pgs_error"]["code"], "no_changes");
     }
 
     #[test]

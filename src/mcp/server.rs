@@ -20,9 +20,9 @@ use rmcp::{
 use crate::{
     cmd::mcp_adapter::McpCommandRequest,
     mcp::contract::{
-        self, CommitToolInput, LogToolInput, PGS_COMMIT_TOOL, PGS_LOG_TOOL, PGS_SCAN_TOOL,
-        PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL, ScanToolInput, StageToolInput,
-        StatusToolInput, UnstageToolInput,
+        self, CommitToolInput, LogToolInput, OverviewToolInput, PGS_COMMIT_TOOL, PGS_LOG_TOOL,
+        PGS_OVERVIEW_TOOL, PGS_SCAN_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL,
+        ScanToolInput, StageToolInput, StatusToolInput, UnstageToolInput,
     },
     mcp::runtime::PgsMcpRuntime,
 };
@@ -91,6 +91,7 @@ impl ServerHandler for PgsMcpServer {
             unstage_tool(),
             commit_tool(),
             log_tool(),
+            overview_tool(),
         ])))
     }
 
@@ -102,6 +103,7 @@ impl ServerHandler for PgsMcpServer {
             PGS_UNSTAGE_TOOL => Some(unstage_tool()),
             PGS_COMMIT_TOOL => Some(commit_tool()),
             PGS_LOG_TOOL => Some(log_tool()),
+            PGS_OVERVIEW_TOOL => Some(overview_tool()),
             _ => None,
         }
     }
@@ -226,6 +228,13 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
                 command: McpCommandRequest::Log(input.into()),
             })
         }
+        PGS_OVERVIEW_TOOL => {
+            let input: OverviewToolInput = parse_tool_input(request.arguments)?;
+            Ok(ParsedToolCall::Read {
+                tool_name: PGS_OVERVIEW_TOOL,
+                command: McpCommandRequest::Overview(input.into()),
+            })
+        }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
     }
 }
@@ -268,6 +277,11 @@ fn commit_tool() -> Tool {
 fn log_tool() -> Tool {
     contract::tool_definition(PGS_LOG_TOOL)
         .expect("log tool must be present in frozen MCP contract")
+}
+
+fn overview_tool() -> Tool {
+    contract::tool_definition(PGS_OVERVIEW_TOOL)
+        .expect("overview tool must be present in frozen MCP contract")
 }
 
 /// Start the `pgs-mcp` server over stdio and wait for shutdown.

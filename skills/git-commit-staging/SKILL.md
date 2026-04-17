@@ -31,8 +31,8 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 |--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
 | Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:288`                                            | No exact-content dry-run preview (counts only, until A1 ships)          |
 | Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                               | No mixed-hunk splitter (until A2 ships)                                 |
-| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:560`                   | No automatic selector remap after content changes                       |
-| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:212`                              | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
+| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:620`                   | No automatic selector remap after content changes                       |
+| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:233`                              | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
 | Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact  |                                                                         |
 | Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files                                         |                                                                         |
 | Distinct diff bases per command — scan `Index→Workdir`, status `HEAD→Index`, unstage `HEAD→Index`                  |                                                                         |
@@ -50,7 +50,7 @@ What pgs promises so the agent does not have to reason about it:
 - Content-addressed hunk IDs stable across unchanged rescans (`compute_hunk_id` at `src/git/diff.rs:288`; stability proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:528`).
 - Freshness validation with a `StaleScan` error and recovery guidance (`validate_freshness` at `src/selection/resolve.rs:248`).
 - File / hunk / line selector resolution (auto-detected from positional syntax).
-- Structured JSON output on every MCP call via `structured_content` (`structured_tool_result` at `src/mcp/contract.rs:560`).
+- Structured JSON output on every MCP call via `structured_content` (`structured_tool_result` at `src/mcp/contract.rs:620`).
 - Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files (hunk or line selectors on these produce a `user` error).
 - Distinct diff bases per command — `pgs_scan` is `Index→Workdir`; `pgs_status` is `HEAD→Index`; `pgs_unstage` matches `HEAD→Index`.
 
@@ -117,7 +117,7 @@ pgs_stage(repo_path="/path/to/repo", selections=["src/"], exclude=["src/secrets.
 
 ## 3. Reading Tool Responses
 
-> **Always read from `structured_content`. The `content` field is a human summary — never parse it. If you find yourself proposing "add structured JSON to MCP output", you are re-inventing a feature that already ships (`define_tool_output!` at `src/mcp/contract.rs:212`, `structured_tool_result` at `src/mcp/contract.rs:560`). See §0 Capability Truth Table.**
+> **Always read from `structured_content`. The `content` field is a human summary — never parse it. If you find yourself proposing "add structured JSON to MCP output", you are re-inventing a feature that already ships (`define_tool_output!` at `src/mcp/contract.rs:233`, `structured_tool_result` at `src/mcp/contract.rs:620`). See §0 Capability Truth Table.**
 
 Every pgs MCP tool returns two payloads:
 
