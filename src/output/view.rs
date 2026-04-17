@@ -368,6 +368,7 @@ pub struct ScanHunkView {
     pub header: String,
     pub additions: u32,
     pub deletions: u32,
+    pub whitespace_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -385,6 +386,7 @@ impl ScanHunkView {
             new_lines,
             additions,
             deletions,
+            whitespace_only,
         } = hunk;
 
         Self {
@@ -396,6 +398,7 @@ impl ScanHunkView {
             header,
             additions,
             deletions,
+            whitespace_only,
             checksum: None,
             lines: None,
         }
@@ -411,6 +414,7 @@ impl ScanHunkView {
             header,
             lines,
             checksum,
+            whitespace_only,
         } = hunk;
 
         let (additions, deletions) = count_lines(&lines);
@@ -424,6 +428,7 @@ impl ScanHunkView {
             header,
             additions,
             deletions,
+            whitespace_only,
             checksum: Some(checksum),
             lines: Some(lines.into_iter().map(Into::into).collect()),
         }

@@ -248,6 +248,7 @@ fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, Pg
 
         let hunk_id = compute_hunk_id(file_path, old_start, new_start, &hunk_content);
         let checksum = hex_sha256(hunk_content.as_bytes());
+        let whitespace_only = is_whitespace_only(&lines);
 
         hunks.push(HunkInfo {
             hunk_id,
@@ -258,10 +259,25 @@ fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, Pg
             header,
             lines,
             checksum,
+            whitespace_only,
         });
     }
 
     Ok(hunks)
+}
+
+/// A hunk is whitespace-only when every Addition/Deletion line's trimmed content is empty. Context lines are ignored; a hunk with no additions/deletions returns `false`.
+fn is_whitespace_only(lines: &[DiffLineInfo]) -> bool {
+    let mut changed_any = false;
+    for line in lines {
+        if matches!(line.origin, LineOrigin::Addition | LineOrigin::Deletion) {
+            changed_any = true;
+            if !line.content.trim().is_empty() {
+                return false;
+            }
+        }
+    }
+    changed_any
 }
 
 /// Count added and deleted lines in a patch.

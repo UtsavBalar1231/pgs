@@ -91,6 +91,9 @@ pub struct HunkInfo {
     pub lines: Vec<DiffLineInfo>,
     /// SHA-256 hex digest of hunk line content.
     pub checksum: String,
+    /// True when every Addition/Deletion line has empty or whitespace-only content. Metadata only — not part of the hunk-ID input.
+    #[serde(default)]
+    pub whitespace_only: bool,
 }
 
 /// A single line within a diff hunk.
@@ -168,6 +171,9 @@ pub struct CompactHunkInfo {
     pub additions: u32,
     /// Count of Deletion lines.
     pub deletions: u32,
+    /// True when every Addition/Deletion line has empty or whitespace-only content.
+    #[serde(default)]
+    pub whitespace_only: bool,
 }
 
 impl From<&ScanResult> for CompactScanResult {
@@ -201,6 +207,7 @@ impl From<&ScanResult> for CompactScanResult {
                             new_lines: hunk.new_lines,
                             additions,
                             deletions,
+                            whitespace_only: hunk.whitespace_only,
                         }
                     })
                     .collect();
@@ -425,6 +432,7 @@ mod tests {
                         content: "fn main() {".into(),
                     }],
                     checksum: "def456".into(),
+                    whitespace_only: false,
                 }],
             }],
             summary: ScanSummary {
@@ -614,6 +622,7 @@ mod tests {
                             },
                         ],
                         checksum: "def456".into(),
+                        whitespace_only: false,
                     }],
                 },
                 FileInfo {

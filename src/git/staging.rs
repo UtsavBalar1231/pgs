@@ -662,6 +662,7 @@ mod tests {
                 },
             ],
             checksum: "test".into(),
+            whitespace_only: false,
         };
 
         let count = stage_hunk(&repo, "file.txt", &hunk).expect("stage_hunk");

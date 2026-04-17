@@ -320,6 +320,7 @@ mod tests {
                                 content: "x".into(),
                             }],
                             checksum: "cs1".into(),
+                            whitespace_only: false,
                         },
                         HunkInfo {
                             hunk_id: "ccc333ddd444".into(),
@@ -334,6 +335,7 @@ mod tests {
                                 content: "y".into(),
                             }],
                             checksum: "cs2".into(),
+                            whitespace_only: false,
                         },
                     ],
                 },
@@ -362,6 +364,7 @@ mod tests {
                         header: "@@ -0,0 +1,5 @@".into(),
                         lines: vec![],
                         checksum: "cs3".into(),
+                        whitespace_only: false,
                     }],
                 },
                 FileInfo {
@@ -380,6 +383,7 @@ mod tests {
                         header: "@@ -1,2 +0,0 @@".into(),
                         lines: vec![],
                         checksum: "cs4".into(),
+                        whitespace_only: false,
                     }],
                 },
             ],

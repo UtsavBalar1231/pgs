@@ -455,6 +455,7 @@ mod tests {
                 .to_string(),
             lines,
             checksum: "test".into(),
+            whitespace_only: false,
         };
 
         // Verify the hunk contains a deletion line (line2 was deleted from index)
@@ -504,6 +505,7 @@ mod tests {
                 },
             ],
             checksum: "test_checksum".into(),
+            whitespace_only: false,
         };
 
         let lines = unstage_hunk(&repo, "h.txt", &hunk).expect("unstage_hunk");
