@@ -5,7 +5,8 @@ use clap::Args;
 use crate::error::PgsError;
 use crate::git::{diff, repo, staging};
 use crate::models::{
-    FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
+    FileStatus, OperationPreview, OperationStatus, ResolvedSelection, SelectionSpec,
+    format_selection,
 };
 use crate::output::view::{CommandOutput, OperationItemView, OperationOutput};
 use crate::safety::{backup, lock};
@@ -185,7 +186,12 @@ pub fn execute(
             })
             .collect();
 
-        return Ok(OperationOutput::stage(OperationStatus::DryRun, items, vec![], None).into());
+        let output = OperationOutput::stage(OperationStatus::DryRun, items, vec![], None);
+        if args.explain {
+            let previews = compute_previews(&repository, &scan, &work_items, args.limit)?;
+            return Ok(output.with_previews(previews).into());
+        }
+        return Ok(output.into());
     }
 
     let backup_info = backup::create_backup(&repository)?;
@@ -267,6 +273,27 @@ pub fn execute(
 
 const fn operation_item(selection: String, lines_affected: u32) -> OperationItemView {
     OperationItemView::new(selection, lines_affected)
+}
+
+/// Build per-file `OperationPreview` entries for `--dry-run --explain`.
+fn compute_previews(
+    repository: &git2::Repository,
+    scan: &crate::models::ScanResult,
+    work_items: &[(SelectionSpec, ResolvedSelection)],
+    limit: u32,
+) -> Result<Vec<OperationPreview>, PgsError> {
+    let mut previews: Vec<OperationPreview> = Vec::with_capacity(work_items.len());
+    for (spec, resolved) in work_items {
+        let selection = format_selection(spec);
+        let request = staging::PreviewRequest {
+            scan,
+            resolved,
+            selection: &selection,
+            limit,
+        };
+        previews.push(staging::preview_stage(repository, &request)?);
+    }
+    Ok(previews)
 }
 
 /// Execute staging for a single resolved selection based on file status and selection type.

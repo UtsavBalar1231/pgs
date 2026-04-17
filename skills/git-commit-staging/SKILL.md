@@ -387,7 +387,7 @@ Prefer hunk IDs over line ranges. Use line ranges only when a single hunk contai
 
 ### Phase 4 — Using `dry_run` meaningfully — and its current limits
 
-`dry_run: true` on `pgs_stage` confirms selector applicability and reports line counts (via `estimate_lines` at `src/cmd/stage.rs:167`) but does not show the exact content that will land in the index. Treat the count as a sanity check, not proof of correctness.
+`dry_run: true` on `pgs_stage` confirms selector applicability and reports line counts (via `estimate_lines` at `src/cmd/stage.rs:406`) but does not show the exact content that will land in the index. Treat the count as a sanity check, not proof of correctness.
 
 Workaround for high-risk mixed hunks: after staging but before `pgs_commit`, re-scan the file with `full: true` (`pgs_scan(files: ["path"], full: true)`) and visually confirm the staged diff matches intent. This workaround can be shortened once A1 (exact preview) ships — see `TODO.md`.
 

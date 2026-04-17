@@ -13,7 +13,9 @@ use similar::TextDiff;
 use crate::error::PgsError;
 use crate::git::repo;
 use crate::git::{build_index_entry, read_head_blob, read_index_blob};
-use crate::models::{HunkInfo, LineOrigin};
+use crate::models::{
+    HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine, ResolvedSelection, ScanResult,
+};
 use crate::saturating_u32;
 
 /// Stage an entire file from the working directory into the index.
@@ -165,6 +167,183 @@ pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result
         }
     }
     stage_lines(repo, file_path, &selected)
+}
+
+/// Inputs for [`preview_stage`] — bundled to keep the function under four params.
+pub struct PreviewRequest<'a> {
+    /// Scan result the selection was resolved against.
+    pub scan: &'a ScanResult,
+    /// Resolved selection for the file being previewed.
+    pub resolved: &'a ResolvedSelection,
+    /// Original selection string (e.g. `src/main.rs:10-20`) for display.
+    pub selection: &'a str,
+    /// Per-file cap on preview lines. `0` means unlimited.
+    pub limit: u32,
+}
+
+/// Build an [`OperationPreview`] for one resolved file without mutating anything.
+///
+/// Reuses the same `TextDiff` resolution path as [`stage_lines`] so the preview
+/// matches what would land in the index — then stops before the blob write.
+/// Binary files short-circuit with an empty preview and `reason: "binary"`.
+///
+/// # Errors
+///
+/// - `PgsError::Git` if the index/HEAD blob cannot be read
+/// - `PgsError::Io` if the workdir file cannot be read
+/// - `PgsError::Internal` if the repository is bare
+pub fn preview_stage(
+    repo: &Repository,
+    request: &PreviewRequest<'_>,
+) -> Result<OperationPreview, PgsError> {
+    let PreviewRequest {
+        scan,
+        resolved,
+        selection,
+        limit,
+    } = *request;
+
+    let file_path = resolved.file_path.clone();
+    let resolved_ranges = resolved_ranges_for(scan, resolved);
+
+    let file_info = scan.files.iter().find(|f| f.path == file_path);
+    if file_info.is_some_and(|f| f.is_binary) {
+        return Ok(OperationPreview {
+            selection: selection.to_owned(),
+            file_path,
+            resolved_ranges,
+            preview_lines: Vec::new(),
+            truncated: false,
+            limit_applied: limit,
+            reason: Some("binary".to_owned()),
+        });
+    }
+
+    let selected = selected_line_numbers(scan, resolved);
+    let additions = collect_preview_additions(repo, &file_path, &selected)?;
+
+    let (capped, truncated) = apply_limit(additions, limit);
+
+    Ok(OperationPreview {
+        selection: selection.to_owned(),
+        file_path,
+        resolved_ranges,
+        preview_lines: capped,
+        truncated,
+        limit_applied: limit,
+        reason: None,
+    })
+}
+
+fn resolved_ranges_for(scan: &ScanResult, resolved: &ResolvedSelection) -> Vec<LineRange> {
+    if let Some(ranges) = &resolved.line_ranges {
+        return ranges.clone();
+    }
+
+    let Some(file) = scan.files.iter().find(|f| f.path == resolved.file_path) else {
+        return Vec::new();
+    };
+
+    resolved
+        .hunk_indices
+        .iter()
+        .filter_map(|&idx| file.hunks.get(idx))
+        .filter(|hunk| hunk.new_lines > 0)
+        .map(|hunk| LineRange {
+            start: hunk.new_start,
+            end: hunk.new_start + hunk.new_lines.saturating_sub(1),
+        })
+        .collect()
+}
+
+fn selected_line_numbers(scan: &ScanResult, resolved: &ResolvedSelection) -> HashSet<u32> {
+    let mut selected: HashSet<u32> = HashSet::new();
+
+    if let Some(ranges) = &resolved.line_ranges {
+        for range in ranges {
+            for line in range.start..=range.end {
+                selected.insert(line);
+            }
+        }
+        return selected;
+    }
+
+    let Some(file) = scan.files.iter().find(|f| f.path == resolved.file_path) else {
+        return selected;
+    };
+
+    if resolved.hunk_indices.is_empty() {
+        // Whole-file selection — pull every addition line from every hunk.
+        for hunk in &file.hunks {
+            for line in &hunk.lines {
+                if matches!(line.origin, LineOrigin::Addition) {
+                    selected.insert(line.line_number);
+                }
+            }
+        }
+        return selected;
+    }
+
+    for &hunk_idx in &resolved.hunk_indices {
+        let Some(hunk) = file.hunks.get(hunk_idx) else {
+            continue;
+        };
+        for line in &hunk.lines {
+            if matches!(line.origin, LineOrigin::Addition) {
+                selected.insert(line.line_number);
+            }
+        }
+    }
+
+    selected
+}
+
+fn collect_preview_additions(
+    repo: &Repository,
+    file_path: &str,
+    selected: &HashSet<u32>,
+) -> Result<Vec<PreviewLine>, PgsError> {
+    let base_bytes =
+        read_index_blob(repo, file_path).or_else(|_| read_head_blob(repo, file_path))?;
+    let workdir = repo::workdir(repo)?;
+    let full_path = workdir.join(file_path);
+    let work_bytes = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
+
+    let base_text = String::from_utf8_lossy(&base_bytes);
+    let work_text = String::from_utf8_lossy(&work_bytes);
+    let diff = TextDiff::from_lines(base_text.as_ref(), work_text.as_ref());
+
+    let mut out: Vec<PreviewLine> = Vec::new();
+    for change in diff.iter_all_changes() {
+        if change.tag() != similar::ChangeTag::Insert {
+            continue;
+        }
+        let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
+        if !selected.contains(&new_line) {
+            continue;
+        }
+        let raw = change.value();
+        let content = raw.strip_suffix('\n').unwrap_or(raw).to_owned();
+        out.push(PreviewLine {
+            line_number: new_line,
+            origin: LineOrigin::Addition,
+            content,
+        });
+    }
+    Ok(out)
+}
+
+fn apply_limit(mut lines: Vec<PreviewLine>, limit: u32) -> (Vec<PreviewLine>, bool) {
+    if limit == 0 {
+        return (lines, false);
+    }
+    let cap = limit as usize;
+    if lines.len() > cap {
+        lines.truncate(cap);
+        (lines, true)
+    } else {
+        (lines, false)
+    }
 }
 
 /// Stage a file deletion (remove a file from the index).
