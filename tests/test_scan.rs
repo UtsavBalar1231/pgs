@@ -251,3 +251,39 @@ fn scan_directory_with_no_changes_returns_no_changes() {
     // Scan dirB — no changes there
     run_pgs(dir.path(), &["scan", "dirB"]).code(1);
 }
+
+#[test]
+fn scan_whitespace_only_hunk_flags_field_true() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "ws.txt", "alpha\nbeta\n", "add ws");
+    // Modify: append blank lines + trailing-space lines only (no semantic change).
+    write_file(dir.path(), "ws.txt", "alpha\nbeta\n\n   \n");
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let hunks = json["files"][0]["hunks"].as_array().unwrap();
+    assert!(!hunks.is_empty(), "expected at least one hunk");
+    assert_eq!(
+        hunks[0]["whitespace_only"], true,
+        "whitespace_only should be true for blank/trailing-space-only additions"
+    );
+}
+
+#[test]
+fn scan_semantic_hunk_flags_whitespace_only_false() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "sem.txt", "line1\n", "add sem");
+    write_file(dir.path(), "sem.txt", "line1\nreal content\n");
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let hunks = json["files"][0]["hunks"].as_array().unwrap();
+    assert_eq!(
+        hunks[0]["whitespace_only"], false,
+        "whitespace_only should be false when the hunk adds non-whitespace content"
+    );
+}
