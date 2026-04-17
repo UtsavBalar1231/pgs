@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cmd::mcp_adapter::{
-        McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpScanRequest,
-        McpSplitHunkRequest, McpStageRequest, McpStatusRequest, McpTypedOutput, McpUnstageRequest,
+        McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpPlanCheckRequest,
+        McpScanRequest, McpSplitHunkRequest, McpStageRequest, McpStatusRequest, McpTypedOutput,
+        McpUnstageRequest,
     },
     error::PgsError,
+    models::CommitPlan,
     output::view::{
         CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, PlanCheckOutput,
         ScanOutput, SplitHunkOutput, StatusOutput,
@@ -32,6 +34,8 @@ pub const PGS_LOG_TOOL: &str = "pgs_log";
 pub const PGS_OVERVIEW_TOOL: &str = "pgs_overview";
 /// MCP tool name for hunk run-classification (split-hunk) operations.
 pub const PGS_SPLIT_HUNK_TOOL: &str = "pgs_split_hunk";
+/// MCP tool name for commit-plan validation operations.
+pub const PGS_PLAN_CHECK_TOOL: &str = "pgs_plan_check";
 
 const DEFAULT_CONTEXT: u32 = 3;
 
@@ -210,6 +214,27 @@ impl From<SplitHunkToolInput> for McpSplitHunkRequest {
     }
 }
 
+/// JSON input schema for the `pgs_plan_check` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanCheckToolInput {
+    /// Explicit repository path to inspect.
+    pub repo_path: String,
+    /// Agent-supplied `CommitPlan` to validate against a fresh scan.
+    pub plan: CommitPlan,
+    /// Optional diff context override.
+    pub context: Option<u32>,
+}
+
+impl From<PlanCheckToolInput> for McpPlanCheckRequest {
+    fn from(value: PlanCheckToolInput) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            plan: value.plan,
+            context: value.context.unwrap_or(DEFAULT_CONTEXT),
+        }
+    }
+}
+
 /// Outcome classification surfaced in MCP tool results.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -290,6 +315,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         log_tool(),
         overview_tool(),
         split_hunk_tool(),
+        plan_check_tool(),
     ]
 }
 
@@ -458,6 +484,25 @@ fn split_hunk_tool() -> Tool {
     .with_title("Classify hunk runs (split-hunk)")
     .with_input_schema::<SplitHunkToolInput>()
     .with_output_schema::<SplitHunkToolOutput>()
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+}
+
+fn plan_check_tool() -> Tool {
+    Tool::new(
+        PGS_PLAN_CHECK_TOOL,
+        "Validate an agent-supplied CommitPlan against a fresh scan for an explicit local repository path without mutating the repository. Reports overlaps, uncovered hunks, unsafe selectors (line ranges crossing hunk boundaries), and unknown paths.",
+        serde_json::Map::new(),
+    )
+    .with_title("Validate commit plan")
+    .with_input_schema::<PlanCheckToolInput>()
+    .with_output_schema::<PlanCheckToolOutput>()
     .with_annotations(
         ToolAnnotations::new()
             .read_only(true)
@@ -920,6 +965,7 @@ mod tests {
                 PGS_LOG_TOOL,
                 PGS_OVERVIEW_TOOL,
                 PGS_SPLIT_HUNK_TOOL,
+                PGS_PLAN_CHECK_TOOL,
             ]
         );
 

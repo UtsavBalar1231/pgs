@@ -2,9 +2,10 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 use crate::error::PgsError;
+use crate::models::CommitPlan;
 use crate::output::view::{CommandOutput, OutputCommand};
 
-use super::{commit, log, overview, scan, split, stage, status, unstage};
+use super::{commit, log, overview, plan_check, scan, split, stage, status, unstage};
 
 /// Typed MCP payload for `pgs_scan` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -98,6 +99,17 @@ pub struct McpSplitHunkRequest {
     pub context: u32,
 }
 
+/// Typed MCP payload for `pgs_plan_check` requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpPlanCheckRequest {
+    /// Explicit repository path supplied by the MCP caller.
+    pub repo_path: String,
+    /// Agent-supplied plan to validate against a fresh scan.
+    pub plan: CommitPlan,
+    /// Unified diff context lines forwarded to the fresh scan.
+    pub context: u32,
+}
+
 /// Typed MCP command routed into the existing CLI execution paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpCommandRequest {
@@ -117,6 +129,8 @@ pub enum McpCommandRequest {
     Overview(McpOverviewRequest),
     /// Classify a single hunk's contiguous runs (split-hunk).
     SplitHunk(McpSplitHunkRequest),
+    /// Validate an agent-supplied commit plan against a fresh scan.
+    PlanCheck(McpPlanCheckRequest),
 }
 
 /// Typed command output returned to MCP callers without re-parsing CLI markers.
@@ -261,5 +275,12 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
         )
         .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::SplitHunk, source)),
+        McpCommandRequest::PlanCheck(request) => plan_check::run_with_plan(
+            Some(request.repo_path.as_str()),
+            request.context.max(1),
+            &request.plan,
+        )
+        .map(Into::into)
+        .map_err(|source| McpAdapterError::new(OutputCommand::PlanCheck, source)),
     }
 }

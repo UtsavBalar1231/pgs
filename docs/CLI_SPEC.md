@@ -279,6 +279,76 @@ scan`.
 MCP tool: `pgs_split_hunk` — read-only, `task_support: Optional`. Input
 schema requires `repo_path` and `hunk_id`; optional `context` defaults to 3.
 
+### `plan-check`
+
+Validate an agent-supplied `CommitPlan` against a fresh scan. Descriptive — the
+command never stages, unstages, or commits. It reports how the plan's selectors
+overlap, miss, or straddle boundaries relative to the current scan so the agent
+can fix the plan before executing it.
+
+```
+pgs plan-check [--plan <path> | --stdin]
+```
+
+Input schema (JSON on stdin, default, or read from `--plan <path>`):
+
+```json
+{
+  "version": "v1",
+  "commits": [
+    {
+      "id": "optional-label",
+      "selections": ["src/main.rs", "abc123def456", "src/lib.rs:10-20"],
+      "exclude": [],
+      "message": "optional commit message preview"
+    }
+  ]
+}
+```
+
+All fields other than `version`, `commits`, and `selections` are optional and
+defaulted via `#[serde(default)]`. pgs only receives `CommitPlan` (never emits
+one), so unknown input fields are silently tolerated. A6 `plan-diff` will
+extend this schema additively without bumping `version`.
+
+JSON envelope:
+
+```json
+{
+  "version": "v1",
+  "command": "plan-check",
+  "overlaps": [
+    { "hunk_id": "abc123def456", "commits": ["commitA", "commitB"] }
+  ],
+  "uncovered": [
+    { "file_path": "src/main.rs", "hunk_id": "deadbeefcafe" }
+  ],
+  "unsafe_selectors": [
+    { "commit_id": "wide", "selection": "src/main.rs:1-40", "reason": "spans_hunk_boundary" }
+  ],
+  "unknown_paths": ["does/not/exist.rs"]
+}
+```
+
+`unsafe_selectors[*].reason` values currently emitted:
+- `spans_hunk_boundary` — a `path:A-B` range intersects two or more hunks.
+- `invalid_selection` — the selector failed positional auto-detection.
+
+Text record kinds:
+- `plan.check.begin`, `plan.check.overlap`, `plan.check.uncovered`,
+  `plan.check.unsafe`, `plan.check.unknown`, `plan.check.end`.
+
+Exit codes:
+- `0` on a clean plan (every report array empty).
+- `1` when any issue is reported — the plan is rejected but nothing is
+  mutated.
+- `2` on malformed plan JSON or an unreadable `--plan` path.
+
+MCP tool: `pgs_plan_check` — read-only, `task_support: Optional`. Input schema
+requires `repo_path` and `plan` (inline `CommitPlan` object); optional
+`context` defaults to 3. The full `PlanCheckOutput` envelope is returned
+inside `structuredContent.pgs`.
+
 ## Selection Syntax
 
 Selections are positional and auto-detected:
