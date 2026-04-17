@@ -3,6 +3,7 @@ use std::ffi::OsString;
 mod commit;
 pub mod log;
 pub mod mcp_adapter;
+mod overview;
 mod scan;
 mod stage;
 mod status;
@@ -80,6 +81,7 @@ impl ParsedCli {
             Command::Status => OutputCommand::Status,
             Command::Commit(_) => OutputCommand::Commit,
             Command::Log(_) => OutputCommand::Log,
+            Command::Overview => OutputCommand::Overview,
         }
     }
 }
@@ -98,6 +100,8 @@ pub enum Command {
     Commit(commit::CommitArgs),
     /// Show recent commit history.
     Log(log::LogArgs),
+    /// Unified view of both unstaged (scan) and staged (status) changes.
+    Overview,
 }
 
 impl Cli {
@@ -246,6 +250,10 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
         Command::Log(args) => Ok(Some(RenderableOutput::new(log::execute(
             repo.as_deref(),
             args,
+        )?))),
+        Command::Overview => Ok(Some(RenderableOutput::new(overview::execute(
+            repo.as_deref(),
+            context,
         )?))),
     }
 }

@@ -439,6 +439,9 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
             log_summary_text(&log),
             false,
         ),
+        McpTypedOutput::Overview(_) => Err(PgsError::Internal(
+            "overview output has no MCP tool surface yet".to_owned(),
+        )),
     }
 }
 
@@ -492,6 +495,9 @@ fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError>
             text,
             false,
         ),
+        OutputCommand::Overview => Err(PgsError::Internal(
+            "overview command has no MCP tool surface yet".to_owned(),
+        )),
     }
 }
 
@@ -545,6 +551,9 @@ fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
             text,
             true,
         ),
+        OutputCommand::Overview => Err(PgsError::Internal(
+            "overview command has no MCP tool surface yet".to_owned(),
+        )),
     }
 }
 
@@ -612,7 +621,8 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
         OutputCommand::Scan
         | OutputCommand::Status
         | OutputCommand::Commit
-        | OutputCommand::Log => "Applied",
+        | OutputCommand::Log
+        | OutputCommand::Overview => "Applied",
     };
     format!("{verb} {} selection(s).", operation.items.len())
 }

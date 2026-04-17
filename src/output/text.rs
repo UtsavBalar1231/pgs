@@ -4,8 +4,8 @@ use crate::error::PgsError;
 
 use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, LineOriginView, OperationOutput,
-    OperationStatusView, OutputCommand, ScanDetail, ScanFileView, ScanHunkView, ScanLineView,
-    ScanOutput, StatusOutput,
+    OperationStatusView, OutputCommand, OverviewOutput, ScanDetail, ScanFileView, ScanHunkView,
+    ScanLineView, ScanOutput, StatusOutput,
 };
 
 const MARKER_PREFIX: &str = "@@pgs:v1";
@@ -14,6 +14,13 @@ const MARKER_PREFIX: &str = "@@pgs:v1";
 struct StatusBoundaryRecord {
     command: OutputCommand,
     items: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+struct OverviewBoundaryRecord {
+    command: OutputCommand,
+    unstaged_files: usize,
+    staged_files: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -93,6 +100,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::Status(status) => render_status(status),
         CommandOutput::Commit(commit) => render_commit(commit),
         CommandOutput::Log(log) => render_marker("log", log),
+        CommandOutput::Overview(overview) => render_overview(overview),
     }
 }
 
@@ -264,6 +272,21 @@ impl<'a> From<(&'a ScanFileView, &'a ScanHunkView)> for ScanHunkRecord<'a> {
             checksum: hunk.checksum.as_deref(),
         }
     }
+}
+
+fn render_overview(output: &OverviewOutput) -> Result<String, PgsError> {
+    let boundary = OverviewBoundaryRecord {
+        command: output.command,
+        unstaged_files: output.unstaged.files.len(),
+        staged_files: output.staged.files.len(),
+    };
+
+    let mut sections = vec![render_marker("overview.begin", &boundary)?];
+    sections.push(render_scan(&output.unstaged)?);
+    sections.push(render_status(&output.staged)?);
+    sections.push(render_marker("overview.end", &boundary)?);
+
+    Ok(sections.join("\n"))
 }
 
 fn render_diff_line(line: &ScanLineView) -> String {

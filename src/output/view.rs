@@ -16,6 +16,7 @@ pub enum CommandOutput {
     Status(StatusOutput),
     Commit(CommitOutput),
     Log(LogOutput),
+    Overview(OverviewOutput),
 }
 
 impl From<ScanOutput> for CommandOutput {
@@ -48,6 +49,12 @@ impl From<LogOutput> for CommandOutput {
     }
 }
 
+impl From<OverviewOutput> for CommandOutput {
+    fn from(output: OverviewOutput) -> Self {
+        Self::Overview(output)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
@@ -57,6 +64,7 @@ pub enum OutputCommand {
     Status,
     Commit,
     Log,
+    Overview,
 }
 
 impl OutputCommand {
@@ -68,6 +76,7 @@ impl OutputCommand {
             Self::Status => "status",
             Self::Commit => "commit",
             Self::Log => "log",
+            Self::Overview => "overview",
         }
     }
 }
@@ -633,4 +642,24 @@ pub struct LogOutput {
     pub commits: Vec<CommitEntryView>,
     pub total: usize,
     pub truncated: bool,
+}
+
+/// Output for the `overview` command — fuses scan (unstaged) and status (staged) envelopes.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct OverviewOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub unstaged: ScanOutput,
+    pub staged: StatusOutput,
+}
+
+impl OverviewOutput {
+    pub const fn new(unstaged: ScanOutput, staged: StatusOutput) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::Overview,
+            unstaged,
+            staged,
+        }
+    }
 }

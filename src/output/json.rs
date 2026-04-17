@@ -9,6 +9,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::Status(status) => Ok(serde_json::to_string_pretty(status)?),
         CommandOutput::Commit(commit) => Ok(serde_json::to_string_pretty(commit)?),
         CommandOutput::Log(log) => Ok(serde_json::to_string_pretty(log)?),
+        CommandOutput::Overview(overview) => Ok(serde_json::to_string_pretty(overview)?),
     }
 }
 

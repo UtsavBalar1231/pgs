@@ -176,6 +176,34 @@ JSON envelope:
 Text record kinds:
 - `commit.result`
 
+### `overview`
+
+Unified view of unstaged (scan) and staged (status) changes. Composes the
+existing handlers without re-implementing any git logic.
+
+JSON envelope:
+
+```json
+{
+  "version": "v1",
+  "command": "overview",
+  "unstaged": { "...ScanOutput compact shape..." : null },
+  "staged":   { "...StatusOutput shape..."         : null }
+}
+```
+
+The `unstaged` section mirrors a compact `scan` envelope; the `staged`
+section mirrors a `status` envelope. Both are always present; if either
+side is empty, that section carries an empty `files` array and zeroed
+summary.
+
+Text record kinds:
+- `overview.begin`, followed by the full `scan.*` block, followed by the
+  full `status.*` block, followed by `overview.end`.
+
+`overview` returns `NoChanges` (exit code 1) only when both the scan and
+status sides are empty.
+
 ## Selection Syntax
 
 Selections are positional and auto-detected:

@@ -108,6 +108,8 @@ pub enum McpTypedOutput {
     Commit(crate::output::view::CommitOutput),
     /// Structured log output.
     Log(crate::output::view::LogOutput),
+    /// Structured overview output (scan + status fusion).
+    Overview(crate::output::view::OverviewOutput),
 }
 
 impl From<CommandOutput> for McpTypedOutput {
@@ -118,6 +120,7 @@ impl From<CommandOutput> for McpTypedOutput {
             CommandOutput::Status(output) => Self::Status(output),
             CommandOutput::Commit(output) => Self::Commit(output),
             CommandOutput::Log(output) => Self::Log(output),
+            CommandOutput::Overview(output) => Self::Overview(output),
         }
     }
 }
