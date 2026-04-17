@@ -27,17 +27,26 @@ no Bash, no CLI binaries, no raw git commands.
 
 Before proposing a pgs improvement, check this table. Features in the left column already exist; features in the right column are real gaps tracked in `TODO.md`, not invented per-session.
 
-| Promises (already shipped)                                                                                         | Non-promises (current gaps)                                             |
-|--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:379`                                            |                                                                         |
-| Descriptive hunk run classification — `suggest_splits` at `src/git/diff.rs:211` (exposed as `pgs split-hunk` / `pgs_split_hunk`) |                                                                         |
-| Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                               | No automatic selector remap after content changes                       |
-| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:835`                   | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
-| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:304`                              |                                                                         |
-| Exact-content dry-run preview via `--dry-run --explain` — `preview_stage` at `src/git/staging.rs` and `OperationPreview` in `src/models.rs` |                                                                         |
-| Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact  |                                                                         |
-| Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files                                         |                                                                         |
-| Distinct diff bases per command — scan `Index→Workdir`, status `HEAD→Index`, unstage `HEAD→Index`                  |                                                                         |
+| Promises (already shipped)                                                                                          | Non-promises (current gaps)                                              |
+|---------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:379`                                             |                                                                          |
+| Hunk line extraction + whitespace classification — `extract_hunks` at `src/git/diff.rs:270`                         |                                                                          |
+| Per-hunk `whitespace_only` metadata flag — `HunkInfo.whitespace_only` at `src/models.rs:97`                         | Flag is metadata only; agent still decides whether to stage or skip      |
+| Descriptive hunk run classification — `suggest_splits` at `src/git/diff.rs:211` (exposed as `pgs split-hunk` / `pgs_split_hunk`) | Splits are descriptive not prescriptive — agent picks which ranges to stage |
+| Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                                | No automatic selector remap after content changes                        |
+| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:835`                    | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
+| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:304`                               |                                                                          |
+| Exact-content dry-run preview via `--dry-run --explain` — `preview_stage` at `src/git/staging.rs:198` producing `OperationPreview` at `src/models.rs:397` | Count-only `dry_run` (without `--explain`) reports line counts, not exact content |
+| Unified scan + status view via `pgs overview` / `pgs_overview` — `cmd::overview::execute` at `src/cmd/overview.rs:9` |                                                                          |
+| Commit-plan validator `pgs plan-check` / `pgs_plan_check` — `cmd::plan_check::execute` at `src/cmd/plan_check.rs:35`; shared schema `CommitPlan` at `src/models.rs:434` | Validator reports overlaps, gaps, and boundary crossings; does not auto-rewrite plans |
+| Saved-plan reconciliation `pgs plan-diff` / `pgs_plan_diff` — `cmd::plan_diff::execute` at `src/cmd/plan_diff.rs:36` | Entries classified as `still_valid` / `shifted` / `gone`; shift detection is descriptive |
+| Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact   |                                                                          |
+| Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files                                          |                                                                          |
+| Distinct diff bases per command — scan `Index→Workdir`, status `HEAD→Index`, unstage `HEAD→Index`                   |                                                                          |
+
+### Maintenance note
+
+Every `src/...:NNN` citation in this table is machine-verified by `tests/test_skill_capability_table.rs::skill_capability_table_anchors_still_resolve`. The test extracts every citation, asserts the cited line is non-empty, and asserts load-bearing symbols appear within ±5 lines of the cited anchor. If you rename or move a cited symbol, `cargo test --test test_skill_capability_table` fails — rebase the citation (and `KNOWN_ANCHORS` in the test) instead of widening the tolerance.
 
 Before proposing a pgs improvement, check this table. Features in the left column already exist; features in the right column are real gaps tracked in `TODO.md`, not invented per-session.
 
