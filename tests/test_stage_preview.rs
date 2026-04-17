@@ -8,7 +8,7 @@ mod common;
 
 use std::fmt::Write as _;
 
-use common::{commit_file, run_pgs, setup_repo, write_file};
+use common::{commit_file, run_pgs, run_pgs_raw, setup_repo, write_file};
 
 /// RED expected: `previews` absent — `stage --dry-run --explain` still returns
 /// the count-only envelope until TODO 19 wires preview emission.
@@ -215,6 +215,36 @@ fn dry_run_explain_preview_does_not_mutate_index() {
     assert_eq!(
         post_json["summary"]["total_files"], pre_json["summary"]["total_files"],
         "dry-run --explain must not mutate the index"
+    );
+}
+
+/// Text markers: A1-RENDER emits `stage.preview.begin`, one
+/// `stage.preview.line` per row, then `stage.preview.end` between the
+/// existing `stage.begin`/`stage.end` envelope.
+#[test]
+fn dry_run_explain_emits_stage_preview_text_markers() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "hello.txt", "line1\n", "seed");
+    write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
+
+    let output = run_pgs_raw(
+        dir.path(),
+        &["stage", "hello.txt:2-3", "--dry-run", "--explain"],
+    )
+    .success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+
+    assert!(
+        stdout.contains("@@pgs:v1 stage.preview.begin "),
+        "expected stage.preview.begin marker: {stdout}"
+    );
+    assert!(
+        stdout.contains("@@pgs:v1 stage.preview.line "),
+        "expected at least one stage.preview.line marker: {stdout}"
+    );
+    assert!(
+        stdout.contains("@@pgs:v1 stage.preview.end "),
+        "expected stage.preview.end marker: {stdout}"
     );
 }
 

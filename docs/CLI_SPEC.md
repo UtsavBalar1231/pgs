@@ -121,13 +121,45 @@ Shared operation envelope:
     }
   ],
   "warnings": [],
-  "backup_id": "backup-...|null"
+  "backup_id": "backup-...|null",
+  "previews": [
+    {
+      "selection": "src/main.rs:10-20",
+      "file_path": "src/main.rs",
+      "resolved_ranges": [{ "start": 10, "end": 20 }],
+      "preview_lines": [
+        { "line_number": 10, "origin": "Addition", "content": "let x = 1;" }
+      ],
+      "truncated": false,
+      "limit_applied": 200
+    }
+  ]
 }
 ```
 
 Text record kinds:
-- stage: `stage.begin`, `item`, `warning`, `stage.end`
+- stage: `stage.begin`, `item`, `warning`, `stage.preview.begin`, `stage.preview.line`, `stage.preview.end`, `stage.end`
 - unstage: `unstage.begin`, `item`, `warning`, `unstage.end`
+
+#### `--dry-run --explain` preview (stage only)
+
+`pgs stage --dry-run --explain` adds an optional `previews` array to the
+operation envelope. The plain dry-run (no `--explain`) stays byte-identical
+and omits the `previews` field entirely.
+
+- Each file in the selection produces one `OperationPreview` entry.
+  `preview_lines` contains the exact Addition lines that would land in the
+  index, in file order.
+- `--limit <N>` (default `200`, `0` = unlimited) caps each file independently;
+  when a file exceeds its cap, `truncated` flips to `true` for that file only —
+  never aggregated across files.
+- Binary files short-circuit: `preview_lines: []`, `truncated: false`,
+  `reason: "binary"`. Binary content is never rendered.
+- Text markers: `stage.preview.begin` (with `selection`, `file_path`, `lines`,
+  `truncated`, `limit_applied`, and optional `reason`), one
+  `stage.preview.line` per row (with `file_path`, `line_number`, `origin`,
+  `content`), then `stage.preview.end`. Binary entries emit begin/end with no
+  `stage.preview.line` records between them.
 
 ### `status`
 

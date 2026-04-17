@@ -2,6 +2,8 @@ use serde::Serialize;
 
 use crate::error::PgsError;
 
+use crate::models::{LineOrigin, OperationPreview, PreviewLine};
+
 use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, LineOriginView, OperationOutput,
     OperationStatusView, OutputCommand, OverviewOutput, ScanDetail, ScanFileView, ScanHunkView,
@@ -34,6 +36,26 @@ struct OperationBoundaryRecord<'a> {
 #[derive(Debug, Serialize)]
 struct WarningRecord<'a> {
     message: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct PreviewBoundaryRecord<'a> {
+    command: OutputCommand,
+    selection: &'a str,
+    file_path: &'a str,
+    lines: usize,
+    truncated: bool,
+    limit_applied: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+struct PreviewLineRecord<'a> {
+    file_path: &'a str,
+    line_number: u32,
+    origin: &'static str,
+    content: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -137,12 +159,62 @@ fn render_operation(output: &OperationOutput) -> Result<String, PgsError> {
         )?);
     }
 
+    if let Some(previews) = &output.previews {
+        for preview in previews {
+            render_preview(&mut lines, output.command, preview)?;
+        }
+    }
+
     lines.push(render_marker(
         &operation_marker_kind(output.command, "end"),
         &boundary,
     )?);
 
     Ok(lines.join("\n"))
+}
+
+fn render_preview(
+    lines: &mut Vec<String>,
+    command: OutputCommand,
+    preview: &OperationPreview,
+) -> Result<(), PgsError> {
+    let boundary = PreviewBoundaryRecord {
+        command,
+        selection: &preview.selection,
+        file_path: &preview.file_path,
+        lines: preview.preview_lines.len(),
+        truncated: preview.truncated,
+        limit_applied: preview.limit_applied,
+        reason: preview.reason.as_deref(),
+    };
+    let begin_kind = format!("{}.preview.begin", command.as_str());
+    let line_kind = format!("{}.preview.line", command.as_str());
+    let end_kind = format!("{}.preview.end", command.as_str());
+
+    lines.push(render_marker(&begin_kind, &boundary)?);
+    for line in &preview.preview_lines {
+        lines.push(render_marker(
+            &line_kind,
+            &PreviewLineRecord::from((preview, line)),
+        )?);
+    }
+    lines.push(render_marker(&end_kind, &boundary)?);
+    Ok(())
+}
+
+impl<'a> From<(&'a OperationPreview, &'a PreviewLine)> for PreviewLineRecord<'a> {
+    fn from((preview, line): (&'a OperationPreview, &'a PreviewLine)) -> Self {
+        Self {
+            file_path: &preview.file_path,
+            line_number: line.line_number,
+            origin: match line.origin {
+                LineOrigin::Context => "context",
+                LineOrigin::Addition => "addition",
+                LineOrigin::Deletion => "deletion",
+            },
+            content: &line.content,
+        }
+    }
 }
 
 fn render_scan(output: &ScanOutput) -> Result<String, PgsError> {
