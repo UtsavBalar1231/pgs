@@ -101,6 +101,18 @@ What the agent must decide — the tool cannot do this for you:
 
 Edge case: if a file path is exactly 12 hex chars, prefix with `./`.
 
+### Parameter semantics
+
+**`context`** — Omit for the tool default. If you pass a value, pass the **same** value in every call in the session (scan → stage → unstage). Mismatched `context` produces different hunk IDs and a retryable `StaleScan` error. The tool is correct; the call sequence was inconsistent.
+
+**`exclude`** — Use when you want a directory selection minus specific files. Example:
+
+```
+pgs_stage(repo_path="/path/to/repo", selections=["src/"], exclude=["src/secrets.rs"])
+```
+
+**Rename** — When `status.type` is `Renamed`, stage the file as a whole unit via its *current* path (the top-level `path` field). The `old_path` field is informational only and must not be used as a stage target. Hunk or line selectors on a renamed file will produce a `user` error per the whole-file constraint.
+
 ---
 
 ## 3. Reading Tool Responses
