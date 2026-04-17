@@ -23,6 +23,24 @@ no Bash, no CLI binaries, no raw git commands.
 
 ---
 
+## 0. Capability Truth Table — what pgs promises and what it does not
+
+Before proposing a pgs improvement, check this table. Features in the left column already exist; features in the right column are real gaps tracked in `TODO.md`, not invented per-session.
+
+| Promises (already shipped)                                                                                         | Non-promises (current gaps)                                             |
+|--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:288`                                            | No exact-content dry-run preview (counts only, until A1 ships)          |
+| Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                               | No mixed-hunk splitter (until A2 ships)                                 |
+| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:551`                   | No automatic selector remap after content changes                       |
+| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:212`                              | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
+| Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact  |                                                                         |
+| Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files                                         |                                                                         |
+| Distinct diff bases per command — scan `Index→Workdir`, status `HEAD→Index`, unstage `HEAD→Index`                  |                                                                         |
+
+Before proposing a pgs improvement, check this table. Features in the left column already exist; features in the right column are real gaps tracked in `TODO.md`, not invented per-session.
+
+---
+
 ## 1. Core Rules
 
 1. Always call `pgs_scan` before staging — hunk IDs are ephemeral, valid only until the file or index changes.
