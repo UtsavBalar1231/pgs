@@ -21,9 +21,10 @@ use crate::{
     cmd::mcp_adapter::McpCommandRequest,
     mcp::contract::{
         self, CommitToolInput, LogToolInput, OverviewToolInput, PGS_COMMIT_TOOL, PGS_LOG_TOOL,
-        PGS_OVERVIEW_TOOL, PGS_PLAN_CHECK_TOOL, PGS_SCAN_TOOL, PGS_SPLIT_HUNK_TOOL, PGS_STAGE_TOOL,
-        PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL, PlanCheckToolInput, ScanToolInput, SplitHunkToolInput,
-        StageToolInput, StatusToolInput, UnstageToolInput,
+        PGS_OVERVIEW_TOOL, PGS_PLAN_CHECK_TOOL, PGS_PLAN_DIFF_TOOL, PGS_SCAN_TOOL,
+        PGS_SPLIT_HUNK_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL, PlanCheckToolInput,
+        PlanDiffToolInput, ScanToolInput, SplitHunkToolInput, StageToolInput, StatusToolInput,
+        UnstageToolInput,
     },
     mcp::runtime::PgsMcpRuntime,
 };
@@ -95,6 +96,7 @@ impl ServerHandler for PgsMcpServer {
             overview_tool(),
             split_hunk_tool(),
             plan_check_tool(),
+            plan_diff_tool(),
         ])))
     }
 
@@ -109,6 +111,7 @@ impl ServerHandler for PgsMcpServer {
             PGS_OVERVIEW_TOOL => Some(overview_tool()),
             PGS_SPLIT_HUNK_TOOL => Some(split_hunk_tool()),
             PGS_PLAN_CHECK_TOOL => Some(plan_check_tool()),
+            PGS_PLAN_DIFF_TOOL => Some(plan_diff_tool()),
             _ => None,
         }
     }
@@ -254,6 +257,13 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
                 command: McpCommandRequest::PlanCheck(input.into()),
             })
         }
+        PGS_PLAN_DIFF_TOOL => {
+            let input: PlanDiffToolInput = parse_tool_input(request.arguments)?;
+            Ok(ParsedToolCall::Read {
+                tool_name: PGS_PLAN_DIFF_TOOL,
+                command: McpCommandRequest::PlanDiff(input.into()),
+            })
+        }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
     }
 }
@@ -311,6 +321,11 @@ fn split_hunk_tool() -> Tool {
 fn plan_check_tool() -> Tool {
     contract::tool_definition(PGS_PLAN_CHECK_TOOL)
         .expect("plan-check tool must be present in frozen MCP contract")
+}
+
+fn plan_diff_tool() -> Tool {
+    contract::tool_definition(PGS_PLAN_DIFF_TOOL)
+        .expect("plan-diff tool must be present in frozen MCP contract")
 }
 
 /// Start the `pgs-mcp` server over stdio and wait for shutdown.

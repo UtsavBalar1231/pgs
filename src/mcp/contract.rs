@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     cmd::mcp_adapter::{
         McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpPlanCheckRequest,
-        McpScanRequest, McpSplitHunkRequest, McpStageRequest, McpStatusRequest, McpTypedOutput,
-        McpUnstageRequest,
+        McpPlanDiffRequest, McpScanRequest, McpSplitHunkRequest, McpStageRequest, McpStatusRequest,
+        McpTypedOutput, McpUnstageRequest,
     },
     error::PgsError,
     models::CommitPlan,
@@ -36,6 +36,8 @@ pub const PGS_OVERVIEW_TOOL: &str = "pgs_overview";
 pub const PGS_SPLIT_HUNK_TOOL: &str = "pgs_split_hunk";
 /// MCP tool name for commit-plan validation operations.
 pub const PGS_PLAN_CHECK_TOOL: &str = "pgs_plan_check";
+/// MCP tool name for plan-diff (saved plan reconciliation against fresh scan).
+pub const PGS_PLAN_DIFF_TOOL: &str = "pgs_plan_diff";
 
 const DEFAULT_CONTEXT: u32 = 3;
 
@@ -235,6 +237,27 @@ impl From<PlanCheckToolInput> for McpPlanCheckRequest {
     }
 }
 
+/// JSON input schema for the `pgs_plan_diff` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanDiffToolInput {
+    /// Explicit repository path to inspect.
+    pub repo_path: String,
+    /// Agent-supplied `CommitPlan` to reconcile against a fresh scan.
+    pub plan: CommitPlan,
+    /// Optional diff context override.
+    pub context: Option<u32>,
+}
+
+impl From<PlanDiffToolInput> for McpPlanDiffRequest {
+    fn from(value: PlanDiffToolInput) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            plan: value.plan,
+            context: value.context.unwrap_or(DEFAULT_CONTEXT),
+        }
+    }
+}
+
 /// Outcome classification surfaced in MCP tool results.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -317,6 +340,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         overview_tool(),
         split_hunk_tool(),
         plan_check_tool(),
+        plan_diff_tool(),
     ]
 }
 
@@ -504,6 +528,25 @@ fn plan_check_tool() -> Tool {
     .with_title("Validate commit plan")
     .with_input_schema::<PlanCheckToolInput>()
     .with_output_schema::<PlanCheckToolOutput>()
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+}
+
+fn plan_diff_tool() -> Tool {
+    Tool::new(
+        PGS_PLAN_DIFF_TOOL,
+        "Reconcile a saved CommitPlan against a fresh scan of an explicit local repository path without mutating the repository. Classifies each planned selection as still_valid, shifted (content moved to a new hunk id), or gone (no matching change).",
+        serde_json::Map::new(),
+    )
+    .with_title("Diff saved commit plan")
+    .with_input_schema::<PlanDiffToolInput>()
+    .with_output_schema::<PlanDiffToolOutput>()
     .with_annotations(
         ToolAnnotations::new()
             .read_only(true)
@@ -1004,6 +1047,7 @@ mod tests {
                 PGS_OVERVIEW_TOOL,
                 PGS_SPLIT_HUNK_TOOL,
                 PGS_PLAN_CHECK_TOOL,
+                PGS_PLAN_DIFF_TOOL,
             ]
         );
 

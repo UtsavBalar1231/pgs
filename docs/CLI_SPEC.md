@@ -308,8 +308,9 @@ Input schema (JSON on stdin, default, or read from `--plan <path>`):
 
 All fields other than `version`, `commits`, and `selections` are optional and
 defaulted via `#[serde(default)]`. pgs only receives `CommitPlan` (never emits
-one), so unknown input fields are silently tolerated. A6 `plan-diff` will
-extend this schema additively without bumping `version`.
+one), so unknown input fields are silently tolerated. A6 `plan-diff` extends
+the schema additively (`captured_at`, `captured_hunk_id`, `expected_checksum`)
+without bumping `version`.
 
 JSON envelope:
 
@@ -348,6 +349,81 @@ MCP tool: `pgs_plan_check` — read-only, `task_support: Optional`. Input schema
 requires `repo_path` and `plan` (inline `CommitPlan` object); optional
 `context` defaults to 3. The full `PlanCheckOutput` envelope is returned
 inside `structuredContent.pgs`.
+
+### `plan-diff`
+
+Reconcile a saved `CommitPlan` against a fresh scan. Descriptive — never
+mutates the repository. Classifies each planned selection as one of
+`still_valid`, `shifted`, or `gone` so the agent can tell whether a saved
+plan still applies after intervening edits or commits.
+
+```
+pgs plan-diff [--plan <path> | --stdin]
+```
+
+Input schema: same `CommitPlan` accepted by `plan-check`. plan-diff uses
+the A6 additive fields — `captured_at`, per-commit `captured_hunk_id`, and
+per-commit `expected_checksum` — when present to raise match confidence.
+
+JSON envelope:
+
+```json
+{
+  "version": "v1",
+  "command": "plan-diff",
+  "still_valid": [
+    {
+      "commit_id": "c1",
+      "selection": "src/main.rs",
+      "file_path": "src/main.rs",
+      "hunk_id": "abc123def456"
+    }
+  ],
+  "shifted": [
+    {
+      "commit_id": "c1",
+      "selection": "oldhunkid0000",
+      "file_path": "src/main.rs",
+      "old_hunk_id": "oldhunkid0000",
+      "new_hunk_id": "newhunkid1234",
+      "match_confidence": "high"
+    }
+  ],
+  "gone": [
+    {
+      "commit_id": "c1",
+      "selection": "removed.rs",
+      "file_path": "removed.rs",
+      "reason": "path_missing"
+    }
+  ]
+}
+```
+
+`match_confidence` values: `high` (checksum match), `medium` (>=50% range
+overlap), `low` (file match with no stronger evidence). Shifted entries
+never auto-upgrade to `still_valid` — callers reconcile explicitly.
+
+`gone[*].reason` values currently emitted:
+- `path_missing` — referenced path no longer present in the scan.
+- `covered_by_commit` — file exists but has no unstaged hunks left.
+- `invalid_selection` — selector failed positional auto-detection.
+- `no_match` — a captured hunk id could not be fuzzy-matched.
+- `unresolved_selection` — selection could not be resolved or fuzzy-matched.
+
+Text record kinds:
+- `plan.diff.begin`, `plan.diff.valid`, `plan.diff.shifted`, `plan.diff.gone`,
+  `plan.diff.end`.
+
+Exit codes:
+- `0` when every entry is `still_valid` (`shifted` and `gone` both empty).
+- `1` when any entry shifted or went gone — the plan needs reconciliation.
+- `2` on malformed plan JSON or an unreadable `--plan` path.
+
+MCP tool: `pgs_plan_diff` — read-only, `task_support: Optional`. Input
+schema requires `repo_path` and `plan` (inline `CommitPlan` object);
+optional `context` defaults to 3. The full `PlanDiffOutput` envelope is
+returned inside `structuredContent.pgs`.
 
 ## Selection Syntax
 
