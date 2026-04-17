@@ -21,8 +21,9 @@ use crate::{
     cmd::mcp_adapter::McpCommandRequest,
     mcp::contract::{
         self, CommitToolInput, LogToolInput, OverviewToolInput, PGS_COMMIT_TOOL, PGS_LOG_TOOL,
-        PGS_OVERVIEW_TOOL, PGS_SCAN_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL,
-        ScanToolInput, StageToolInput, StatusToolInput, UnstageToolInput,
+        PGS_OVERVIEW_TOOL, PGS_SCAN_TOOL, PGS_SPLIT_HUNK_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL,
+        PGS_UNSTAGE_TOOL, ScanToolInput, SplitHunkToolInput, StageToolInput, StatusToolInput,
+        UnstageToolInput,
     },
     mcp::runtime::PgsMcpRuntime,
 };
@@ -92,6 +93,7 @@ impl ServerHandler for PgsMcpServer {
             commit_tool(),
             log_tool(),
             overview_tool(),
+            split_hunk_tool(),
         ])))
     }
 
@@ -104,6 +106,7 @@ impl ServerHandler for PgsMcpServer {
             PGS_COMMIT_TOOL => Some(commit_tool()),
             PGS_LOG_TOOL => Some(log_tool()),
             PGS_OVERVIEW_TOOL => Some(overview_tool()),
+            PGS_SPLIT_HUNK_TOOL => Some(split_hunk_tool()),
             _ => None,
         }
     }
@@ -235,6 +238,13 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
                 command: McpCommandRequest::Overview(input.into()),
             })
         }
+        PGS_SPLIT_HUNK_TOOL => {
+            let input: SplitHunkToolInput = parse_tool_input(request.arguments)?;
+            Ok(ParsedToolCall::Read {
+                tool_name: PGS_SPLIT_HUNK_TOOL,
+                command: McpCommandRequest::SplitHunk(input.into()),
+            })
+        }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
     }
 }
@@ -282,6 +292,11 @@ fn log_tool() -> Tool {
 fn overview_tool() -> Tool {
     contract::tool_definition(PGS_OVERVIEW_TOOL)
         .expect("overview tool must be present in frozen MCP contract")
+}
+
+fn split_hunk_tool() -> Tool {
+    contract::tool_definition(PGS_SPLIT_HUNK_TOOL)
+        .expect("split-hunk tool must be present in frozen MCP contract")
 }
 
 /// Start the `pgs-mcp` server over stdio and wait for shutdown.

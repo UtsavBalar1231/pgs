@@ -236,6 +236,49 @@ Text record kinds:
 `overview` returns `NoChanges` (exit code 1) only when both the scan and
 status sides are empty.
 
+### `split-hunk`
+
+Classify a single hunk's contiguous line runs as `addition`, `deletion`, or
+`mixed`. Descriptive — the command does not stage or unstage anything; it
+names the categories inside the hunk so the agent can decide how to act.
+
+```
+pgs split-hunk <hunk_id>
+```
+
+JSON envelope:
+
+```json
+{
+  "version": "v1",
+  "command": "split",
+  "hunk_id": "abc123def456",
+  "ranges": [
+    { "start": 10, "end": 12, "origin_mix": "addition" },
+    { "start": 15, "end": 18, "origin_mix": "mixed" }
+  ]
+}
+```
+
+`ranges` carries one entry per maximal run of non-context lines inside the
+hunk. `origin_mix` values:
+
+- `addition` — the run is only `Addition` lines.
+- `deletion` — the run is only `Deletion` lines.
+- `mixed` — the run interleaves additions and deletions.
+
+Text record kinds:
+- `split.begin`, one `split.range` per classified range, `split.end`.
+
+Errors: `unknown_hunk_id` (exit 2) when the 12-hex id is absent from the
+fresh scan (including content drift since the user captured the id).
+Binary files expose no granular hunks, so any hunk id probe against a
+binary file also returns `unknown_hunk_id` with guidance to re-run `pgs
+scan`.
+
+MCP tool: `pgs_split_hunk` — read-only, `task_support: Optional`. Input
+schema requires `repo_path` and `hunk_id`; optional `context` defaults to 3.
+
 ## Selection Syntax
 
 Selections are positional and auto-detected:

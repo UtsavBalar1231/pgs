@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     cmd::mcp_adapter::{
         McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpScanRequest,
-        McpStageRequest, McpStatusRequest, McpTypedOutput, McpUnstageRequest,
+        McpSplitHunkRequest, McpStageRequest, McpStatusRequest, McpTypedOutput, McpUnstageRequest,
     },
     error::PgsError,
     output::view::{
@@ -30,6 +30,8 @@ pub const PGS_COMMIT_TOOL: &str = "pgs_commit";
 pub const PGS_LOG_TOOL: &str = "pgs_log";
 /// MCP tool name for unified unstaged + staged overview operations.
 pub const PGS_OVERVIEW_TOOL: &str = "pgs_overview";
+/// MCP tool name for hunk run-classification (split-hunk) operations.
+pub const PGS_SPLIT_HUNK_TOOL: &str = "pgs_split_hunk";
 
 const DEFAULT_CONTEXT: u32 = 3;
 
@@ -187,6 +189,27 @@ impl From<OverviewToolInput> for McpOverviewRequest {
     }
 }
 
+/// JSON input schema for the `pgs_split_hunk` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SplitHunkToolInput {
+    /// Explicit repository path to inspect.
+    pub repo_path: String,
+    /// 12-hex content-addressed hunk id from a prior `pgs_scan`.
+    pub hunk_id: String,
+    /// Optional diff context override.
+    pub context: Option<u32>,
+}
+
+impl From<SplitHunkToolInput> for McpSplitHunkRequest {
+    fn from(value: SplitHunkToolInput) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            hunk_id: value.hunk_id,
+            context: value.context.unwrap_or(DEFAULT_CONTEXT),
+        }
+    }
+}
+
 /// Outcome classification surfaced in MCP tool results.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -265,6 +288,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         commit_tool(),
         log_tool(),
         overview_tool(),
+        split_hunk_tool(),
     ]
 }
 
@@ -414,6 +438,25 @@ fn overview_tool() -> Tool {
     .with_title("Overview of unstaged and staged changes")
     .with_input_schema::<OverviewToolInput>()
     .with_output_schema::<OverviewToolOutput>()
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+}
+
+fn split_hunk_tool() -> Tool {
+    Tool::new(
+        PGS_SPLIT_HUNK_TOOL,
+        "Classify a hunk's contiguous line runs (addition, deletion, mixed) for an explicit local repository path without mutating the repository. Descriptive output — does not stage or unstage.",
+        serde_json::Map::new(),
+    )
+    .with_title("Classify hunk runs (split-hunk)")
+    .with_input_schema::<SplitHunkToolInput>()
+    .with_output_schema::<SplitHunkToolOutput>()
     .with_annotations(
         ToolAnnotations::new()
             .read_only(true)
@@ -837,6 +880,7 @@ mod tests {
                 PGS_COMMIT_TOOL,
                 PGS_LOG_TOOL,
                 PGS_OVERVIEW_TOOL,
+                PGS_SPLIT_HUNK_TOOL,
             ]
         );
 
@@ -906,10 +950,14 @@ mod tests {
         let log = tool_definition(PGS_LOG_TOOL).expect("log tool should exist");
         let overview = tool_definition(PGS_OVERVIEW_TOOL).expect("overview tool should exist");
 
+        let split_hunk =
+            tool_definition(PGS_SPLIT_HUNK_TOOL).expect("split-hunk tool should exist");
+
         assert_eq!(scan.task_support(), TaskSupport::Optional);
         assert_eq!(status.task_support(), TaskSupport::Optional);
         assert_eq!(log.task_support(), TaskSupport::Optional);
         assert_eq!(overview.task_support(), TaskSupport::Optional);
+        assert_eq!(split_hunk.task_support(), TaskSupport::Optional);
         assert_eq!(stage.task_support(), TaskSupport::Forbidden);
         assert_eq!(unstage.task_support(), TaskSupport::Forbidden);
         assert_eq!(commit.task_support(), TaskSupport::Forbidden);

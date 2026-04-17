@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::PgsError;
 use crate::output::view::{CommandOutput, OutputCommand};
 
-use super::{commit, log, overview, scan, stage, status, unstage};
+use super::{commit, log, overview, scan, split, stage, status, unstage};
 
 /// Typed MCP payload for `pgs_scan` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -87,6 +87,17 @@ pub struct McpOverviewRequest {
     pub context: u32,
 }
 
+/// Typed MCP payload for `pgs_split_hunk` requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct McpSplitHunkRequest {
+    /// Explicit repository path supplied by the MCP caller.
+    pub repo_path: String,
+    /// 12-hex hunk id to classify.
+    pub hunk_id: String,
+    /// Unified diff context lines for the fresh scan used during id resolution.
+    pub context: u32,
+}
+
 /// Typed MCP command routed into the existing CLI execution paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpCommandRequest {
@@ -104,6 +115,8 @@ pub enum McpCommandRequest {
     Log(McpLogRequest),
     /// Run the overview command (scan + status fusion).
     Overview(McpOverviewRequest),
+    /// Classify a single hunk's contiguous runs (split-hunk).
+    SplitHunk(McpSplitHunkRequest),
 }
 
 /// Typed command output returned to MCP callers without re-parsing CLI markers.
@@ -236,5 +249,14 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 .map(Into::into)
                 .map_err(|source| McpAdapterError::new(OutputCommand::Overview, source))
         }
+        McpCommandRequest::SplitHunk(request) => split::execute(
+            Some(request.repo_path.as_str()),
+            request.context.max(1),
+            split::SplitArgs {
+                hunk_id: request.hunk_id,
+            },
+        )
+        .map(Into::into)
+        .map_err(|source| McpAdapterError::new(OutputCommand::SplitHunk, source)),
     }
 }
