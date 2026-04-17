@@ -45,6 +45,8 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 
 1. Always call `pgs_scan` before staging — hunk IDs are ephemeral, valid only until the file or index changes.
 2. Re-scan after each `pgs_commit` — the index changed, previous hunk IDs are stale.
+
+   Hunk IDs are a SHA-256 of path + start lines + content (`compute_hunk_id` at `src/git/diff.rs:288`). If any of those change, the ID must change. The problem is never "unstable IDs" — it is that your captured selector now points at content that no longer exists. Re-scan, re-plan, continue. Stability across *unchanged* rescans is proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:528`.
 3. Plan all commits before staging — group changes by intent, each group becomes one commit.
 4. Verify with `pgs_status` before every `pgs_commit`.
 5. Use only pgs MCP tools for all diff/staging/history operations — no Bash, no raw git.
