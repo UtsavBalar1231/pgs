@@ -81,6 +81,8 @@ Edge case: if a file path is exactly 12 hex chars, prefix with `./`.
 
 ## 3. Reading Tool Responses
 
+> **Always read from `structured_content`. The `content` field is a human summary — never parse it. If you find yourself proposing "add structured JSON to MCP output", you are re-inventing a feature that already ships (`define_tool_output!` at `src/mcp/contract.rs:212`, `structured_tool_result` at `src/mcp/contract.rs:551`). See §0 Capability Truth Table.**
+
 Every pgs MCP tool returns two payloads:
 
 - `structured_content` — the typed JSON envelope. **Read all data from here.**
