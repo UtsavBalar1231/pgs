@@ -542,3 +542,30 @@ pgs_log(repo_path="/path/to/repo", max_count=10)
 ```
 
 Read `pgs.commits[].message` and match the format, type vocabulary, and subject style already established.
+
+---
+
+## 9. Repairing a bad split
+
+A "bad split" is any staging session whose commit boundary no longer matches the actual staged diff: wrong files staged, hunks grouped under the wrong intent, or the commit subject describing something different from what landed. Real sessions hit this. Repair steps that fall outside `pgs` are a deliberate scope boundary, not a missing feature.
+
+### Recognition
+
+- `pgs_status` shows files that do not belong to the staged intent, or unexpected line counts.
+- The planned commit subject no longer matches the staged content after re-reading the `pgs_status` output.
+- A post-commit review reveals the commit message references a change that the commit does not contain.
+
+### Rewind options
+
+- **Pre-commit (staged but not yet committed)**: call `pgs_unstage` with file-level selections to remove the incorrect selections from the index. Re-verify with `pgs_status`. Then re-stage correctly.
+- **Post-commit (already committed)**: `git reset --soft <good-commit>` re-opens the index with the bad commit's changes still staged. **This is a git fallback outside pgs's MCP surface.** Once the index is re-opened, use `pgs_unstage` / `pgs_stage` to regroup.
+
+### Rebuild
+
+Re-scan (`pgs_scan`) to get fresh hunk IDs, re-plan the tail of the work, then re-stage. Do not reuse stale IDs from the pre-rewind session.
+
+### Message-only fix
+
+If the staged tree is correct but only the commit *message* is wrong, `git commit --amend` rewrites the message. **This is also outside pgs's MCP surface.** pgs's commit flow ends at `pgs_commit`; anything past that belongs to git.
+
+Repair steps that fall outside `pgs` are a deliberate scope boundary, not a missing feature.
