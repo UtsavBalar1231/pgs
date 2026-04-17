@@ -194,6 +194,8 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 selections: request.selections,
                 exclude: request.exclude,
                 dry_run: request.dry_run,
+                explain: false,
+                limit: 200,
             },
         )
         .map(Into::into)

@@ -3,8 +3,8 @@ use serde::Serialize;
 
 use crate::models::{
     CommitResult, CompactFileInfo, CompactHunkInfo, CompactScanResult, DiffLineInfo, FileInfo,
-    FileStatus, HunkInfo, LineOrigin, OperationStatus, ScanResult, ScanSummary, StagedFileInfo,
-    StatusReport, StatusSummary,
+    FileStatus, HunkInfo, LineOrigin, OperationPreview, OperationStatus, ScanResult, ScanSummary,
+    StagedFileInfo, StatusReport, StatusSummary,
 };
 
 pub const OUTPUT_VERSION: &str = "v1";
@@ -178,6 +178,8 @@ pub struct OperationOutput {
     pub items: Vec<OperationItemView>,
     pub warnings: Vec<String>,
     pub backup_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previews: Option<Vec<OperationPreview>>,
 }
 
 impl OperationOutput {
@@ -195,6 +197,7 @@ impl OperationOutput {
             items,
             warnings,
             backup_id,
+            previews: None,
         }
     }
 
@@ -214,6 +217,13 @@ impl OperationOutput {
         backup_id: Option<String>,
     ) -> Self {
         Self::new(OutputCommand::Unstage, status, items, warnings, backup_id)
+    }
+
+    /// Attach per-file previews for `--dry-run --explain`.
+    #[must_use]
+    pub fn with_previews(mut self, previews: Vec<OperationPreview>) -> Self {
+        self.previews = Some(previews);
+        self
     }
 }
 

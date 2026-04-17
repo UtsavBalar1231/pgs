@@ -642,7 +642,8 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::UnknownHunkId { .. }
         | PgsError::FileNotInDiff { .. }
         | PgsError::BinaryFileGranular { .. }
-        | PgsError::GranularOnWholeFile { .. } => PgsToolErrorKind::User,
+        | PgsError::GranularOnWholeFile { .. }
+        | PgsError::ExplainWithoutDryRun => PgsToolErrorKind::User,
         PgsError::StaleScan { .. } | PgsError::IndexLocked | PgsError::StagingFailed { .. } => {
             PgsToolErrorKind::Retryable
         }
@@ -741,6 +742,9 @@ fn error_guidance(error: &PgsError) -> String {
         }
         PgsError::BinaryFileGranular { .. } | PgsError::GranularOnWholeFile { .. } => {
             "Retry with a file-level selection instead of hunk or line granularity.".to_owned()
+        }
+        PgsError::ExplainWithoutDryRun => {
+            "Pass --dry-run alongside --explain, or drop --explain.".to_owned()
         }
         PgsError::StaleScan { .. } => {
             "Re-run pgs_scan to refresh checksums and hunk IDs, then retry.".to_owned()

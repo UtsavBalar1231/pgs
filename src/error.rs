@@ -69,6 +69,10 @@ pub enum PgsError {
         path: String,
     },
 
+    /// `--explain` was passed without `--dry-run`.
+    #[error("--explain requires --dry-run")]
+    ExplainWithoutDryRun,
+
     // --- Exit code 3: Conflict (retryable — agent should re-scan) ---
     /// The file has changed on disk since the last scan.
     #[error("stale scan detected for {path}: file has changed since last scan")]
@@ -134,6 +138,7 @@ impl PgsError {
             Self::FileNotInDiff { .. } => "file_not_in_diff",
             Self::BinaryFileGranular { .. } => "binary_file_granular",
             Self::GranularOnWholeFile { .. } => "granular_on_whole_file",
+            Self::ExplainWithoutDryRun => "explain_without_dry_run",
             Self::StaleScan { .. } => "stale_scan",
             Self::IndexLocked => "index_locked",
             Self::StagingFailed { .. } => "staging_failed",
@@ -155,7 +160,8 @@ impl PgsError {
             | Self::UnknownHunkId { .. }
             | Self::FileNotInDiff { .. }
             | Self::BinaryFileGranular { .. }
-            | Self::GranularOnWholeFile { .. } => 2,
+            | Self::GranularOnWholeFile { .. }
+            | Self::ExplainWithoutDryRun => 2,
 
             Self::StaleScan { .. } | Self::IndexLocked | Self::StagingFailed { .. } => 3,
 

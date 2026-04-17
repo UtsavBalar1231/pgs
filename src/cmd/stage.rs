@@ -23,6 +23,14 @@ pub struct StageArgs {
     /// Validate without modifying the index.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit exact per-file line preview (requires `--dry-run`).
+    #[arg(long)]
+    pub explain: bool,
+
+    /// Per-file preview cap (default 200, 0 = unlimited); applies only with --dry-run --explain.
+    #[arg(long, default_value_t = 200)]
+    pub limit: u32,
 }
 
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
@@ -31,6 +39,11 @@ pub fn execute(
     context: u32,
     args: StageArgs,
 ) -> Result<CommandOutput, PgsError> {
+    // 0. --explain requires --dry-run
+    if args.explain && !args.dry_run {
+        return Err(PgsError::ExplainWithoutDryRun);
+    }
+
     // 1. Open repo
     let repository = repo::open(repo_path)?;
 
