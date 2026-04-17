@@ -29,10 +29,11 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 
 | Promises (already shipped)                                                                                         | Non-promises (current gaps)                                             |
 |--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:288`                                            | No exact-content dry-run preview (counts only, until A1 ships)          |
-| Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                               | No mixed-hunk splitter (until A2 ships)                                 |
-| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:620`                   | No automatic selector remap after content changes                       |
-| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:233`                              | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
+| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:288`                                            | No mixed-hunk splitter (until A2 ships)                                 |
+| Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                               | No automatic selector remap after content changes                       |
+| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:620`                   | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
+| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:233`                              |                                                                         |
+| Exact-content dry-run preview via `--dry-run --explain` — `preview_stage` at `src/git/staging.rs` and `OperationPreview` in `src/models.rs` |                                                                         |
 | Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact  |                                                                         |
 | Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files                                         |                                                                         |
 | Distinct diff bases per command — scan `Index→Workdir`, status `HEAD→Index`, unstage `HEAD→Index`                  |                                                                         |
@@ -385,11 +386,9 @@ How to determine intent from compact scan:
 
 Prefer hunk IDs over line ranges. Use line ranges only when a single hunk contains two distinct intents.
 
-### Phase 4 — Using `dry_run` meaningfully — and its current limits
+### Phase 4 — Using `dry_run` meaningfully
 
-`dry_run: true` on `pgs_stage` confirms selector applicability and reports line counts (via `estimate_lines` at `src/cmd/stage.rs:406`) but does not show the exact content that will land in the index. Treat the count as a sanity check, not proof of correctness.
-
-Workaround for high-risk mixed hunks: after staging but before `pgs_commit`, re-scan the file with `full: true` (`pgs_scan(files: ["path"], full: true)`) and visually confirm the staged diff matches intent. This workaround can be shortened once A1 (exact preview) ships — see `TODO.md`.
+`dry_run: true` on `pgs_stage` confirms selector applicability and reports line counts (via `estimate_lines` at `src/cmd/stage.rs:406`). For exact-content verification before staging, run `pgs stage --dry-run --explain` — the preview shows the resolved line numbers and content that will land in the index, per file, without mutating anything. See `preview_stage` at `src/git/staging.rs`. (The count-only `dry_run` without `--explain` remains a valid sanity check when exact content does not matter.)
 
 ---
 
