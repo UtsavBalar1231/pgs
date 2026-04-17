@@ -30,6 +30,8 @@ tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 proptest = "1"
+# regex (dev-only): parses `src/...:NNN` citations from SKILL.md for the anti-drift test in tests/test_skill_capability_table.rs. Hand-rolled would be ~40 LOC of test-only scanning; regex is the canonical choice per CLAUDE.md dep rules.
+regex = "1"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
