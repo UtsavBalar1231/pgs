@@ -433,6 +433,12 @@ Step 3: pgs_status(repo_path="/path/to/repo")
 Step 4: pgs_commit(repo_path="/path/to/repo", message="feat: ...")
 ```
 
+### When atomicity is impossible
+
+If `pgs_stage` with `dry_run: true` still shows unintended changes after line-range staging, **do not fake atomicity**. Merge the intertwined changes into one honest commit and rename the subject and body to match the actual content. A fictitious atomic split — subject claims one thing, diff contains another — is worse than an honest non-atomic commit, because reviewers and `git bisect` trust the commit boundary to mean something.
+
+Scratch files (local TODO notes, session logs, AI-assistant artifacts) should be left unstaged or added to `.gitignore` — do not include them in intentional commits, and do not spend a commit boundary on them.
+
 ---
 
 ## 6. Constraints & Error Recovery
