@@ -29,9 +29,9 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 
 | Promises (already shipped)                                                                                         | Non-promises (current gaps)                                             |
 |--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:288`                                            | No mixed-hunk splitter (until A2 ships)                                 |
+| Content-addressed hunk IDs — `compute_hunk_id` at `src/git/diff.rs:379`                                            | No mixed-hunk splitter (until A2 ships)                                 |
 | Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                               | No automatic selector remap after content changes                       |
-| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:620`                   | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
+| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:648`                   | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
 | Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:233`                              |                                                                         |
 | Exact-content dry-run preview via `--dry-run --explain` — `preview_stage` at `src/git/staging.rs` and `OperationPreview` in `src/models.rs` |                                                                         |
 | Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact  |                                                                         |
@@ -48,10 +48,10 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 
 What pgs promises so the agent does not have to reason about it:
 
-- Content-addressed hunk IDs stable across unchanged rescans (`compute_hunk_id` at `src/git/diff.rs:288`; stability proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:528`).
+- Content-addressed hunk IDs stable across unchanged rescans (`compute_hunk_id` at `src/git/diff.rs:379`; stability proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:619`).
 - Freshness validation with a `StaleScan` error and recovery guidance (`validate_freshness` at `src/selection/resolve.rs:248`).
 - File / hunk / line selector resolution (auto-detected from positional syntax).
-- Structured JSON output on every MCP call via `structured_content` (`structured_tool_result` at `src/mcp/contract.rs:620`).
+- Structured JSON output on every MCP call via `structured_content` (`structured_tool_result` at `src/mcp/contract.rs:648`).
 - Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files (hunk or line selectors on these produce a `user` error).
 - Distinct diff bases per command — `pgs_scan` is `Index→Workdir`; `pgs_status` is `HEAD→Index`; `pgs_unstage` matches `HEAD→Index`.
 
@@ -71,7 +71,7 @@ What the agent must decide — the tool cannot do this for you:
 1. Always call `pgs_scan` before staging — hunk IDs are ephemeral, valid only until the file or index changes.
 2. Re-scan after each `pgs_commit` — the index changed, previous hunk IDs are stale.
 
-   Hunk IDs are a SHA-256 of path + start lines + content (`compute_hunk_id` at `src/git/diff.rs:288`). If any of those change, the ID must change. The problem is never "unstable IDs" — it is that your captured selector now points at content that no longer exists. Re-scan, re-plan, continue. Stability across *unchanged* rescans is proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:528`.
+   Hunk IDs are a SHA-256 of path + start lines + content (`compute_hunk_id` at `src/git/diff.rs:379`). If any of those change, the ID must change. The problem is never "unstable IDs" — it is that your captured selector now points at content that no longer exists. Re-scan, re-plan, continue. Stability across *unchanged* rescans is proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:619`.
 3. Plan all commits before staging — group changes by intent, each group becomes one commit.
 4. Verify with `pgs_status` before every `pgs_commit`.
 5. Use only pgs MCP tools for all diff/staging/history operations — no Bash, no raw git.
@@ -118,7 +118,7 @@ pgs_stage(repo_path="/path/to/repo", selections=["src/"], exclude=["src/secrets.
 
 ## 3. Reading Tool Responses
 
-> **Always read from `structured_content`. The `content` field is a human summary — never parse it. If you find yourself proposing "add structured JSON to MCP output", you are re-inventing a feature that already ships (`define_tool_output!` at `src/mcp/contract.rs:233`, `structured_tool_result` at `src/mcp/contract.rs:620`). See §0 Capability Truth Table.**
+> **Always read from `structured_content`. The `content` field is a human summary — never parse it. If you find yourself proposing "add structured JSON to MCP output", you are re-inventing a feature that already ships (`define_tool_output!` at `src/mcp/contract.rs:233`, `structured_tool_result` at `src/mcp/contract.rs:648`). See §0 Capability Truth Table.**
 
 Every pgs MCP tool returns two payloads:
 

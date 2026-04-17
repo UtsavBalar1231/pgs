@@ -12,7 +12,7 @@ use crate::{
     error::PgsError,
     output::view::{
         CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, ScanOutput,
-        StatusOutput,
+        SplitHunkOutput, StatusOutput,
     },
 };
 
@@ -253,6 +253,7 @@ define_tool_output!(OperationToolOutput, OperationOutput);
 define_tool_output!(CommitToolOutput, CommitOutput);
 define_tool_output!(LogToolOutput, LogOutput);
 define_tool_output!(OverviewToolOutput, OverviewOutput);
+define_tool_output!(SplitHunkToolOutput, SplitHunkOutput);
 
 /// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
 pub fn tool_definitions() -> Vec<Tool> {
@@ -490,6 +491,15 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
             overview_summary_text(&overview),
             false,
         ),
+        McpTypedOutput::SplitHunk(split) => structured_tool_result(
+            SplitHunkToolOutput {
+                outcome: ToolOutcome::Ok,
+                pgs: Some(split.clone()),
+                pgs_error: None,
+            },
+            split_hunk_summary_text(&split),
+            false,
+        ),
     }
 }
 
@@ -552,6 +562,15 @@ fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError>
             text,
             false,
         ),
+        OutputCommand::SplitHunk => structured_tool_result(
+            SplitHunkToolOutput {
+                outcome: ToolOutcome::NoEffect,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            false,
+        ),
     }
 }
 
@@ -607,6 +626,15 @@ fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
         ),
         OutputCommand::Overview => structured_tool_result(
             OverviewToolOutput {
+                outcome: ToolOutcome::Error,
+                pgs: None,
+                pgs_error: Some(pgs_error),
+            },
+            text,
+            true,
+        ),
+        OutputCommand::SplitHunk => structured_tool_result(
+            SplitHunkToolOutput {
                 outcome: ToolOutcome::Error,
                 pgs: None,
                 pgs_error: Some(pgs_error),
@@ -683,9 +711,18 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
         | OutputCommand::Status
         | OutputCommand::Commit
         | OutputCommand::Log
-        | OutputCommand::Overview => "Applied",
+        | OutputCommand::Overview
+        | OutputCommand::SplitHunk => "Applied",
     };
     format!("{verb} {} selection(s).", operation.items.len())
+}
+
+fn split_hunk_summary_text(split: &SplitHunkOutput) -> String {
+    format!(
+        "Classified hunk {} into {} run(s).",
+        split.hunk_id,
+        split.ranges.len()
+    )
 }
 
 fn status_summary_text(status: &StatusOutput) -> String {

@@ -108,7 +108,9 @@ pub struct DiffLineInfo {
     pub content: String,
 }
 
-/// Classification of a diff line.
+/// Classification of a diff line, or of a contiguous run of diff lines.
+///
+/// `Context`, `Addition`, and `Deletion` apply to individual diff lines produced by the diff engine. `Mixed` is only used by `git::diff::suggest_splits` to tag a contiguous run that interleaves additions and deletions; `DiffLineInfo` values from git2 never carry `Mixed`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum LineOrigin {
     /// Unchanged context line.
@@ -117,6 +119,8 @@ pub enum LineOrigin {
     Addition,
     /// Line removed from the old version.
     Deletion,
+    /// A run of lines that interleaves additions and deletions (split-hunk output only).
+    Mixed,
 }
 
 // ─── Compact Scan Output ──────────────────────────────────────────

@@ -164,6 +164,9 @@ pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result
             LineOrigin::Addition | LineOrigin::Context | LineOrigin::Deletion => {
                 selected.insert(line.line_number);
             }
+            // `Mixed` tags split-hunk classification ranges; it never appears in
+            // a real `DiffLineInfo`. Skip defensively.
+            LineOrigin::Mixed => {}
         }
     }
     stage_lines(repo, file_path, &selected)

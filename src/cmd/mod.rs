@@ -5,6 +5,7 @@ pub mod log;
 pub mod mcp_adapter;
 mod overview;
 mod scan;
+pub mod split;
 mod stage;
 mod status;
 mod unstage;
@@ -82,6 +83,7 @@ impl ParsedCli {
             Command::Commit(_) => OutputCommand::Commit,
             Command::Log(_) => OutputCommand::Log,
             Command::Overview => OutputCommand::Overview,
+            Command::SplitHunk(_) => OutputCommand::SplitHunk,
         }
     }
 }
@@ -102,6 +104,9 @@ pub enum Command {
     Log(log::LogArgs),
     /// Unified view of both unstaged (scan) and staged (status) changes.
     Overview,
+    /// Classify a hunk's contiguous runs (addition, deletion, mixed).
+    #[command(name = "split-hunk")]
+    SplitHunk(split::SplitArgs),
 }
 
 impl Cli {
@@ -254,6 +259,11 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
         Command::Overview => Ok(Some(RenderableOutput::new(overview::execute(
             repo.as_deref(),
             context,
+        )?))),
+        Command::SplitHunk(args) => Ok(Some(RenderableOutput::new(split::execute(
+            repo.as_deref(),
+            context,
+            args,
         )?))),
     }
 }

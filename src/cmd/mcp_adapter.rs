@@ -121,6 +121,8 @@ pub enum McpTypedOutput {
     Log(crate::output::view::LogOutput),
     /// Structured overview output (scan + status fusion).
     Overview(crate::output::view::OverviewOutput),
+    /// Structured split-hunk output (descriptive run classification).
+    SplitHunk(crate::output::view::SplitHunkOutput),
 }
 
 impl From<CommandOutput> for McpTypedOutput {
@@ -132,6 +134,7 @@ impl From<CommandOutput> for McpTypedOutput {
             CommandOutput::Commit(output) => Self::Commit(output),
             CommandOutput::Log(output) => Self::Log(output),
             CommandOutput::Overview(output) => Self::Overview(output),
+            CommandOutput::SplitHunk(output) => Self::SplitHunk(output),
         }
     }
 }

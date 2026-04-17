@@ -7,7 +7,7 @@ use crate::models::{LineOrigin, OperationPreview, PreviewLine};
 use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, LineOriginView, OperationOutput,
     OperationStatusView, OutputCommand, OverviewOutput, ScanDetail, ScanFileView, ScanHunkView,
-    ScanLineView, ScanOutput, StatusOutput,
+    ScanLineView, ScanOutput, SplitHunkOutput, StatusOutput,
 };
 
 const MARKER_PREFIX: &str = "@@pgs:v1";
@@ -123,6 +123,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::Commit(commit) => render_commit(commit),
         CommandOutput::Log(log) => render_marker("log", log),
         CommandOutput::Overview(overview) => render_overview(overview),
+        CommandOutput::SplitHunk(split) => render_split(split),
     }
 }
 
@@ -211,6 +212,8 @@ impl<'a> From<(&'a OperationPreview, &'a PreviewLine)> for PreviewLineRecord<'a>
                 LineOrigin::Context => "context",
                 LineOrigin::Addition => "addition",
                 LineOrigin::Deletion => "deletion",
+                // `Mixed` is a split-hunk classification tag; `PreviewLine` never carries it.
+                LineOrigin::Mixed => "mixed",
             },
             content: &line.content,
         }
@@ -359,6 +362,46 @@ fn render_overview(output: &OverviewOutput) -> Result<String, PgsError> {
     sections.push(render_marker("overview.end", &boundary)?);
 
     Ok(sections.join("\n"))
+}
+
+#[derive(Debug, Serialize)]
+struct SplitBoundaryRecord<'a> {
+    command: OutputCommand,
+    hunk_id: &'a str,
+    ranges: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct SplitRangeRecord<'a> {
+    hunk_id: &'a str,
+    start: u32,
+    end: u32,
+    origin_mix: super::view::OriginMixView,
+}
+
+fn render_split(output: &SplitHunkOutput) -> Result<String, PgsError> {
+    let boundary = SplitBoundaryRecord {
+        command: output.command,
+        hunk_id: &output.hunk_id,
+        ranges: output.ranges.len(),
+    };
+
+    let mut lines = Vec::with_capacity(output.ranges.len() + 2);
+    lines.push(render_marker("split.begin", &boundary)?);
+    for range in &output.ranges {
+        lines.push(render_marker(
+            "split.range",
+            &SplitRangeRecord {
+                hunk_id: &output.hunk_id,
+                start: range.start,
+                end: range.end,
+                origin_mix: range.origin_mix,
+            },
+        )?);
+    }
+    lines.push(render_marker("split.end", &boundary)?);
+
+    Ok(lines.join("\n"))
 }
 
 fn render_diff_line(line: &ScanLineView) -> String {

@@ -195,6 +195,77 @@ fn delta_to_file_status(delta: &git2::DiffDelta<'_>) -> FileStatus {
     }
 }
 
+/// A classified contiguous run of changed lines inside a single hunk. `origin_mix` is `Addition`, `Deletion`, or `Mixed` — never `Context`, since context lines terminate runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HunkSplit {
+    /// First 1-indexed line number of the run (post-image for adds, pre-image for deletes).
+    pub start: u32,
+    /// Last 1-indexed line number of the run (inclusive).
+    pub end: u32,
+    /// Category of the lines in the run.
+    pub origin_mix: LineOrigin,
+}
+
+/// Classify a hunk into contiguous runs of changed lines (descriptive, not prescriptive). Returns an empty vector for a hunk with no additions or deletions.
+#[must_use]
+pub fn suggest_splits(hunk: &HunkInfo) -> Vec<HunkSplit> {
+    let mut splits = Vec::new();
+    let mut run_start: Option<u32> = None;
+    let mut run_end: u32 = 0;
+    let mut run_has_add = false;
+    let mut run_has_del = false;
+
+    for line in &hunk.lines {
+        match line.origin {
+            LineOrigin::Addition => {
+                if run_start.is_none() {
+                    run_start = Some(line.line_number);
+                }
+                run_end = line.line_number;
+                run_has_add = true;
+            }
+            LineOrigin::Deletion => {
+                if run_start.is_none() {
+                    run_start = Some(line.line_number);
+                }
+                run_end = line.line_number;
+                run_has_del = true;
+            }
+            LineOrigin::Context | LineOrigin::Mixed => {
+                if let Some(start) = run_start.take() {
+                    splits.push(HunkSplit {
+                        start,
+                        end: run_end,
+                        origin_mix: classify_run(run_has_add, run_has_del),
+                    });
+                    run_has_add = false;
+                    run_has_del = false;
+                }
+            }
+        }
+    }
+
+    if let Some(start) = run_start {
+        splits.push(HunkSplit {
+            start,
+            end: run_end,
+            origin_mix: classify_run(run_has_add, run_has_del),
+        });
+    }
+
+    splits
+}
+
+const fn classify_run(has_add: bool, has_del: bool) -> LineOrigin {
+    // `(false, false)` is unreachable in practice (a run is pushed only after an add or del);
+    // folded into `Mixed` to satisfy exhaustiveness without a panic.
+    match (has_add, has_del) {
+        (true, false) => LineOrigin::Addition,
+        (false, true) => LineOrigin::Deletion,
+        (true, true) | (false, false) => LineOrigin::Mixed,
+    }
+}
+
 /// Extract `HunkInfo` entries from a `Patch`.
 fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, PgsError> {
     let hunk_count = patch.num_hunks();
@@ -230,10 +301,14 @@ fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, Pg
                 .trim_end_matches('\r')
                 .to_string();
 
-            // Line number: new file for context/additions, old file for deletions
+            // Line number: new file for context/additions, old file for deletions.
+            // `Mixed` is never produced by git2; fall through to new_lineno as a
+            // defensive default for the borrow checker.
             let line_number = match origin {
                 LineOrigin::Deletion => line.old_lineno().unwrap_or(0),
-                LineOrigin::Context | LineOrigin::Addition => line.new_lineno().unwrap_or(0),
+                LineOrigin::Context | LineOrigin::Addition | LineOrigin::Mixed => {
+                    line.new_lineno().unwrap_or(0)
+                }
             };
 
             hunk_content.push_str(&content);

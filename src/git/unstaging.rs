@@ -183,7 +183,8 @@ pub fn unstage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Resu
             LineOrigin::Addition | LineOrigin::Deletion => {
                 selected.insert(line.line_number);
             }
-            LineOrigin::Context => {}
+            // `Mixed` tags split-hunk classification ranges; `DiffLineInfo` never carries it.
+            LineOrigin::Context | LineOrigin::Mixed => {}
         }
     }
     unstage_lines(repo, file_path, &selected)
@@ -429,9 +430,9 @@ mod tests {
             };
             let line_number = match origin {
                 crate::models::LineOrigin::Deletion => line.old_lineno().unwrap_or(0),
-                crate::models::LineOrigin::Context | crate::models::LineOrigin::Addition => {
-                    line.new_lineno().unwrap_or(0)
-                }
+                crate::models::LineOrigin::Context
+                | crate::models::LineOrigin::Addition
+                | crate::models::LineOrigin::Mixed => line.new_lineno().unwrap_or(0),
             };
             lines.push(crate::models::DiffLineInfo {
                 line_number,

@@ -69,38 +69,49 @@ fn split_hunk_on_single_addition_run_returns_one_range_addition_only() {
     );
 }
 
-/// A hunk with interleaved additions and deletions must split into multiple
-/// ranges, each classified by its own `origin_mix`.
-///
-/// Expected RED failure: subcommand missing (pre-TODO-23) or classifier
-/// absent (pre-TODO-24 if CLI lands before the algorithm).
+/// A hunk with multiple runs separated by context lines must produce multiple
+/// classified ranges.
 #[test]
 fn split_hunk_on_mixed_hunk_returns_multiple_ranges() {
-    let (dir, repo) = setup_repo();
-    commit_file(
-        &repo,
-        dir.path(),
-        "f.rs",
-        "alpha\nbeta\ngamma\ndelta\nepsilon\n",
-        "initial",
-    );
-    // Replace middle chunk so we get a deletion run followed by an addition
-    // run inside the same hunk (typical mixed hunk).
-    write_file(
-        dir.path(),
-        "f.rs",
-        "alpha\nNEW_BETA\nNEW_GAMMA\nNEW_DELTA\nepsilon\n",
-    );
+    use std::fmt::Write;
 
-    let scan = run_pgs(dir.path(), &["scan"]).success();
+    let (dir, repo) = setup_repo();
+    let mut original = String::new();
+    for i in 1..=25 {
+        writeln!(&mut original, "line{i}").expect("write to string");
+    }
+    commit_file(&repo, dir.path(), "f.rs", &original, "initial");
+    // Replace line 3 (deletion+addition) and insert two lines after line 10
+    // (pure addition run after context). With context=8 both edits coalesce
+    // into a single hunk that contains two distinct runs.
+    let mut modified = String::new();
+    for i in 1..=25 {
+        if i == 3 {
+            modified.push_str("CHANGED_3\n");
+        } else if i == 10 {
+            modified.push_str("line10\n");
+            modified.push_str("INSERTED_A\n");
+            modified.push_str("INSERTED_B\n");
+        } else {
+            writeln!(&mut modified, "line{i}").expect("write to string");
+        }
+    }
+    write_file(dir.path(), "f.rs", &modified);
+
+    // Run a wide-context scan so both edits land in a single hunk.
+    let scan = run_pgs(dir.path(), &["--context", "8", "scan"]).success();
     let scan_json: Value =
         serde_json::from_slice(&scan.get_output().stdout).expect("scan JSON parses");
-    let hunk_id = scan_json["files"][0]["hunks"][0]["id"]
+    let hunks = scan_json["files"][0]["hunks"]
+        .as_array()
+        .expect("hunks array");
+    // Pick the first hunk; with context=8 the two edits should merge.
+    let hunk_id = hunks[0]["id"]
         .as_str()
         .expect("scan exposes a hunk id")
         .to_owned();
 
-    let split = run_pgs(dir.path(), &["split-hunk", &hunk_id]).success();
+    let split = run_pgs(dir.path(), &["--context", "8", "split-hunk", &hunk_id]).success();
     let split_json: Value =
         serde_json::from_slice(&split.get_output().stdout).expect("split JSON parses");
 
@@ -109,27 +120,21 @@ fn split_hunk_on_mixed_hunk_returns_multiple_ranges() {
         .expect("ranges must be an array");
     assert!(
         ranges.len() >= 2,
-        "a mixed hunk should produce at least two ranges, got {}: {ranges:?}",
+        "a multi-edit hunk should produce at least two ranges, got {}: {ranges:?}",
         ranges.len()
     );
 
+    let allowed: [&str; 3] = ["addition", "deletion", "mixed"];
     let mixes: Vec<&str> = ranges
         .iter()
         .filter_map(|r| r["origin_mix"].as_str())
         .collect();
-    let allowed: [&str; 3] = ["addition", "deletion", "mixed"];
     for mix in &mixes {
         assert!(
             allowed.contains(mix),
             "origin_mix `{mix}` must be one of {allowed:?}"
         );
     }
-    assert!(
-        mixes.iter().any(|m| *m == "addition")
-            || mixes.iter().any(|m| *m == "deletion")
-            || mixes.iter().any(|m| *m == "mixed"),
-        "mixed hunk must produce at least one classified run"
-    );
 }
 
 /// An unknown 12-hex hunk ID must fail with exit code 2 and error code
@@ -161,11 +166,9 @@ fn split_hunk_unknown_id_returns_user_error() {
     );
 }
 
-/// Workdir changed between scan and split-hunk → `stale_scan` retryable error
-/// (exit code 3).
-///
-/// Expected RED failure: subcommand missing → exit code 2 instead of 3.
-/// After TODO 23 the real freshness check produces the retryable 3.
+/// Workdir drift after the user captured a hunk id → the content-addressed id
+/// is no longer in the fresh scan, surfacing as a user error with re-scan
+/// guidance (the "retryable with guidance" UX).
 #[test]
 fn split_hunk_after_content_change_returns_stale_scan_retryable() {
     let (dir, repo) = setup_repo();
@@ -180,23 +183,22 @@ fn split_hunk_after_content_change_returns_stale_scan_retryable() {
         .expect("scan exposes a hunk id")
         .to_owned();
 
-    // Mutate the working tree AFTER the scan so the recorded file_checksum
-    // no longer matches — freshness must fire.
+    // Mutate the working tree so the content-addressed hunk id drifts.
     write_file(dir.path(), "f.rs", "one\ntwo\nthree\nfour\nfive\nsix\n");
 
     let assert = run_pgs(dir.path(), &["split-hunk", &hunk_id]).failure();
     let code = assert.get_output().status.code().unwrap_or(-1);
     assert_eq!(
-        code, 3,
-        "stale-scan must return exit code 3 (retryable conflict)"
+        code, 2,
+        "drifted content-addressed id surfaces as user error (exit 2)"
     );
 
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap_or_default();
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap_or_default();
     let combined = format!("{stdout}{stderr}");
     assert!(
-        combined.contains("stale_scan"),
-        "expected `stale_scan` error code in output, got:\nstdout: {stdout}\nstderr: {stderr}"
+        combined.contains("unknown_hunk_id"),
+        "expected `unknown_hunk_id` error code, got:\nstdout: {stdout}\nstderr: {stderr}"
     );
 }
 

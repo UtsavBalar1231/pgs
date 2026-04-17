@@ -17,6 +17,7 @@ pub enum CommandOutput {
     Commit(CommitOutput),
     Log(LogOutput),
     Overview(OverviewOutput),
+    SplitHunk(SplitHunkOutput),
 }
 
 impl From<ScanOutput> for CommandOutput {
@@ -55,6 +56,12 @@ impl From<OverviewOutput> for CommandOutput {
     }
 }
 
+impl From<SplitHunkOutput> for CommandOutput {
+    fn from(output: SplitHunkOutput) -> Self {
+        Self::SplitHunk(output)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
@@ -65,6 +72,8 @@ pub enum OutputCommand {
     Commit,
     Log,
     Overview,
+    #[serde(rename = "split")]
+    SplitHunk,
 }
 
 impl OutputCommand {
@@ -77,6 +86,7 @@ impl OutputCommand {
             Self::Commit => "commit",
             Self::Log => "log",
             Self::Overview => "overview",
+            Self::SplitHunk => "split",
         }
     }
 }
@@ -481,7 +491,7 @@ pub enum LineOriginView {
 impl From<LineOrigin> for LineOriginView {
     fn from(origin: LineOrigin) -> Self {
         match origin {
-            LineOrigin::Context => Self::Context,
+            LineOrigin::Context | LineOrigin::Mixed => Self::Context,
             LineOrigin::Addition => Self::Addition,
             LineOrigin::Deletion => Self::Deletion,
         }
@@ -670,6 +680,57 @@ impl OverviewOutput {
             command: OutputCommand::Overview,
             unstaged,
             staged,
+        }
+    }
+}
+
+/// Classification label for a split-hunk range, rendered as a lowercase string.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginMixView {
+    Addition,
+    Deletion,
+    Mixed,
+}
+
+impl OriginMixView {
+    /// Map the `LineOrigin` tag used internally by `suggest_splits` into the rendered view. Panics for `LineOrigin::Context`, which `suggest_splits` never emits.
+    #[must_use]
+    pub const fn from_line_origin(origin: LineOrigin) -> Self {
+        match origin {
+            LineOrigin::Addition => Self::Addition,
+            LineOrigin::Deletion => Self::Deletion,
+            LineOrigin::Mixed => Self::Mixed,
+            LineOrigin::Context => panic!("suggest_splits never emits Context origin_mix"),
+        }
+    }
+}
+
+/// A single classified range inside a split-hunk result.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct SplitRangeView {
+    pub start: u32,
+    pub end: u32,
+    pub origin_mix: OriginMixView,
+}
+
+/// Output for `pgs split-hunk` — descriptive classification of runs inside a single hunk.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct SplitHunkOutput {
+    pub version: &'static str,
+    pub command: OutputCommand,
+    pub hunk_id: String,
+    pub ranges: Vec<SplitRangeView>,
+}
+
+impl SplitHunkOutput {
+    #[must_use]
+    pub const fn new(hunk_id: String, ranges: Vec<SplitRangeView>) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::SplitHunk,
+            hunk_id,
+            ranges,
         }
     }
 }
