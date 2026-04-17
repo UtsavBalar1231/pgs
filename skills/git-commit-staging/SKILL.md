@@ -43,6 +43,30 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 
 ## 1. Core Rules
 
+### Tool guarantees
+
+What pgs promises so the agent does not have to reason about it:
+
+- Content-addressed hunk IDs stable across unchanged rescans (`compute_hunk_id` at `src/git/diff.rs:288`; stability proven by `hunk_ids_stable_across_rescans` at `src/git/diff.rs:528`).
+- Freshness validation with a `StaleScan` error and recovery guidance (`validate_freshness` at `src/selection/resolve.rs:248`).
+- File / hunk / line selector resolution (auto-detected from positional syntax).
+- Structured JSON output on every MCP call via `structured_content` (`structured_tool_result` at `src/mcp/contract.rs:551`).
+- Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files (hunk or line selectors on these produce a `user` error).
+- Distinct diff bases per command — `pgs_scan` is `Index→Workdir`; `pgs_status` is `HEAD→Index`; `pgs_unstage` matches `HEAD→Index`.
+
+### Agent responsibilities
+
+What the agent must decide — the tool cannot do this for you:
+
+- Infer commit intent from hunk headers and content.
+- Group commits honestly by intent.
+- Detect when atomicity is not safely achievable (see §5 "When atomicity is impossible").
+- Choose between a split and an honest-merge commit per §5.
+- Write high-quality commit messages that match actual staged content.
+- Re-scan after every content change before referencing hunk IDs.
+
+### Operational rules
+
 1. Always call `pgs_scan` before staging — hunk IDs are ephemeral, valid only until the file or index changes.
 2. Re-scan after each `pgs_commit` — the index changed, previous hunk IDs are stale.
 
