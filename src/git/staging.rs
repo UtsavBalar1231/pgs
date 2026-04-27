@@ -4,7 +4,6 @@
 /// blobs directly, without building unified diff patches. Supports file-level,
 /// line-level, and hunk-level staging.
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 
 use git2::Repository;
@@ -66,6 +65,9 @@ pub fn stage_file(
 /// file, then selectively applies only the lines whose line numbers (1-indexed)
 /// appear in `selected_lines`. Unselected changes are preserved as-is.
 ///
+/// For symlinks, line granularity is meaningless. The function short-circuits and
+/// stages the whole link-target string under mode `0o120_000`, returning `Ok(1)`.
+///
 /// # Errors
 ///
 /// - `PgsError::Git` if index/HEAD blob or index operations fail
@@ -77,11 +79,28 @@ pub fn stage_lines(
     file_path: &str,
     selected_lines: &HashSet<u32>,
 ) -> Result<u32, PgsError> {
+    let workdir = repo::workdir(repo)?;
+    let blob = read_workdir_for_blob(workdir, file_path)?;
+    if blob.file_type == WorkdirFileType::Symlink {
+        // Line granularity is meaningless on a symlink (one path-string).
+        // Stage the whole link-target string under mode 0o120_000.
+        let oid = repo.blob(&blob.bytes)?;
+        let mut index = repo.index()?;
+        let entry = build_index_entry(
+            &index,
+            file_path,
+            oid,
+            saturating_u32(blob.bytes.len()),
+            Some(0o120_000),
+        );
+        index.add_frombuffer(&entry, &blob.bytes)?;
+        index.write()?;
+        return Ok(1);
+    }
+    let work_bytes = blob.bytes;
+
     let base_bytes =
         read_index_blob(repo, file_path).or_else(|_| read_head_blob(repo, file_path))?;
-    let workdir = repo::workdir(repo)?;
-    let full_path = workdir.join(file_path);
-    let work_bytes = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
 
     let base_text = String::from_utf8_lossy(&base_bytes);
     let work_text = String::from_utf8_lossy(&work_bytes);
@@ -229,8 +248,21 @@ pub fn preview_stage(
         });
     }
 
+    let is_symlink = file_info.is_some_and(|f| f.new_mode == 0o120_000);
     let selected = selected_line_numbers(scan, resolved);
     let additions = collect_preview_additions(repo, &file_path, &selected)?;
+
+    if is_symlink {
+        return Ok(OperationPreview {
+            selection: selection.to_owned(),
+            file_path,
+            resolved_ranges,
+            preview_lines: additions,
+            truncated: false,
+            limit_applied: limit,
+            reason: Some("symlink".to_owned()),
+        });
+    }
 
     let (capped, truncated) = apply_limit(additions, limit);
 
@@ -313,11 +345,20 @@ fn collect_preview_additions(
     file_path: &str,
     selected: &HashSet<u32>,
 ) -> Result<Vec<PreviewLine>, PgsError> {
+    let workdir = repo::workdir(repo)?;
+    let blob = read_workdir_for_blob(workdir, file_path)?;
+    if blob.file_type == WorkdirFileType::Symlink {
+        let target = String::from_utf8_lossy(&blob.bytes).into_owned();
+        return Ok(vec![PreviewLine {
+            line_number: 1,
+            origin: LineOrigin::Addition,
+            content: target,
+        }]);
+    }
+    let work_bytes = blob.bytes;
+
     let base_bytes =
         read_index_blob(repo, file_path).or_else(|_| read_head_blob(repo, file_path))?;
-    let workdir = repo::workdir(repo)?;
-    let full_path = workdir.join(file_path);
-    let work_bytes = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
 
     let base_text = String::from_utf8_lossy(&base_bytes);
     let work_text = String::from_utf8_lossy(&work_bytes);
@@ -913,5 +954,98 @@ mod tests {
             "ddd should remain (DDD not selected), got: {staged_text:?}"
         );
         assert_eq!(staged_text, "aaa\nBBB\nccc\nddd\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_lines_on_symlink_short_circuits_to_whole_file_staging() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+
+        fs::write(dir.path().join("target.txt"), "content").expect("write target");
+        symlink("target.txt", dir.path().join("link")).expect("symlink");
+
+        let mut selected = HashSet::new();
+        selected.insert(1);
+
+        let count = stage_lines(&repo, "link", &selected).expect("stage_lines on symlink");
+
+        assert_eq!(count, 1, "symlink short-circuit should return Ok(1)");
+
+        let staged = read_index_content(&repo, "link");
+        assert_eq!(staged, b"target.txt", "blob must equal link target string");
+
+        let index = repo.index().expect("index");
+        let entry = index
+            .get_path(std::path::Path::new("link"), 0)
+            .expect("entry in index");
+        assert_eq!(entry.mode, 0o120_000, "index entry mode must be 0o120000");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preview_stage_on_symlink_emits_symlink_reason() {
+        use std::os::unix::fs::symlink;
+
+        use crate::models::{FileStatus, HunkInfo, ScanResult, ScanSummary};
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+
+        fs::write(dir.path().join("target.txt"), "content").expect("write target");
+        symlink("target.txt", dir.path().join("link")).expect("symlink");
+
+        let scan = ScanResult {
+            files: vec![crate::models::FileInfo {
+                path: "link".into(),
+                status: FileStatus::Added,
+                file_checksum: "".into(),
+                is_binary: false,
+                old_mode: 0o120_000,
+                new_mode: 0o120_000,
+                hunks: Vec::<HunkInfo>::new(),
+            }],
+            summary: ScanSummary {
+                total_files: 1,
+                added: 1,
+                ..ScanSummary::default()
+            },
+        };
+
+        let resolved = ResolvedSelection {
+            file_path: "link".into(),
+            hunk_indices: vec![],
+            line_ranges: None,
+        };
+
+        let request = PreviewRequest {
+            scan: &scan,
+            resolved: &resolved,
+            selection: "link",
+            limit: 200,
+        };
+
+        let preview = preview_stage(&repo, &request).expect("preview_stage on symlink");
+
+        assert_eq!(
+            preview.reason,
+            Some("symlink".to_owned()),
+            "reason must be 'symlink'"
+        );
+        assert_eq!(
+            preview.preview_lines.len(),
+            1,
+            "symlink preview must have one line"
+        );
+        assert_eq!(
+            preview.preview_lines[0].content, "target.txt",
+            "preview line content must equal link target"
+        );
+        assert_eq!(
+            preview.preview_lines[0].origin,
+            LineOrigin::Addition,
+            "preview line origin must be Addition"
+        );
+        assert!(!preview.truncated, "symlink preview must not be truncated");
     }
 }

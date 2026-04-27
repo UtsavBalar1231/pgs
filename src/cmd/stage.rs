@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use clap::Args;
 
 use crate::error::PgsError;
-use crate::git::{diff, repo, staging};
+use crate::git::{diff, read_head_mode, repo, staging};
 use crate::models::{
     FileStatus, OperationPreview, OperationStatus, ResolvedSelection, SelectionSpec,
     format_selection,
@@ -197,6 +197,7 @@ pub fn execute(
     let backup_info = backup::create_backup(&repository)?;
 
     let mut actual_lines_by_file: HashMap<String, u32> = HashMap::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     for (spec, resolved) in &work_items {
         // Skip work items whose hunks were fully excluded (but not whole-file ops)
@@ -213,6 +214,20 @@ pub fn execute(
             .ok_or_else(|| PgsError::FileNotInDiff {
                 path: file_path.clone(),
             })?;
+
+        // Detect symlinks: check the scan's new_mode, or fall back to HEAD mode for
+        // untracked symlinks that haven't been committed yet.
+        let is_symlink = file_info.new_mode == 0o120_000
+            || read_head_mode(&repository, file_path).ok() == Some(0o120_000);
+
+        if is_symlink {
+            let is_hunk = matches!(spec, SelectionSpec::Hunk { .. });
+            if is_hunk || resolved.line_ranges.is_some() {
+                warnings.push(format!(
+                    "symlink '{file_path}' staged whole; line/hunk selection ignored"
+                ));
+            }
+        }
 
         let stage_result = execute_single_stage(
             &repository,
@@ -265,7 +280,7 @@ pub fn execute(
     Ok(OperationOutput::stage(
         OperationStatus::Ok,
         items,
-        vec![],
+        warnings,
         Some(backup_info.backup_id),
     )
     .into())
