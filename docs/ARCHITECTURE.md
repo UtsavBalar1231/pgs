@@ -84,6 +84,14 @@ Critical diff bases:
 - `status`: HEAD -> Index
 - `unstage`: HEAD -> Index
 
+## Symlink staging
+
+`pgs` uses `symlink_metadata()` + `read_link()` to detect and read symlinks; it never follows
+the link to the target file. Index blobs for symlinks contain the raw link-target string bytes
+(mode `0o120000`), not the target file's contents. The single point of truth for all workdir
+blob reads is the `read_workdir_for_blob` helper in `src/git/mod.rs`; all staging call sites
+route through it.
+
 ## Verification Expectations
 
 Contract-sensitive changes should validate:
