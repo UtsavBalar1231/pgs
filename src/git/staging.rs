@@ -12,7 +12,9 @@ use similar::TextDiff;
 
 use crate::error::PgsError;
 use crate::git::repo;
-use crate::git::{build_index_entry, read_head_blob, read_index_blob};
+use crate::git::{
+    WorkdirFileType, build_index_entry, read_head_blob, read_index_blob, read_workdir_for_blob,
+};
 use crate::models::{
     HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine, ResolvedSelection, ScanResult,
 };
@@ -34,8 +36,13 @@ pub fn stage_file(
     mode_override: Option<u32>,
 ) -> Result<u32, PgsError> {
     let workdir = repo::workdir(repo)?;
-    let full_path = workdir.join(file_path);
-    let content = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
+    let blob = read_workdir_for_blob(workdir, file_path)?;
+    let content = blob.bytes;
+    let effective_mode = match mode_override {
+        Some(m) => Some(m),
+        None if blob.file_type == WorkdirFileType::Symlink => Some(0o120_000),
+        None => None,
+    };
 
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
@@ -45,7 +52,7 @@ pub fn stage_file(
         file_path,
         oid,
         saturating_u32(content.len()),
-        mode_override,
+        effective_mode,
     );
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
@@ -383,8 +390,13 @@ pub fn stage_rename(
     index.remove_path(Path::new(old_path))?;
 
     let workdir = repo::workdir(repo)?;
-    let full_path = workdir.join(new_path);
-    let content = fs::read(&full_path).map_err(|e| PgsError::io(&full_path, e))?;
+    let blob = read_workdir_for_blob(workdir, new_path)?;
+    let content = blob.bytes;
+    let effective_mode = match mode_override {
+        Some(m) => Some(m),
+        None if blob.file_type == WorkdirFileType::Symlink => Some(0o120_000),
+        None => None,
+    };
 
     let oid = repo.blob(&content)?;
 
@@ -393,7 +405,7 @@ pub fn stage_rename(
         new_path,
         oid,
         saturating_u32(content.len()),
-        mode_override,
+        effective_mode,
     );
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
