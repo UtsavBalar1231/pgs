@@ -220,6 +220,13 @@ pub fn validate_whole_file_constraints(
 
     if let Some(p) = target_path {
         if let Some(file) = scan.files.iter().find(|f| f.path == p) {
+            // Symlinks (mode 0o120_000) have no line granularity but a granular
+            // selector is treated as intent, not error — the dispatch guard in
+            // cmd/stage.rs short-circuits to whole-file staging and emits a
+            // warning. Skip the GranularOnWholeFile error so the guard can act.
+            if file.new_mode == 0o120_000 {
+                return Ok(());
+            }
             let is_whole_file_only = matches!(
                 file.status,
                 FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
@@ -542,6 +549,37 @@ mod tests {
             hunk_id: "aaa111bbb222".into(),
         };
         assert!(validate_whole_file_constraints(&scan, &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_whole_file_constraints_skips_added_symlink_with_line_range() {
+        // An Added symlink with a line-range selector must NOT produce
+        // GranularOnWholeFile — the dispatch guard in cmd/stage.rs converts
+        // it to whole-file staging and emits a warning.
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "newlink".into(),
+                status: FileStatus::Added,
+                file_checksum: String::new(),
+                is_binary: false,
+                old_mode: 0o000_000,
+                new_mode: 0o120_000, // symlink
+                hunks: vec![],
+            }],
+            summary: ScanSummary {
+                total_files: 1,
+                added: 1,
+                ..ScanSummary::default()
+            },
+        };
+        let spec = SelectionSpec::Lines {
+            path: "newlink".into(),
+            ranges: vec![LineRange { start: 1, end: 1 }],
+        };
+        assert!(
+            validate_whole_file_constraints(&scan, &spec).is_ok(),
+            "Added symlink with line-range selector must not raise GranularOnWholeFile"
+        );
     }
 
     // ── validate_freshness ────────────────────────────────────────
