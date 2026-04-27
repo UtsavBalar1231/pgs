@@ -491,6 +491,44 @@ mod tests {
         assert_eq!(staged, new_content.as_bytes());
     }
 
+    /// Symlink blobs must store the link-target string, not the referent's bytes.
+    #[cfg(unix)]
+    #[test]
+    fn stage_file_symlink_writes_link_target_string_not_target_bytes() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+
+        // Create a target file with 2048 distinguishable bytes.
+        let target_content = vec![0xAB_u8; 2048];
+        fs::write(dir.path().join("target.bin"), &target_content).expect("write target");
+
+        // Create a symlink whose stored string is "target.bin" (10 bytes).
+        symlink("target.bin", dir.path().join("link_to_target")).expect("symlink");
+
+        // Stage the symlink with the symlink mode.
+        let _lines = stage_file(&repo, "link_to_target", Some(0o120_000)).expect("stage_file");
+
+        // The blob must equal the link-target string, not the target file's bytes.
+        let staged = read_index_content(&repo, "link_to_target");
+        assert_eq!(
+            staged,
+            b"target.bin",
+            "symlink blob must equal link target string, got {} bytes",
+            staged.len()
+        );
+
+        // The index entry mode must be the symlink mode regardless of the blob content.
+        let index = repo.index().expect("index");
+        let entry = index
+            .get_path(Path::new("link_to_target"), 0)
+            .expect("entry in index");
+        assert_eq!(
+            entry.mode, 0o120_000,
+            "index entry mode must be 0o120000 (symlink)"
+        );
+    }
+
     #[test]
     fn stage_lines_selects_subset() {
         let original = "line1\nline2\nline3\n";
