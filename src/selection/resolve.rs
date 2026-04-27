@@ -268,11 +268,7 @@ pub fn validate_freshness(
         PgsError::Internal("repository has no working directory (bare repo)".into())
     })?;
 
-    let abs_path = workdir.join(file_path);
-    let content = std::fs::read(&abs_path).map_err(|e| PgsError::Io {
-        path: abs_path.clone(),
-        source: e,
-    })?;
+    let content = crate::git::read_workdir_for_blob(workdir, file_path)?.bytes;
 
     let mut hasher = Sha256::new();
     hasher.update(&content);
@@ -717,5 +713,77 @@ mod tests {
             prefix: "src".into(),
         };
         assert!(validate_whole_file_constraints(&scan, &spec).is_ok());
+    }
+
+    // ── Symlink freshness tests ───────────────────────────────────────────────
+
+    /// Build a scan result with a symlink entry whose checksum matches the
+    /// link-target string bytes (as `read_workdir_for_blob` would produce).
+    #[cfg(unix)]
+    fn setup_symlink_scan(
+        dir: &std::path::Path,
+        link_name: &str,
+        link_target: &str,
+    ) -> (git2::Repository, ScanResult) {
+        use sha2::{Digest, Sha256};
+
+        let repo = git2::Repository::init(dir).expect("init");
+        {
+            let mut cfg = repo.config().expect("config");
+            cfg.set_str("user.name", "Test").expect("name");
+            cfg.set_str("user.email", "test@test.com").expect("email");
+        }
+
+        // Create the symlink in the workdir.
+        std::os::unix::fs::symlink(link_target, dir.join(link_name)).expect("symlink");
+
+        // Compute the expected checksum: SHA-256 of the link-target string bytes.
+        let mut hasher = Sha256::new();
+        hasher.update(link_target.as_bytes());
+        let checksum = format!("{:x}", hasher.finalize());
+
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: link_name.to_owned(),
+                status: FileStatus::Added,
+                file_checksum: checksum,
+                is_binary: false,
+                old_mode: 0,
+                new_mode: 0o120_000,
+                hunks: vec![],
+            }],
+            summary: ScanSummary::default(),
+        };
+        (repo, scan)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_file_checksum_passes_for_unchanged_symlink() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (repo, scan) = setup_symlink_scan(dir.path(), "link", "target.bin");
+        // Validate freshness without modifying the symlink.
+        let result = validate_freshness(&repo, &scan, "link");
+        assert!(
+            result.is_ok(),
+            "unchanged symlink should pass freshness: {result:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_file_checksum_detects_changed_symlink_target() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (repo, scan) = setup_symlink_scan(dir.path(), "link", "target.bin");
+
+        // Re-point the symlink to a different target.
+        std::fs::remove_file(dir.path().join("link")).expect("remove");
+        std::os::unix::fs::symlink("new_target.bin", dir.path().join("link")).expect("re-symlink");
+
+        let err = validate_freshness(&repo, &scan, "link").expect_err("should detect stale scan");
+        assert!(
+            matches!(err, PgsError::StaleScan { .. }),
+            "expected StaleScan, got: {err}"
+        );
     }
 }

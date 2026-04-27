@@ -382,10 +382,15 @@ fn compute_hunk_id(path: &str, old_start: u32, new_start: u32, content: &str) ->
 }
 
 /// Read working-directory file bytes for binary detection fallback.
+///
+/// Symlinks return their link-target string bytes (never the dereferenced
+/// file content), so binary detection and checksums operate on the target
+/// string rather than whatever file the link points at.
 fn read_workdir_bytes(repo: &Repository, path: &str) -> Option<Vec<u8>> {
     let workdir = repo.workdir()?;
-    let full_path = workdir.join(path);
-    std::fs::read(full_path).ok()
+    crate::git::read_workdir_for_blob(workdir, path)
+        .ok()
+        .map(|b| b.bytes)
 }
 
 /// Compute SHA-256 hex checksum of a workdir file, or empty string on failure.
@@ -868,6 +873,201 @@ mod tests {
         assert!(
             paths.contains(&"subdir/file_b.rs"),
             "subdir/file_b.rs should appear: {paths:?}"
+        );
+    }
+
+    // ── Symlink tests ─────────────────────────────────────────────────────────
+
+    /// Commit a symlink directly into the index and HEAD.
+    ///
+    /// `link_name` is the path in the repo (e.g. `"link"`).
+    /// `link_target` is the target string bytes (e.g. `b"target.bin"`).
+    #[cfg(unix)]
+    fn commit_symlink(
+        repo: &Repository,
+        dir: &Path,
+        link_name: &str,
+        link_target: &[u8],
+        msg: &str,
+    ) {
+        use std::os::unix::fs::symlink;
+
+        // Create the workdir symlink so libgit2's index scan is consistent.
+        let full = dir.join(link_name);
+        if full.exists() || full.symlink_metadata().is_ok() {
+            std::fs::remove_file(&full).expect("remove old link");
+        }
+        let target_str = std::str::from_utf8(link_target).expect("utf8 target");
+        symlink(target_str, &full).expect("symlink");
+
+        // Write the link-target string as a blob and add it to the index with symlink mode.
+        let oid = repo.blob(link_target).expect("blob");
+        let mut index = repo.index().expect("index");
+        let entry = git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode: 0o120_000,
+            uid: 0,
+            gid: 0,
+            file_size: link_target.len() as u32,
+            id: oid,
+            flags: 0,
+            flags_extended: 0,
+            path: link_name.as_bytes().to_vec(),
+        };
+        index.add(&entry).expect("index.add");
+        index.write().expect("write index");
+        let tree_oid = index.write_tree().expect("write tree");
+        let tree = repo.find_tree(tree_oid).expect("find tree");
+        let sig = repo.signature().expect("sig");
+        let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents)
+            .expect("commit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_reports_symlink_with_binary_false_and_correct_checksum() {
+        use sha2::{Digest, Sha256};
+
+        let (dir, repo) = setup_repo();
+        // Initial commit with a regular file.
+        commit_file(&repo, dir.path(), "target.bin", "some content\n", "initial");
+        // Create a new untracked symlink in the workdir (appears as Added in scan).
+        std::os::unix::fs::symlink("target.bin", dir.path().join("link")).expect("symlink");
+
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        let file = result
+            .files
+            .iter()
+            .find(|f| f.path == "link")
+            .expect("link should appear in scan");
+
+        assert!(!file.is_binary, "symlink should not be binary");
+
+        // Checksum must be SHA-256 of the link-target string bytes, not the target file content.
+        let mut hasher = Sha256::new();
+        hasher.update(b"target.bin");
+        let expected = format!("{:x}", hasher.finalize());
+        assert_eq!(
+            file.file_checksum, expected,
+            "checksum should be SHA-256 of link-target bytes"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_reports_zero_diff_for_unmodified_symlink() {
+        let (dir, repo) = setup_repo();
+        // Initial commit with a regular target file.
+        commit_file(&repo, dir.path(), "target.bin", "some content\n", "initial");
+        // Commit the symlink into HEAD.
+        commit_symlink(&repo, dir.path(), "link", b"target.bin", "add symlink");
+
+        // Do NOT modify the workdir — symlink and target are already committed.
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        // Either the symlink does not appear (no diff) or it appears with zero changes.
+        if let Some(file) = result.files.iter().find(|f| f.path == "link") {
+            assert_eq!(
+                file.hunks.len(),
+                0,
+                "unmodified symlink should have no hunks"
+            );
+            let lines_added: u32 = file
+                .hunks
+                .iter()
+                .map(|h| {
+                    h.lines
+                        .iter()
+                        .filter(|l| matches!(l.origin, LineOrigin::Addition))
+                        .count() as u32
+                })
+                .sum();
+            let lines_deleted: u32 = file
+                .hunks
+                .iter()
+                .map(|h| {
+                    h.lines
+                        .iter()
+                        .filter(|l| matches!(l.origin, LineOrigin::Deletion))
+                        .count() as u32
+                })
+                .sum();
+            assert_eq!(
+                lines_added, 0,
+                "unmodified symlink should have no added lines"
+            );
+            assert_eq!(
+                lines_deleted, 0,
+                "unmodified symlink should have no deleted lines"
+            );
+        }
+        // If the symlink does not appear at all, the assertion is implicitly satisfied.
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_reports_target_string_diff_not_file_content_diff_for_modified_symlink() {
+        let (dir, repo) = setup_repo();
+        // Initial commit: target file "a" (short name) and symlink link -> "a".
+        commit_file(&repo, dir.path(), "a", "x\n", "initial");
+        commit_symlink(&repo, dir.path(), "link", b"a", "add symlink to a");
+
+        // Change symlink target to "bb" in workdir.
+        std::fs::remove_file(dir.path().join("link")).expect("remove link");
+        std::os::unix::fs::symlink("bb", dir.path().join("link")).expect("re-symlink");
+
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        let file = result
+            .files
+            .iter()
+            .find(|f| f.path == "link")
+            .expect("modified symlink should appear in scan");
+
+        assert_eq!(file.hunks.len(), 1, "one hunk for the target change");
+        assert!(!file.is_binary, "symlink should not be binary");
+
+        let lines_added: u32 = file
+            .hunks
+            .iter()
+            .map(|h| {
+                h.lines
+                    .iter()
+                    .filter(|l| matches!(l.origin, LineOrigin::Addition))
+                    .count() as u32
+            })
+            .sum();
+        let lines_deleted: u32 = file
+            .hunks
+            .iter()
+            .map(|h| {
+                h.lines
+                    .iter()
+                    .filter(|l| matches!(l.origin, LineOrigin::Deletion))
+                    .count() as u32
+            })
+            .sum();
+        assert!(
+            lines_added + lines_deleted < 10,
+            "diff should be over target strings (tiny), not dereferenced content: added={lines_added}, deleted={lines_deleted}"
+        );
+        // Tighter bound: link-target diff produces at most 1 add + 1 delete.
+        assert!(
+            lines_added <= 2,
+            "at most 2 added lines for target string diff"
+        );
+        assert!(
+            lines_deleted <= 2,
+            "at most 2 deleted lines for target string diff"
         );
     }
 }
