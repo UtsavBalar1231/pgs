@@ -463,6 +463,49 @@ mod tests {
 
     use super::*;
 
+    /// Commit a symlink into HEAD using git2 directly (bypasses `index.add_path`
+    /// which would follow the symlink on some platforms).
+    #[cfg(unix)]
+    fn commit_symlink_to_head(
+        repo: &Repository,
+        dir: &std::path::Path,
+        link_name: &str,
+        target: &str,
+    ) {
+        use std::os::unix::fs::symlink;
+
+        // Create (or recreate) the symlink in the workdir.
+        let link_path = dir.join(link_name);
+        if link_path.exists() || link_path.symlink_metadata().is_ok() {
+            fs::remove_file(&link_path).expect("remove existing link");
+        }
+        symlink(target, &link_path).expect("create symlink");
+
+        // Build the blob (link-target string bytes) and index entry manually.
+        let blob_oid = repo.blob(target.as_bytes()).expect("blob");
+        let mut index = repo.index().expect("index");
+        let entry = build_index_entry(
+            &index,
+            link_name,
+            blob_oid,
+            target.len() as u32,
+            Some(0o120_000),
+        );
+        index
+            .add_frombuffer(&entry, target.as_bytes())
+            .expect("add_frombuffer");
+        index.write().expect("index write");
+
+        // Write a commit with the updated tree.
+        let tree_oid = index.write_tree().expect("write tree");
+        let tree = repo.find_tree(tree_oid).expect("find tree");
+        let sig = repo.signature().expect("signature");
+        let parent_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit<'_>> = parent_commit.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, "add symlink", &tree, &parents)
+            .expect("commit");
+    }
+
     /// Create a repo with an initial commit containing the specified files.
     fn setup_repo_with_commit(files: &[(&str, &str)]) -> (TempDir, Repository) {
         let dir = TempDir::new().expect("tempdir");
@@ -1047,5 +1090,181 @@ mod tests {
             "preview line origin must be Addition"
         );
         assert!(!preview.truncated, "symlink preview must not be truncated");
+    }
+
+    /// Dangling symlink (target does not exist) — `stage_file` must succeed and
+    /// store the target string, not fail because the target is unreachable.
+    /// Passes `None` for mode_override to exercise the symlink-default-mode branch.
+    #[cfg(unix)]
+    #[test]
+    fn stage_dangling_symlink_succeeds_with_target_string() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+
+        // "ghost.bin" does not exist in the workdir — the link is dangling.
+        symlink("ghost.bin", dir.path().join("dangling_link")).expect("symlink");
+
+        // Pass None — the helper must infer mode 0o120_000 from the symlink type.
+        stage_file(&repo, "dangling_link", None).expect("stage_file on dangling symlink");
+
+        let staged = read_index_content(&repo, "dangling_link");
+        assert_eq!(
+            staged, b"ghost.bin",
+            "blob must equal the link-target string, not dereference it"
+        );
+
+        let index = repo.index().expect("index");
+        let entry = index
+            .get_path(Path::new("dangling_link"), 0)
+            .expect("entry in index");
+        assert_eq!(
+            entry.mode, 0o120_000,
+            "index entry mode must be 0o120000 for symlink"
+        );
+    }
+
+    /// Symlink pointing at a directory — must stage the target path string and
+    /// not recurse into directory contents.
+    #[cfg(unix)]
+    #[test]
+    fn stage_symlink_to_directory_stages_link_not_recurses() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+
+        // Create a real directory to point at.
+        let subdir = dir.path().join("mydir");
+        fs::create_dir(&subdir).expect("create dir");
+        fs::write(subdir.join("file.txt"), "contents").expect("write file in subdir");
+
+        symlink("mydir", dir.path().join("dir_link")).expect("symlink");
+
+        stage_file(&repo, "dir_link", Some(0o120_000)).expect("stage_file");
+
+        let staged = read_index_content(&repo, "dir_link");
+        assert_eq!(
+            staged, b"mydir",
+            "blob must be the directory path string, not recursive content"
+        );
+
+        let index = repo.index().expect("index");
+        let entry = index
+            .get_path(Path::new("dir_link"), 0)
+            .expect("entry in index");
+        assert_eq!(
+            entry.mode, 0o120_000,
+            "mode must be 0o120000 for dir symlink"
+        );
+    }
+
+    /// Non-UTF8 link target bytes survive the round-trip unchanged.
+    /// Gated to Linux because macOS APFS normalises paths and may reject
+    /// non-UTF8 path components entirely at the OS level.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stage_symlink_with_non_utf8_target() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+
+        let raw: &[u8] = &[0xff, 0xfe, b'a'];
+        let target_os_str = OsStr::from_bytes(raw);
+        symlink(target_os_str, dir.path().join("non_utf8_link")).expect("symlink");
+
+        stage_file(&repo, "non_utf8_link", Some(0o120_000))
+            .expect("stage_file on non-UTF8 symlink");
+
+        let staged = read_index_content(&repo, "non_utf8_link");
+        assert_eq!(
+            staged, raw,
+            "blob must preserve non-UTF8 target bytes exactly"
+        );
+    }
+
+    /// Symlink already in HEAD pointing at "old" — workdir retargets it to "new".
+    /// `stage_file` must update the blob and preserve mode `0o120_000`.
+    #[cfg(unix)]
+    #[test]
+    fn stage_modified_existing_symlink_re_points_target() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[]);
+        commit_symlink_to_head(&repo, dir.path(), "foo_link", "old");
+
+        // Re-point the workdir symlink to "new".
+        let link_path = dir.path().join("foo_link");
+        fs::remove_file(&link_path).expect("remove old link");
+        symlink("new", &link_path).expect("create new symlink");
+
+        stage_file(&repo, "foo_link", Some(0o120_000)).expect("stage_file");
+
+        let staged = read_index_content(&repo, "foo_link");
+        assert_eq!(staged, b"new", "blob must reflect new link target");
+
+        let index = repo.index().expect("index");
+        let entry = index
+            .get_path(Path::new("foo_link"), 0)
+            .expect("entry in index");
+        assert_eq!(
+            entry.mode, 0o120_000,
+            "mode must remain 0o120000 after retarget"
+        );
+    }
+
+    /// HEAD has regular file `foo` with content "X"; workdir swaps it to a
+    /// symlink pointing at "bar". `stage_file` with `mode_override = Some(0o120_000)`
+    /// must write the target string and flip the mode.
+    #[cfg(unix)]
+    #[test]
+    fn stage_file_to_symlink_swap_changes_mode_and_content() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, repo) = setup_repo_with_commit(&[("foo", "X\n")]);
+
+        // Replace the regular file with a symlink.
+        fs::remove_file(dir.path().join("foo")).expect("remove regular file");
+        symlink("bar", dir.path().join("foo")).expect("create symlink");
+
+        stage_file(&repo, "foo", Some(0o120_000)).expect("stage_file");
+
+        let staged = read_index_content(&repo, "foo");
+        assert_eq!(staged, b"bar", "blob must be symlink target string");
+
+        let index = repo.index().expect("index");
+        let entry = index.get_path(Path::new("foo"), 0).expect("entry in index");
+        assert_eq!(
+            entry.mode, 0o120_000,
+            "mode must be 0o120000 after file→symlink swap"
+        );
+    }
+
+    /// HEAD has symlink `foo` pointing at "bar"; workdir replaces it with a
+    /// regular file containing "X". `stage_file` with `mode_override = Some(0o100_644)`
+    /// must write the file bytes and flip the mode.
+    #[cfg(unix)]
+    #[test]
+    fn stage_symlink_to_file_swap_changes_mode_and_content() {
+        let (dir, repo) = setup_repo_with_commit(&[]);
+        commit_symlink_to_head(&repo, dir.path(), "foo", "bar");
+
+        // Replace the symlink with a regular file.
+        let link_path = dir.path().join("foo");
+        fs::remove_file(&link_path).expect("remove symlink");
+        fs::write(&link_path, "X\n").expect("write regular file");
+
+        stage_file(&repo, "foo", Some(0o100_644)).expect("stage_file");
+
+        let staged = read_index_content(&repo, "foo");
+        assert_eq!(staged, b"X\n", "blob must be regular file content");
+
+        let index = repo.index().expect("index");
+        let entry = index.get_path(Path::new("foo"), 0).expect("entry in index");
+        assert_eq!(
+            entry.mode, 0o100_644,
+            "mode must be 0o100644 after symlink→file swap"
+        );
     }
 }
