@@ -37,7 +37,7 @@ const KNOWN_ANCHORS: &[(&str, u32, &str)] = &[
     ("src/git/diff.rs", 270, "extract_hunks"),
     ("src/git/diff.rs", 211, "suggest_splits"),
     ("src/git/diff.rs", 379, "compute_hunk_id"),
-    ("src/git/staging.rs", 198, "preview_stage"),
+    ("src/git/staging.rs", 222, "preview_stage"),
     ("src/models.rs", 397, "OperationPreview"),
     ("src/models.rs", 434, "CommitPlan"),
     ("src/models.rs", 97, "whitespace_only"),

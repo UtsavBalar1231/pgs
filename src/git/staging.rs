@@ -12,7 +12,8 @@ use similar::TextDiff;
 use crate::error::PgsError;
 use crate::git::repo;
 use crate::git::{
-    WorkdirFileType, build_index_entry, read_head_blob, read_index_blob, read_workdir_for_blob,
+    LineSelection, WorkdirFileType, build_index_entry, read_head_blob, read_index_blob,
+    read_workdir_for_blob,
 };
 use crate::models::{
     HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine, ResolvedSelection, ScanResult,
@@ -62,8 +63,10 @@ pub fn stage_file(
 /// Stage specific lines from the working directory into the index.
 ///
 /// Diffs the current index blob (falling back to HEAD) against the working-tree
-/// file, then selectively applies only the lines whose line numbers (1-indexed)
-/// appear in `selected_lines`. Unselected changes are preserved as-is.
+/// file, then selectively applies only the lines specified by `selection`.
+/// `selection.old_lines` gates `Delete` ops (HEAD/index-side 1-based line numbers);
+/// `selection.new_lines` gates `Insert` ops (workdir-side 1-based line numbers).
+/// Unselected changes are preserved as-is.
 ///
 /// For symlinks, line granularity is meaningless. The function short-circuits and
 /// stages the whole link-target string under mode `0o120_000`, returning `Ok(1)`.
@@ -73,11 +76,10 @@ pub fn stage_file(
 /// - `PgsError::Git` if index/HEAD blob or index operations fail
 /// - `PgsError::Io` if the workdir file cannot be read
 /// - `PgsError::Internal` if the repository is bare
-#[allow(clippy::implicit_hasher)]
-pub fn stage_lines(
+pub(crate) fn stage_lines(
     repo: &Repository,
     file_path: &str,
-    selected_lines: &HashSet<u32>,
+    selection: &LineSelection,
 ) -> Result<u32, PgsError> {
     let workdir = repo::workdir(repo)?;
     let blob = read_workdir_for_blob(workdir, file_path)?;
@@ -119,22 +121,17 @@ pub fn stage_lines(
                 result_lines.push(change.value());
             }
             similar::ChangeTag::Delete => {
-                // old_index() is 0-based; convert to 1-based
                 let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
-                if !selected_lines.contains(&old_line) {
-                    // Not selected: keep the HEAD line
+                if !selection.old_lines.contains(&old_line) {
                     result_lines.push(change.value());
                 }
-                // If selected: drop the HEAD line (it will be replaced by the Insert)
             }
             similar::ChangeTag::Insert => {
-                // new_index() is 0-based; convert to 1-based
                 let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
-                if selected_lines.contains(&new_line) {
+                if selection.new_lines.contains(&new_line) {
                     result_lines.push(change.value());
                     lines_staged += 1;
                 }
-                // If not selected: don't stage this addition
             }
         }
     }
@@ -172,30 +169,31 @@ pub fn stage_lines(
     Ok(lines_staged)
 }
 
-/// Stage a single hunk by converting it to selected line numbers.
+/// Stage a single hunk by partitioning its lines into a [`LineSelection`].
 ///
-/// Extracts line numbers for all lines in the hunk:
-/// - Addition/Context: new-file line numbers (for Insert gating in `stage_lines`)
-/// - Deletion: old-file line numbers (for Delete suppression in `stage_lines`)
+/// `Addition` lines → `sel.new_lines` (workdir-side line numbers, gate Insert ops).
+/// `Deletion` lines → `sel.old_lines` (HEAD/index-side line numbers, gate Delete ops).
+/// `Context` and `Mixed` lines are skipped — they never need gating.
 ///
-/// Then delegates to [`stage_lines`].
+/// Delegates to [`stage_lines`].
 ///
 /// # Errors
 ///
 /// Propagates all errors from [`stage_lines`].
 pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result<u32, PgsError> {
-    let mut selected = HashSet::new();
+    let mut sel = LineSelection::default();
     for line in &hunk.lines {
         match line.origin {
-            LineOrigin::Addition | LineOrigin::Context | LineOrigin::Deletion => {
-                selected.insert(line.line_number);
+            LineOrigin::Addition => {
+                sel.new_lines.insert(line.line_number);
             }
-            // `Mixed` tags split-hunk classification ranges; it never appears in
-            // a real `DiffLineInfo`. Skip defensively.
-            LineOrigin::Mixed => {}
+            LineOrigin::Deletion => {
+                sel.old_lines.insert(line.line_number);
+            }
+            LineOrigin::Context | LineOrigin::Mixed => {}
         }
     }
-    stage_lines(repo, file_path, &selected)
+    stage_lines(repo, file_path, &sel)
 }
 
 /// Inputs for [`preview_stage`] — bundled to keep the function under four params.
@@ -249,8 +247,8 @@ pub fn preview_stage(
     }
 
     let is_symlink = file_info.is_some_and(|f| f.new_mode == 0o120_000);
-    let selected = selected_line_numbers(scan, resolved);
-    let additions = collect_preview_additions(repo, &file_path, &selected)?;
+    let sel = line_selection_for(scan, resolved);
+    let additions = collect_preview_additions(repo, &file_path, &sel.new_lines)?;
 
     if is_symlink {
         return Ok(OperationPreview {
@@ -298,46 +296,77 @@ fn resolved_ranges_for(scan: &ScanResult, resolved: &ResolvedSelection) -> Vec<L
         .collect()
 }
 
-fn selected_line_numbers(scan: &ScanResult, resolved: &ResolvedSelection) -> HashSet<u32> {
-    let mut selected: HashSet<u32> = HashSet::new();
-
-    if let Some(ranges) = &resolved.line_ranges {
-        for range in ranges {
-            for line in range.start..=range.end {
-                selected.insert(line);
-            }
-        }
-        return selected;
-    }
-
+/// Build a [`LineSelection`] from a resolved selection against a scan result.
+///
+/// For line-range selections, uses a dual-cursor model: one cursor tracks the
+/// old-side (HEAD/index) line number, one tracks the new-side (workdir) line
+/// number. Each is advanced independently per origin, so range membership is
+/// tested against the correct coordinate space regardless of libgit2's emission
+/// order for substitution pairs.
+///
+/// For hunk-index and whole-file selections, partitions by origin: `Addition`
+/// lines → `new_lines`, `Deletion` lines → `old_lines`. Deletions are never
+/// omitted — the partial-multi-hunk path needs `old_lines` populated to drop
+/// HEAD content correctly.
+///
+/// # Errors
+///
+/// Returns an empty `LineSelection` if the file is not present in the scan.
+pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection) -> LineSelection {
+    let mut sel = LineSelection::default();
     let Some(file) = scan.files.iter().find(|f| f.path == resolved.file_path) else {
-        return selected;
+        return sel;
     };
 
-    if resolved.hunk_indices.is_empty() {
-        // Whole-file selection — pull every addition line from every hunk.
+    if let Some(ranges) = &resolved.line_ranges {
+        let in_any = |n: u32| ranges.iter().any(|r| (r.start..=r.end).contains(&n));
         for hunk in &file.hunks {
+            let mut old_cursor = hunk.old_start;
+            let mut new_cursor = hunk.new_start;
             for line in &hunk.lines {
-                if matches!(line.origin, LineOrigin::Addition) {
-                    selected.insert(line.line_number);
+                match line.origin {
+                    LineOrigin::Addition => {
+                        if in_any(new_cursor) {
+                            sel.new_lines.insert(line.line_number);
+                        }
+                        new_cursor = new_cursor.saturating_add(1);
+                    }
+                    LineOrigin::Context => {
+                        old_cursor = old_cursor.saturating_add(1);
+                        new_cursor = new_cursor.saturating_add(1);
+                    }
+                    LineOrigin::Deletion => {
+                        if in_any(new_cursor) || in_any(old_cursor) {
+                            sel.old_lines.insert(line.line_number);
+                        }
+                        old_cursor = old_cursor.saturating_add(1);
+                    }
+                    LineOrigin::Mixed => {}
                 }
             }
         }
-        return selected;
+        return sel;
     }
 
-    for &hunk_idx in &resolved.hunk_indices {
-        let Some(hunk) = file.hunks.get(hunk_idx) else {
+    let select_all = resolved.hunk_indices.is_empty();
+    let picked: HashSet<usize> = resolved.hunk_indices.iter().copied().collect();
+    for (i, hunk) in file.hunks.iter().enumerate() {
+        if !select_all && !picked.contains(&i) {
             continue;
-        };
+        }
         for line in &hunk.lines {
-            if matches!(line.origin, LineOrigin::Addition) {
-                selected.insert(line.line_number);
+            match line.origin {
+                LineOrigin::Addition => {
+                    sel.new_lines.insert(line.line_number);
+                }
+                LineOrigin::Deletion => {
+                    sel.old_lines.insert(line.line_number);
+                }
+                LineOrigin::Context | LineOrigin::Mixed => {}
             }
         }
     }
-
-    selected
+    sel
 }
 
 fn collect_preview_additions(
@@ -488,7 +517,7 @@ mod tests {
             &index,
             link_name,
             blob_oid,
-            target.len() as u32,
+            saturating_u32(target.len()),
             Some(0o120_000),
         );
         index
@@ -633,11 +662,13 @@ mod tests {
 
         fs::write(dir.path().join("file.txt"), modified).expect("write");
 
-        // Select only line 2 (the MODIFIED replacement). Don't select line 4 (new line4).
-        let mut selected = HashSet::new();
-        selected.insert(2); // line 2 in the new file = "MODIFIED"
+        // Select line 2: old-side deletion (drop "line2") and new-side insertion ("MODIFIED").
+        // Don't select line 4 (new line4).
+        let mut sel = LineSelection::default();
+        sel.old_lines.insert(2);
+        sel.new_lines.insert(2);
 
-        let count = stage_lines(&repo, "file.txt", &selected).expect("stage_lines");
+        let count = stage_lines(&repo, "file.txt", &sel).expect("stage_lines");
 
         assert_eq!(count, 1); // only 1 line staged (the "MODIFIED" insertion)
         let staged = read_index_content(&repo, "file.txt");
@@ -654,10 +685,11 @@ mod tests {
 
         fs::write(dir.path().join("file.txt"), modified).expect("write");
 
-        let mut selected = HashSet::new();
-        selected.insert(2); // select "changed"
+        let mut sel = LineSelection::default();
+        sel.old_lines.insert(2);
+        sel.new_lines.insert(2);
 
-        stage_lines(&repo, "file.txt", &selected).expect("stage_lines");
+        stage_lines(&repo, "file.txt", &sel).expect("stage_lines");
 
         let staged = read_index_content(&repo, "file.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -676,10 +708,11 @@ mod tests {
 
         fs::write(dir.path().join("file.txt"), modified).expect("write");
 
-        let mut selected = HashSet::new();
-        selected.insert(2); // select "changed"
+        let mut sel = LineSelection::default();
+        sel.old_lines.insert(2);
+        sel.new_lines.insert(2);
 
-        stage_lines(&repo, "file.txt", &selected).expect("stage_lines");
+        stage_lines(&repo, "file.txt", &sel).expect("stage_lines");
 
         let staged = read_index_content(&repo, "file.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -831,19 +864,33 @@ mod tests {
             file.hunks.len()
         );
 
-        // Stage hunk 0 lines (Addition + Context + Deletion)
-        let mut selected0 = HashSet::new();
+        let mut sel0 = LineSelection::default();
         for line in &file.hunks[0].lines {
-            selected0.insert(line.line_number);
+            match line.origin {
+                LineOrigin::Addition => {
+                    sel0.new_lines.insert(line.line_number);
+                }
+                LineOrigin::Deletion => {
+                    sel0.old_lines.insert(line.line_number);
+                }
+                _ => {}
+            }
         }
-        stage_lines(&repo, "multi.txt", &selected0).expect("stage_lines hunk0");
+        stage_lines(&repo, "multi.txt", &sel0).expect("stage_lines hunk0");
 
-        // Stage hunk 1 lines (Addition + Context + Deletion)
-        let mut selected1 = HashSet::new();
+        let mut sel1 = LineSelection::default();
         for line in &file.hunks[1].lines {
-            selected1.insert(line.line_number);
+            match line.origin {
+                LineOrigin::Addition => {
+                    sel1.new_lines.insert(line.line_number);
+                }
+                LineOrigin::Deletion => {
+                    sel1.old_lines.insert(line.line_number);
+                }
+                _ => {}
+            }
         }
-        stage_lines(&repo, "multi.txt", &selected1).expect("stage_lines hunk1");
+        stage_lines(&repo, "multi.txt", &sel1).expect("stage_lines hunk1");
 
         let staged = read_index_content(&repo, "multi.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -1009,10 +1056,10 @@ mod tests {
         fs::write(dir.path().join("target.txt"), "content").expect("write target");
         symlink("target.txt", dir.path().join("link")).expect("symlink");
 
-        let mut selected = HashSet::new();
-        selected.insert(1);
+        let mut sel = LineSelection::default();
+        sel.new_lines.insert(1);
 
-        let count = stage_lines(&repo, "link", &selected).expect("stage_lines on symlink");
+        let count = stage_lines(&repo, "link", &sel).expect("stage_lines on symlink");
 
         assert_eq!(count, 1, "symlink short-circuit should return Ok(1)");
 
@@ -1042,7 +1089,7 @@ mod tests {
             files: vec![crate::models::FileInfo {
                 path: "link".into(),
                 status: FileStatus::Added,
-                file_checksum: "".into(),
+                file_checksum: String::new(),
                 is_binary: false,
                 old_mode: 0o120_000,
                 new_mode: 0o120_000,
@@ -1094,7 +1141,7 @@ mod tests {
 
     /// Dangling symlink (target does not exist) — `stage_file` must succeed and
     /// store the target string, not fail because the target is unreachable.
-    /// Passes `None` for mode_override to exercise the symlink-default-mode branch.
+    /// Passes `None` for `mode_override` to exercise the symlink-default-mode branch.
     #[cfg(unix)]
     #[test]
     fn stage_dangling_symlink_succeeds_with_target_string() {
@@ -1265,6 +1312,244 @@ mod tests {
         assert_eq!(
             entry.mode, 0o100_644,
             "mode must be 0o100644 after symlink→file swap"
+        );
+    }
+
+    // Build a synthetic ScanResult with two hunks (no libgit2 round-trip) and
+    // assert line_selection_for partitions lines into the correct coordinate spaces.
+    #[test]
+    fn line_selection_for_partitions_hunk_index_resolution_correctly() {
+        use crate::models::{
+            DiffLineInfo, FileInfo, FileStatus, HunkInfo, ResolvedSelection, ScanResult,
+            ScanSummary,
+        };
+
+        // Hunk 0: substitution at old-lines 2, new-lines 2.
+        let hunk0 = HunkInfo {
+            hunk_id: "hunk0".into(),
+            old_start: 1,
+            old_lines: 3,
+            new_start: 1,
+            new_lines: 3,
+            header: "@@ -1,3 +1,3 @@".into(),
+            checksum: "c0".into(),
+            whitespace_only: false,
+            lines: vec![
+                DiffLineInfo {
+                    line_number: 1,
+                    origin: LineOrigin::Context,
+                    content: "a".into(),
+                },
+                DiffLineInfo {
+                    line_number: 2,
+                    origin: LineOrigin::Deletion,
+                    content: "b".into(),
+                },
+                DiffLineInfo {
+                    line_number: 2,
+                    origin: LineOrigin::Addition,
+                    content: "B".into(),
+                },
+                DiffLineInfo {
+                    line_number: 3,
+                    origin: LineOrigin::Context,
+                    content: "c".into(),
+                },
+            ],
+        };
+
+        // Hunk 1: pure addition at new-line 10.
+        let hunk1 = HunkInfo {
+            hunk_id: "hunk1".into(),
+            old_start: 8,
+            old_lines: 2,
+            new_start: 8,
+            new_lines: 3,
+            header: "@@ -8,2 +8,3 @@".into(),
+            checksum: "c1".into(),
+            whitespace_only: false,
+            lines: vec![
+                DiffLineInfo {
+                    line_number: 8,
+                    origin: LineOrigin::Context,
+                    content: "x".into(),
+                },
+                DiffLineInfo {
+                    line_number: 10,
+                    origin: LineOrigin::Addition,
+                    content: "NEW".into(),
+                },
+                DiffLineInfo {
+                    line_number: 9,
+                    origin: LineOrigin::Context,
+                    content: "y".into(),
+                },
+            ],
+        };
+
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "f.txt".into(),
+                status: FileStatus::Modified,
+                file_checksum: String::new(),
+                is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
+                hunks: vec![hunk0, hunk1],
+            }],
+            summary: ScanSummary {
+                total_files: 1,
+                modified: 1,
+                ..ScanSummary::default()
+            },
+        };
+
+        // Select hunk index 0 only.
+        let resolved = ResolvedSelection {
+            file_path: "f.txt".into(),
+            hunk_indices: vec![0],
+            line_ranges: None,
+        };
+
+        let sel = line_selection_for(&scan, &resolved);
+
+        // Deletion on old-line 2 → old_lines; Addition on new-line 2 → new_lines.
+        assert!(
+            sel.old_lines.contains(&2),
+            "old-line 2 must be in old_lines"
+        );
+        assert!(
+            sel.new_lines.contains(&2),
+            "new-line 2 must be in new_lines"
+        );
+
+        // Hunk 1 was not selected — its addition (new-line 10) must be absent.
+        assert!(
+            !sel.new_lines.contains(&10),
+            "new-line 10 from unselected hunk1 must not appear in new_lines"
+        );
+        // Context lines are never gated.
+        assert!(
+            !sel.old_lines.contains(&1),
+            "context line 1 must not be in old_lines"
+        );
+        assert!(
+            !sel.new_lines.contains(&1),
+            "context line 1 must not be in new_lines"
+        );
+    }
+
+    #[test]
+    fn line_selection_for_partitions_line_range_resolution_correctly() {
+        use crate::models::{
+            DiffLineInfo, FileInfo, FileStatus, HunkInfo, LineRange, ResolvedSelection, ScanResult,
+            ScanSummary,
+        };
+
+        // Two-hunk fixture: hunk[0] substitutes old-line 5 / new-line 5;
+        // hunk[1] adds a line at new-line 20. Range [1..10] covers hunk[0] only.
+        let hunk0 = HunkInfo {
+            hunk_id: "h0".into(),
+            old_start: 4,
+            old_lines: 3,
+            new_start: 4,
+            new_lines: 3,
+            header: "@@ -4,3 +4,3 @@".into(),
+            checksum: "c0".into(),
+            whitespace_only: false,
+            lines: vec![
+                DiffLineInfo {
+                    line_number: 4,
+                    origin: LineOrigin::Context,
+                    content: "ctx".into(),
+                },
+                DiffLineInfo {
+                    line_number: 5,
+                    origin: LineOrigin::Deletion,
+                    content: "old5".into(),
+                },
+                DiffLineInfo {
+                    line_number: 5,
+                    origin: LineOrigin::Addition,
+                    content: "new5".into(),
+                },
+                DiffLineInfo {
+                    line_number: 6,
+                    origin: LineOrigin::Context,
+                    content: "ctx".into(),
+                },
+            ],
+        };
+
+        let hunk1 = HunkInfo {
+            hunk_id: "h1".into(),
+            old_start: 19,
+            old_lines: 2,
+            new_start: 19,
+            new_lines: 3,
+            header: "@@ -19,2 +19,3 @@".into(),
+            checksum: "c1".into(),
+            whitespace_only: false,
+            lines: vec![
+                DiffLineInfo {
+                    line_number: 19,
+                    origin: LineOrigin::Context,
+                    content: "ctx".into(),
+                },
+                DiffLineInfo {
+                    line_number: 20,
+                    origin: LineOrigin::Addition,
+                    content: "extra".into(),
+                },
+                DiffLineInfo {
+                    line_number: 20,
+                    origin: LineOrigin::Context,
+                    content: "ctx".into(),
+                },
+            ],
+        };
+
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "g.txt".into(),
+                status: FileStatus::Modified,
+                file_checksum: String::new(),
+                is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
+                hunks: vec![hunk0, hunk1],
+            }],
+            summary: ScanSummary {
+                total_files: 1,
+                modified: 1,
+                ..ScanSummary::default()
+            },
+        };
+
+        // Line-range [1..10]: covers hunk[0] (new-lines 4-6), misses hunk[1] (new-line 20).
+        let resolved = ResolvedSelection {
+            file_path: "g.txt".into(),
+            hunk_indices: vec![],
+            line_ranges: Some(vec![LineRange { start: 1, end: 10 }]),
+        };
+
+        let sel = line_selection_for(&scan, &resolved);
+
+        // hunk[0] deletion at old-line 5 → in old_lines (old_cursor hits 5 which is in [1..10] via
+        // the Deletion branch checking old_cursor).
+        assert!(
+            sel.old_lines.contains(&5),
+            "old-line 5 must be gated for deletion"
+        );
+        // hunk[0] addition at new-line 5 → in new_lines (new_cursor=5 is in [1..10]).
+        assert!(
+            sel.new_lines.contains(&5),
+            "new-line 5 must be gated for insertion"
+        );
+        // hunk[1] addition at new-line 20 is outside [1..10] — must be absent.
+        assert!(
+            !sel.new_lines.contains(&20),
+            "new-line 20 from hunk[1] must not be selected by range [1..10]"
         );
     }
 }

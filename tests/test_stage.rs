@@ -1,6 +1,8 @@
 mod common;
 
-use common::{commit_file, run_pgs, setup_repo, write_file};
+use common::{commit_file, read_staged_blob, run_pgs, setup_repo, write_file};
+use pgs::git::diff::{build_scan_result, diff_index_to_workdir};
+use pgs::git::staging::stage_hunk;
 
 #[test]
 fn stage_file_by_path() {
@@ -394,5 +396,274 @@ fn stage_directory_with_mixed_statuses() {
         files.len(),
         2,
         "both Added and Modified files should be staged"
+    );
+}
+
+// RED regression: staging hunk A (10-line deletion, old-lines {5..14}) must not leak
+// hunk B (addition of "INSERTED" at workdir new-line 13) when 13 aliases into hunk A's
+// old-line set. FAILS on main — proves the coordinate-space conflation bug.
+#[test]
+fn stage_hunk_by_id_does_not_leak_adjacent_hunk_when_old_line_aliases_new_line() {
+    let (dir, repo) = setup_repo();
+
+    // HEAD: L01..L30 (30 lines)
+    let head_content: String = (1u32..=30).fold(String::new(), |mut s, n| {
+        use std::fmt::Write;
+        let _ = writeln!(s, "L{n:02}");
+        s
+    });
+    commit_file(
+        &repo,
+        dir.path(),
+        "f.txt",
+        &head_content,
+        "initial 30 lines",
+    );
+
+    // Workdir: L01-L04 | [L05-L14 deleted] | L15-L22 (8 unchanged) | INSERTED | L23-L30
+    // 8 unchanged lines between edits forces libgit2 to emit 2 distinct hunks at context_lines=3.
+    // INSERTED lands at workdir line 13, which aliases hunk A's old-line 13.
+    let workdir_content: String = {
+        let mut lines: Vec<String> = Vec::new();
+        for n in 1u32..=4 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        for n in 15u32..=22 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        lines.push("INSERTED\n".to_string());
+        for n in 23u32..=30 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        lines.concat()
+    };
+    write_file(dir.path(), "f.txt", &workdir_content);
+
+    let diff = diff_index_to_workdir(&repo, 3).expect("diff_index_to_workdir should succeed");
+    let scan = build_scan_result(&repo, &diff, None).expect("build_scan_result should succeed");
+
+    assert_eq!(scan.files.len(), 1, "FIXTURE: expected 1 file in scan");
+    let file_info = &scan.files[0];
+    assert_eq!(
+        file_info.hunks.len(),
+        2,
+        "FIXTURE INVARIANT BROKEN: libgit2 fused the two hunks into {} \
+         (need 2 distinct hunks to prove the bug — check gap between edits)",
+        file_info.hunks.len()
+    );
+
+    let hunk_a = &file_info.hunks[0];
+    stage_hunk(&repo, "f.txt", hunk_a).expect("stage_hunk should succeed");
+
+    let staged = read_staged_blob(&repo, "f.txt");
+
+    for n in 5u32..=14 {
+        let label = format!("L{n:02}");
+        assert!(
+            !staged.contains(&label as &str),
+            "staged blob still contains {label} — hunk A deletion was not applied;\
+             blob:\n{staged}"
+        );
+    }
+
+    assert!(
+        !staged.contains("INSERTED"),
+        "LEAK: staged blob contains INSERTED from hunk B, which was not selected.\
+         old-line 13 (hunk A deletion) aliases new-line 13 (hunk B addition);\
+         blob:\n{staged}"
+    );
+}
+
+// Line-range analogue of the hunk-ID aliasing RED test.
+// Hunk[0] (new-lines 2-7) deletes L05-L14; hunk[1] (new-lines 10+) inserts INSERTED.
+// Staging `f.txt:2-7` must apply hunk[0]'s deletions without leaking INSERTED from hunk[1],
+// whose new-line number aliases into hunk[0]'s old-line set under the pre-fix code path.
+#[test]
+fn stage_line_range_does_not_leak_adjacent_hunk_when_old_line_aliases_new_line() {
+    let (dir, repo) = setup_repo();
+
+    // Same 30-line fixture as the hunk-ID RED test above.
+    let head_content: String = (1u32..=30).fold(String::new(), |mut s, n| {
+        use std::fmt::Write;
+        let _ = writeln!(s, "L{n:02}");
+        s
+    });
+    commit_file(
+        &repo,
+        dir.path(),
+        "f.txt",
+        &head_content,
+        "initial 30 lines",
+    );
+
+    // Workdir: L01-L04 | [L05-L14 deleted] | L15-L22 (8 unchanged) | INSERTED | L23-L30
+    let workdir_content: String = {
+        let mut lines: Vec<String> = Vec::new();
+        for n in 1u32..=4 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        for n in 15u32..=22 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        lines.push("INSERTED\n".to_string());
+        for n in 23u32..=30 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        lines.concat()
+    };
+    write_file(dir.path(), "f.txt", &workdir_content);
+
+    let diff = diff_index_to_workdir(&repo, 3).expect("diff_index_to_workdir should succeed");
+    let scan = build_scan_result(&repo, &diff, None).expect("build_scan_result should succeed");
+    assert_eq!(scan.files.len(), 1, "FIXTURE: expected 1 file in scan");
+    assert_eq!(
+        scan.files[0].hunks.len(),
+        2,
+        "FIXTURE INVARIANT BROKEN: libgit2 fused the two hunks into {} \
+         (need 2 distinct hunks — check gap between edits)",
+        scan.files[0].hunks.len()
+    );
+
+    // hunk[0] occupies new-lines 2-7; hunk[1] starts at new-line 10+.
+    // Range 2-7 selects hunk[0] only via the new-cursor walk.
+    let hunk0 = &scan.files[0].hunks[0];
+    let range_end = hunk0.new_start + hunk0.new_lines.saturating_sub(1);
+    let range_arg = format!(
+        "f.txt:{}-{}",
+        hunk0.new_start,
+        range_end.max(hunk0.new_start)
+    );
+    run_pgs(dir.path(), &["stage", &range_arg]).success();
+
+    // After staging hunk[0]'s deletions, `pgs status` (HEAD→index) must report
+    // f.txt as staged-modified. `pgs scan` (index→workdir) must still report
+    // INSERTED as unstaged — proving hunk[1] was not leaked into the index.
+    let scan2_out = run_pgs(dir.path(), &["scan"]).success();
+    let scan2_stdout = String::from_utf8(scan2_out.get_output().stdout.clone()).unwrap();
+    let scan2: serde_json::Value = serde_json::from_str(&scan2_stdout).unwrap();
+
+    // The INSERTED hunk must still be unstaged (compact scan omits line content,
+    // so we check metadata: exactly one remaining unstaged hunk consisting of one addition).
+    let scan2_text = scan2.to_string();
+    assert_eq!(
+        scan2["summary"]["total_hunks"].as_u64().unwrap_or(0),
+        1,
+        "expected 1 remaining unstaged hunk (INSERTED) after staging hunk[0]; scan:\n{scan2_text}"
+    );
+    assert_eq!(
+        scan2["files"][0]["lines_added"].as_u64().unwrap_or(0),
+        1,
+        "expected 1 unstaged addition (INSERTED); scan:\n{scan2_text}"
+    );
+    assert_eq!(
+        scan2["files"][0]["lines_deleted"].as_u64().unwrap_or(99),
+        0,
+        "no unstaged deletions should remain (hunk[0]'s deletions were staged); scan:\n{scan2_text}"
+    );
+
+    // The staged view (HEAD→index) must show f.txt with deletions applied.
+    let status_out = run_pgs(dir.path(), &["status"]).success();
+    let status_stdout = String::from_utf8(status_out.get_output().stdout.clone()).unwrap();
+    let status: serde_json::Value = serde_json::from_str(&status_stdout).unwrap();
+    let status_files = status["files"].as_array().unwrap();
+    assert!(
+        !status_files.is_empty(),
+        "pgs status must show f.txt as staged after staging hunk[0]; status:\n{status_stdout}"
+    );
+    // Staged deletions means lines_deleted > 0 and lines_added == 0 (no additions staged).
+    let staged_file = &status_files[0];
+    assert!(
+        staged_file["lines_deleted"].as_u64().unwrap_or(0) > 0,
+        "staged file must show deletions from hunk[0]; status:\n{status_stdout}"
+    );
+    assert_eq!(
+        staged_file["lines_added"].as_u64().unwrap_or(1),
+        0,
+        "LEAK: lines_added > 0 means INSERTED from hunk[1] leaked into the index; status:\n{status_stdout}"
+    );
+}
+
+// Negative test: an unselected deletion must stay in the index.
+// Hunk[0] substitutes line 5; hunk[1] deletes old line 23. Staging `f.txt:1-10`
+// selects hunk[0] only — L23 must survive unchanged.
+#[test]
+fn stage_line_range_does_not_pull_in_unselected_deletion_via_new_cursor_walk() {
+    let (dir, repo) = setup_repo();
+
+    // HEAD: L01..L30 (30 lines)
+    let head_content: String = (1u32..=30).fold(String::new(), |mut s, n| {
+        use std::fmt::Write;
+        let _ = writeln!(s, "L{n:02}");
+        s
+    });
+    commit_file(
+        &repo,
+        dir.path(),
+        "f.txt",
+        &head_content,
+        "initial 30 lines",
+    );
+
+    // Workdir: L01-L04 same, L05 → MODIFIED5, L06-L22 same, L23 DELETED, L24-L30 same.
+    // Two hunks expected: hunk[0] = substitution at old-line 5; hunk[1] = deletion at old-line 23.
+    let workdir_content: String = {
+        let mut lines: Vec<String> = Vec::new();
+        for n in 1u32..=4 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        lines.push("MODIFIED5\n".to_string()); // replaces L05
+        for n in 6u32..=22 {
+            lines.push(format!("L{n:02}\n"));
+        }
+        for n in 24u32..=30 {
+            // L23 omitted (deleted)
+            lines.push(format!("L{n:02}\n"));
+        }
+        lines.concat()
+    };
+    write_file(dir.path(), "f.txt", &workdir_content);
+
+    // Verify fixture: need 2 distinct hunks
+    let diff = diff_index_to_workdir(&repo, 3).expect("diff_index_to_workdir should succeed");
+    let scan = build_scan_result(&repo, &diff, None).expect("build_scan_result should succeed");
+    assert_eq!(scan.files.len(), 1, "FIXTURE: expected 1 file in scan");
+    assert_eq!(
+        scan.files[0].hunks.len(),
+        2,
+        "FIXTURE INVARIANT BROKEN: libgit2 fused the two hunks into {} \
+         (need 2 distinct hunks — check gap between edits)",
+        scan.files[0].hunks.len()
+    );
+
+    // hunk[0] occupies new-lines 2-8; hunk[1] starts at new-line 20+.
+    // Range 2-8 selects hunk[0] only; hunk[1]'s deletion must not be pulled in.
+    let hunk0 = &scan.files[0].hunks[0];
+    let range_end = hunk0.new_start + hunk0.new_lines.saturating_sub(1);
+    let range_arg = format!(
+        "f.txt:{}-{}",
+        hunk0.new_start,
+        range_end.max(hunk0.new_start)
+    );
+    let output = run_pgs(dir.path(), &["stage", &range_arg]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["status"], "ok");
+
+    // Re-open the repo so libgit2 sees the subprocess's index writes
+    // (the original `repo` handle cached the empty index from setup_repo).
+    let repo2 = git2::Repository::open(dir.path()).expect("reopen repo after subprocess stage");
+    let staged = read_staged_blob(&repo2, "f.txt");
+
+    // MODIFIED5 must be in the index (hunk[0] was selected)
+    assert!(
+        staged.contains("MODIFIED5"),
+        "staged blob should contain MODIFIED5 from hunk[0]; blob:\n{staged}"
+    );
+
+    // L23 must still be present — hunk[1] (deletion of L23) was NOT selected.
+    assert!(
+        staged.contains("L23"),
+        "staged blob is missing L23 — the unselected deletion at old-line 23 was \
+         incorrectly pulled in by the new-cursor walk; blob:\n{staged}"
     );
 }

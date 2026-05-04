@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use clap::Args;
 
 use crate::error::PgsError;
+use crate::git::staging::line_selection_for;
 use crate::git::{diff, read_head_mode, repo, staging};
 use crate::models::{
     FileStatus, OperationPreview, OperationStatus, ResolvedSelection, SelectionSpec,
@@ -345,14 +346,8 @@ fn execute_single_stage(
 
         // Modified + lines selection
         (FileStatus::Modified, true, _, false) => {
-            let ranges = resolved.line_ranges.as_ref().expect("checked is_lines");
-            let mut selected = HashSet::new();
-            for range in ranges {
-                for line in range.start..=range.end {
-                    selected.insert(line);
-                }
-            }
-            staging::stage_lines(repo, file_path, &selected)
+            let sel = line_selection_for(scan, resolved);
+            staging::stage_lines(repo, file_path, &sel)
         }
 
         // Modified + hunk selection (or file selection with excluded hunks)
@@ -369,26 +364,10 @@ fn execute_single_stage(
                 return staging::stage_file(repo, file_path, mode_override);
             }
 
-            // Otherwise collect all selected line numbers across hunks
-            // and make a single stage_lines call (avoids overwriting index per-hunk).
-            let mut selected = HashSet::new();
-            if let Some(fi) = file_info {
-                for &hunk_idx in &resolved.hunk_indices {
-                    if let Some(hunk) = fi.hunks.get(hunk_idx) {
-                        for line in &hunk.lines {
-                            if matches!(
-                                line.origin,
-                                crate::models::LineOrigin::Addition
-                                    | crate::models::LineOrigin::Context
-                                    | crate::models::LineOrigin::Deletion
-                            ) {
-                                selected.insert(line.line_number);
-                            }
-                        }
-                    }
-                }
-            }
-            staging::stage_lines(repo, file_path, &selected)
+            // Collect selected lines across hunks via line_selection_for, then
+            // make a single stage_lines call (avoids overwriting index per-hunk).
+            let sel = line_selection_for(scan, resolved);
+            staging::stage_lines(repo, file_path, &sel)
         }
 
         // Binary or Added file-level: stage the whole file

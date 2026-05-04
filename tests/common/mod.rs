@@ -69,6 +69,18 @@ pub fn run_pgs(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
         .assert()
 }
 
+/// Read the UTF-8 blob content for a file from the current git index.
+///
+/// Panics if the file has no index entry or the blob cannot be found.
+pub fn read_staged_blob(repo: &Repository, path: &str) -> String {
+    let index = repo.index().expect("open index");
+    let entry = index
+        .get_path(Path::new(path), 0)
+        .expect("file should have an index entry");
+    let blob = repo.find_blob(entry.id).expect("find blob by oid");
+    String::from_utf8(blob.content().to_vec()).expect("blob is valid UTF-8")
+}
+
 pub fn run_pgs_raw(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     Command::cargo_bin("pgs")
         .unwrap()
