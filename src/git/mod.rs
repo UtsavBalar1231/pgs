@@ -155,6 +155,32 @@ pub fn content_is_binary(content: &[u8]) -> bool {
     content.iter().take(8000).any(|&b| b == 0)
 }
 
+/// Coordinate-space–safe line selection for partial staging and unstaging.
+///
+/// Git diffs operate in two distinct coordinate spaces: the HEAD/index side
+/// (old) and the workdir side (new). These spaces diverge the moment any line
+/// is added or deleted — a line number valid in one space is meaningless in the
+/// other.  Historically, callers passed a single `HashSet<u32>` and used it for
+/// both `similar::ChangeTag::Delete` ops (old-side) and
+/// `similar::ChangeTag::Insert` ops (new-side) interchangeably, which is the
+/// coordinate-space conflation bug this type prevents.
+///
+/// `old_lines` gates `similar::ChangeTag::Delete` ops by the HEAD/index-side
+/// 1-based line number.
+///
+/// `new_lines` gates `similar::ChangeTag::Insert` ops by the workdir-side
+/// 1-based line number.
+///
+/// Never pass the same `HashSet` (or the same range) to both fields: the two
+/// spaces are independent and mixing them silently stages the wrong lines.
+#[derive(Default, Debug)]
+pub struct LineSelection {
+    /// Gates `similar::ChangeTag::Delete` ops by HEAD/index-side 1-based line number.
+    pub old_lines: std::collections::HashSet<u32>,
+    /// Gates `similar::ChangeTag::Insert` ops by workdir-side 1-based line number.
+    pub new_lines: std::collections::HashSet<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use git2::Repository;
