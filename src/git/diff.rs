@@ -911,7 +911,7 @@ mod tests {
             mode: 0o120_000,
             uid: 0,
             gid: 0,
-            file_size: link_target.len() as u32,
+            file_size: crate::saturating_u32(link_target.len()),
             id: oid,
             flags: 0,
             flags_extended: 0,
@@ -984,20 +984,24 @@ mod tests {
                 .hunks
                 .iter()
                 .map(|h| {
-                    h.lines
-                        .iter()
-                        .filter(|l| matches!(l.origin, LineOrigin::Addition))
-                        .count() as u32
+                    crate::saturating_u32(
+                        h.lines
+                            .iter()
+                            .filter(|l| matches!(l.origin, LineOrigin::Addition))
+                            .count(),
+                    )
                 })
                 .sum();
             let lines_deleted: u32 = file
                 .hunks
                 .iter()
                 .map(|h| {
-                    h.lines
-                        .iter()
-                        .filter(|l| matches!(l.origin, LineOrigin::Deletion))
-                        .count() as u32
+                    crate::saturating_u32(
+                        h.lines
+                            .iter()
+                            .filter(|l| matches!(l.origin, LineOrigin::Deletion))
+                            .count(),
+                    )
                 })
                 .sum();
             assert_eq!(
@@ -1040,20 +1044,24 @@ mod tests {
             .hunks
             .iter()
             .map(|h| {
-                h.lines
-                    .iter()
-                    .filter(|l| matches!(l.origin, LineOrigin::Addition))
-                    .count() as u32
+                crate::saturating_u32(
+                    h.lines
+                        .iter()
+                        .filter(|l| matches!(l.origin, LineOrigin::Addition))
+                        .count(),
+                )
             })
             .sum();
         let lines_deleted: u32 = file
             .hunks
             .iter()
             .map(|h| {
-                h.lines
-                    .iter()
-                    .filter(|l| matches!(l.origin, LineOrigin::Deletion))
-                    .count() as u32
+                crate::saturating_u32(
+                    h.lines
+                        .iter()
+                        .filter(|l| matches!(l.origin, LineOrigin::Deletion))
+                        .count(),
+                )
             })
             .sum();
         assert!(
