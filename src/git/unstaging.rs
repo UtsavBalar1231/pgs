@@ -4,13 +4,13 @@
 /// reverses direction — it moves the index back toward HEAD. The diff base
 /// is HEAD vs index (current staged content), and selected lines are
 /// reverted to their HEAD state.
-use std::collections::HashSet;
-
 use git2::Repository;
 use similar::TextDiff;
 
 use crate::error::PgsError;
-use crate::git::{build_index_entry, read_head_blob, read_head_mode, read_index_blob};
+use crate::git::{
+    LineSelection, build_index_entry, read_head_blob, read_head_mode, read_index_blob,
+};
 use crate::models::{HunkInfo, LineOrigin};
 use crate::saturating_u32;
 
@@ -72,14 +72,10 @@ pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError>
 /// (the current staged state), then uses `similar::TextDiff` to compute
 /// the diff. For each change:
 /// - **Equal** lines: kept as-is.
-/// - **Delete** lines (in HEAD, removed from index): if the line's old
-///   number is in `selected_lines`, restore it (unstage the deletion).
-/// - **Insert** lines (added in index): if the line's new number is in
-///   `selected_lines`, drop it (unstage the addition).
-///
-/// `selected_lines` contains 1-indexed line numbers from the HEAD-to-index
-/// diff. For deletions, use the old (HEAD) line number. For insertions,
-/// use the new (index) line number.
+/// - **Delete** lines (in HEAD, removed from index): if the HEAD-side line
+///   number is in `selection.old_lines`, restore it (unstage the deletion).
+/// - **Insert** lines (added in index): if the index-side line number is in
+///   `selection.new_lines`, drop it (unstage the addition).
 ///
 /// Returns the number of lines affected by the unstage operation.
 ///
@@ -87,10 +83,10 @@ pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError>
 ///
 /// Returns `PgsError::Git` if blob reads or index writes fail, or
 /// `PgsError::FileNotInDiff` if the file is not in the index.
-pub fn unstage_lines<S: ::std::hash::BuildHasher>(
+pub fn unstage_lines(
     repo: &Repository,
     file_path: &str,
-    selected_lines: &HashSet<u32, S>,
+    selection: &LineSelection,
 ) -> Result<u32, PgsError> {
     let head_content = read_head_blob(repo, file_path)?;
     let index_content = read_index_blob(repo, file_path)?;
@@ -116,7 +112,7 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
                 let old_line = change
                     .old_index()
                     .map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX) + 1);
-                if selected_lines.contains(&old_line) {
+                if selection.old_lines.contains(&old_line) {
                     // Restore from HEAD — unstage the deletion
                     result_lines.push(change.value());
                     lines_affected += 1;
@@ -129,7 +125,7 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
                 let new_line = change
                     .new_index()
                     .map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX) + 1);
-                if selected_lines.contains(&new_line) {
+                if selection.new_lines.contains(&new_line) {
                     // Drop it — unstage the addition (revert to HEAD)
                     lines_affected += 1;
                 } else {
@@ -166,10 +162,12 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
     Ok(lines_affected)
 }
 
-/// Unstage a single hunk by converting it to selected line numbers.
+/// Unstage a single hunk by partitioning its lines into old/new coordinate spaces.
 ///
-/// Extracts line numbers from the hunk's `DiffLineInfo` entries for
-/// `Addition` and `Deletion` lines, then delegates to `unstage_lines`.
+/// For a HEAD→index diff: `Addition` lines carry index-side (new) line numbers;
+/// `Deletion` lines carry HEAD-side (old) line numbers. Partitioning into
+/// `LineSelection` prevents the coordinate-conflation bug where a HEAD-old line
+/// number accidentally aliases an index-new line number in a shared set.
 ///
 /// Returns the number of lines affected.
 ///
@@ -177,17 +175,19 @@ pub fn unstage_lines<S: ::std::hash::BuildHasher>(
 ///
 /// Returns any error from `unstage_lines`.
 pub fn unstage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result<u32, PgsError> {
-    let mut selected = HashSet::new();
+    let mut sel = LineSelection::default();
     for line in &hunk.lines {
         match line.origin {
-            LineOrigin::Addition | LineOrigin::Deletion => {
-                selected.insert(line.line_number);
+            LineOrigin::Addition => {
+                sel.new_lines.insert(line.line_number);
             }
-            // `Mixed` tags split-hunk classification ranges; `DiffLineInfo` never carries it.
+            LineOrigin::Deletion => {
+                sel.old_lines.insert(line.line_number);
+            }
             LineOrigin::Context | LineOrigin::Mixed => {}
         }
     }
-    unstage_lines(repo, file_path, &selected)
+    unstage_lines(repo, file_path, &sel)
 }
 
 /// Count the number of lines in a byte slice (for reporting).
@@ -336,16 +336,13 @@ mod tests {
             "line1\nMODIFIED\nline3\nnew line4\n",
         );
 
-        // The HEAD→index diff:
-        //   line1    (equal)
-        //   -line2   (delete, old_index=1 → line 2 in HEAD)
-        //   +MODIFIED (insert, new_index=1 → line 2 in index)
-        //   line3    (equal)
-        //   +new line4 (insert, new_index=3 → line 4 in index)
-        //
-        // To unstage only the modification: select line 2 (HEAD deletion) and line 2 (index insertion).
-        let selected: HashSet<u32> = std::iter::once(2).collect();
-        let lines = unstage_lines(&repo, "f.txt", &selected).expect("unstage_lines");
+        // HEAD→index diff: line2 is a Delete (old_line=2) and MODIFIED is an Insert (new_line=2).
+        // To unstage only the modification, select line 2 in both coordinate spaces.
+        let sel = LineSelection {
+            old_lines: std::iter::once(2).collect(),
+            new_lines: std::iter::once(2).collect(),
+        };
+        let lines = unstage_lines(&repo, "f.txt", &sel).expect("unstage_lines");
         assert!(lines > 0, "should have affected lines");
 
         // Result should be: "line1\nline2\nline3\nnew line4\n"
@@ -359,10 +356,13 @@ mod tests {
         let (dir, repo) = setup_repo_with_commit(&[("f.txt", "aaa\n")]);
         stage_content(&repo, dir.path(), "f.txt", "aaa\nbbb\n");
 
-        // Index content ends with \n. After unstaging the addition (line 2),
+        // Index content ends with \n. After unstaging the addition (line 2 = index-new-line),
         // result should still end with \n.
-        let selected: HashSet<u32> = std::iter::once(2).collect();
-        unstage_lines(&repo, "f.txt", &selected).expect("unstage_lines");
+        let sel = LineSelection {
+            old_lines: std::collections::HashSet::new(),
+            new_lines: std::iter::once(2).collect(),
+        };
+        unstage_lines(&repo, "f.txt", &sel).expect("unstage_lines");
 
         let result = read_index_content(&repo, "f.txt").expect("in index");
         assert!(
@@ -377,10 +377,13 @@ mod tests {
         let (dir, repo) = setup_repo_with_commit(&[("f.txt", "aaa")]);
         stage_content(&repo, dir.path(), "f.txt", "aaa\nbbb");
 
-        // Index content does NOT end with \n. After unstaging the addition,
+        // Index content does NOT end with \n. After unstaging the addition (index-new-line 2),
         // result should also NOT end with \n.
-        let selected: HashSet<u32> = std::iter::once(2).collect();
-        unstage_lines(&repo, "f.txt", &selected).expect("unstage_lines");
+        let sel = LineSelection {
+            old_lines: std::collections::HashSet::new(),
+            new_lines: std::iter::once(2).collect(),
+        };
+        unstage_lines(&repo, "f.txt", &sel).expect("unstage_lines");
 
         let result = read_index_content(&repo, "f.txt").expect("in index");
         assert!(

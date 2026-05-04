@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use clap::Args;
 
 use crate::error::PgsError;
-use crate::git::{diff, repo, unstaging};
+use crate::git::{diff, repo, staging::line_selection_for, unstaging};
 use crate::models::{
     FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
 };
@@ -245,19 +245,7 @@ fn execute_single_unstage(
     let is_lines = resolved.line_ranges.is_some();
     let is_hunk = matches!(spec, SelectionSpec::Hunk { .. });
 
-    if is_lines {
-        // Lines selection
-        let ranges = resolved.line_ranges.as_ref().expect("checked is_lines");
-        let mut selected = HashSet::new();
-        for range in ranges {
-            for line in range.start..=range.end {
-                selected.insert(line);
-            }
-        }
-        unstaging::unstage_lines(repo, file_path, &selected)
-    } else {
-        // Hunk selection or file selection (possibly with excluded hunks).
-        // If file-level spec with ALL hunks present (or whole-file op), unstage whole file.
+    if !is_lines {
         let file_info = scan.files.iter().find(|f| f.path == file_path);
         let all_hunks_present =
             file_info.is_some_and(|fi| resolved.hunk_indices.len() == fi.hunks.len());
@@ -265,28 +253,10 @@ fn execute_single_unstage(
         if !is_hunk && (all_hunks_present || is_whole_file_operation(scan, file_path)) {
             return unstaging::unstage_file(repo, file_path);
         }
-
-        // Otherwise collect all selected line numbers across hunks
-        // and make a single unstage_lines call (avoids overwriting index per-hunk).
-        let mut selected = HashSet::new();
-        if let Some(fi) = file_info {
-            for &hunk_idx in &resolved.hunk_indices {
-                if let Some(hunk) = fi.hunks.get(hunk_idx) {
-                    for line in &hunk.lines {
-                        if matches!(
-                            line.origin,
-                            crate::models::LineOrigin::Addition
-                                | crate::models::LineOrigin::Context
-                                | crate::models::LineOrigin::Deletion
-                        ) {
-                            selected.insert(line.line_number);
-                        }
-                    }
-                }
-            }
-        }
-        unstaging::unstage_lines(repo, file_path, &selected)
     }
+
+    let sel = line_selection_for(scan, resolved);
+    unstaging::unstage_lines(repo, file_path, &sel)
 }
 
 /// Check if a file requires whole-file handling (binary, added, deleted, renamed, mode-only).
