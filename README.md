@@ -24,6 +24,7 @@ pgs stage src/main.rs --dry-run       # validate without modifying index
 pgs unstage src/main.rs               # remove file from index
 pgs status                            # show staged changes (HEAD vs index)
 pgs commit -m "feat: add feature"     # commit
+pgs commit --amend -m "feat: ..."     # rewrite HEAD with current index/message
 ```
 
 ## Selection Syntax

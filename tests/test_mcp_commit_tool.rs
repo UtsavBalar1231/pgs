@@ -141,6 +141,13 @@ fn mcp_commit_tool_matches_cli_contract() {
         required.iter().any(|field| field == "message"),
         "pgs_commit input schema should require message"
     );
+    let schema_properties = commit_tool["inputSchema"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(
+        schema_properties.contains_key("amend"),
+        "pgs_commit input schema should expose optional amend flag"
+    );
 
     let response = call_commit_tool(
         &mut stdin,
@@ -176,6 +183,40 @@ fn mcp_commit_tool_matches_cli_contract() {
     let summary = content[0]["text"].as_str().unwrap();
     assert!(summary.contains("Created commit"));
     assert!(summary.contains("affecting 1 file(s)."));
+}
+
+#[test]
+fn mcp_commit_tool_amends_head_when_requested() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "hello.txt", "line1\n", "old subject");
+    let old_head = repo.head().unwrap().peel_to_commit().unwrap();
+    let old_parent_id = old_head.parent_id(0).unwrap();
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    initialize_session(&mut stdin, &mut stdout);
+
+    let response = call_commit_tool(
+        &mut stdin,
+        &mut stdout,
+        &json!({
+            "repo_path": dir.path().display().to_string(),
+            "message": "new subject\n\nBody from MCP.",
+            "amend": true
+        }),
+    );
+
+    shutdown_child(child);
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 3);
+    assert_eq!(response["result"]["isError"], false);
+    let pgs = &response["result"]["structuredContent"]["pgs"];
+    assert_eq!(pgs["message"], "new subject\n\nBody from MCP.");
+    assert_eq!(pgs["files_changed"], 1);
+
+    let amended = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(amended.message().unwrap(), "new subject\n\nBody from MCP.");
+    assert_eq!(amended.parent_id(0).unwrap(), old_parent_id);
 }
 
 #[test]

@@ -32,8 +32,8 @@ fn read_source(rel: &str) -> String {
 /// (file, line, expected symbol) anchors kept in sync with SKILL.md §0.
 const KNOWN_ANCHORS: &[(&str, u32, &str)] = &[
     ("src/selection/resolve.rs", 255, "validate_freshness"),
-    ("src/mcp/contract.rs", 835, "structured_tool_result"),
-    ("src/mcp/contract.rs", 304, "define_tool_output"),
+    ("src/mcp/contract.rs", 838, "structured_tool_result"),
+    ("src/mcp/contract.rs", 307, "define_tool_output"),
     ("src/git/diff.rs", 270, "extract_hunks"),
     ("src/git/diff.rs", 211, "suggest_splits"),
     ("src/git/diff.rs", 379, "compute_hunk_id"),
@@ -44,7 +44,9 @@ const KNOWN_ANCHORS: &[(&str, u32, &str)] = &[
     ("src/cmd/overview.rs", 9, "execute"),
     ("src/cmd/plan_check.rs", 35, "execute"),
     ("src/cmd/plan_diff.rs", 36, "execute"),
-    ("src/cmd/commit.rs", 34, "commit"),
+    ("src/cmd/commit.rs", 15, "amend"),
+    ("src/mcp/contract.rs", 149, "amend"),
+    ("src/cmd/commit.rs", 60, "args.message"),
 ];
 
 #[test]

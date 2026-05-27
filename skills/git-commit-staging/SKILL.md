@@ -34,13 +34,14 @@ Before proposing a pgs improvement, check this table. Features in the left colum
 | Per-hunk `whitespace_only` metadata flag — `HunkInfo.whitespace_only` at `src/models.rs:97`                         | Flag is metadata only; agent still decides whether to stage or skip      |
 | Descriptive hunk run classification — `suggest_splits` at `src/git/diff.rs:211` (exposed as `pgs split-hunk` / `pgs_split_hunk`) | Splits are descriptive not prescriptive — agent picks which ranges to stage |
 | Freshness-validated staging — `validate_freshness` at `src/selection/resolve.rs:248`                                | No automatic selector remap after content changes                        |
-| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:835`                    | No message-rewrite workflow (amend/rebase are outside pgs's MCP surface) |
-| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:304`                               |                                                                          |
+| Structured JSON via `structured_content` — `structured_tool_result` at `src/mcp/contract.rs:838`                    |                                                                          |
+| Typed MCP tool outputs via macro — `define_tool_output!` at `src/mcp/contract.rs:307`                               |                                                                          |
 | Exact-content dry-run preview via `--dry-run --explain` — `preview_stage` at `src/git/staging.rs:222` producing `OperationPreview` at `src/models.rs:397` | Count-only `dry_run` (without `--explain`) reports line counts, not exact content |
 | Unified scan + status view via `pgs overview` / `pgs_overview` — `cmd::overview::execute` at `src/cmd/overview.rs:9` |                                                                          |
 | Commit-plan validator `pgs plan-check` / `pgs_plan_check` — `cmd::plan_check::execute` at `src/cmd/plan_check.rs:35`; shared schema `CommitPlan` at `src/models.rs:434` | Validator reports overlaps, gaps, and boundary crossings; does not auto-rewrite plans |
 | Saved-plan reconciliation `pgs plan-diff` / `pgs_plan_diff` — `cmd::plan_diff::execute` at `src/cmd/plan_diff.rs:36` | Entries classified as `still_valid` / `shifted` / `gone`; shift detection is descriptive |
-| Multiline commit bodies — `repository.commit(...)` at `src/cmd/commit.rs:34` passes `args.message` through intact   |                                                                          |
+| HEAD amend / message rewrite — CLI `pgs commit --amend`; MCP `pgs_commit(amend=true)` via `CommitArgs.amend` at `src/cmd/commit.rs:15` and `CommitToolInput.amend` at `src/mcp/contract.rs:149` | No history editing beyond HEAD amend (no rebase/reset/cherry-pick)       |
+| Multiline commit bodies — commit/amend pass `args.message` through intact at `src/cmd/commit.rs:60` and `src/cmd/commit.rs:68` |                                                                          |
 | Whole-file constraints for `Added`, `Deleted`, `Renamed`, and binary files                                          |                                                                          |
 | Distinct diff bases per command — scan `Index→Workdir`, status `HEAD→Index`, unstage `HEAD→Index`                   |                                                                          |
 
@@ -98,7 +99,7 @@ What the agent must decide — the tool cannot do this for you:
 | `pgs_stage` | Stage selections into the index | `repo_path`, `selections` | `exclude`, `dry_run`, `context` |
 | `pgs_unstage` | Remove selections from the index | `repo_path`, `selections` | `exclude`, `dry_run`, `context` |
 | `pgs_status` | Show staged changes (HEAD to Index) | `repo_path` | `context` |
-| `pgs_commit` | Create a commit from staged changes | `repo_path`, `message` | — |
+| `pgs_commit` | Create a commit from staged changes; amend `HEAD` when requested | `repo_path`, `message` | `amend` |
 | `pgs_log` | Recent commit history | `repo_path` | `max_count`, `paths` |
 
 ### Selection syntax (positional, auto-detected)
@@ -592,7 +593,7 @@ Read `pgs.commits[].message` and match the format, type vocabulary, and subject 
 
 ## 9. Repairing a bad split
 
-A "bad split" is any staging session whose commit boundary no longer matches the actual staged diff: wrong files staged, hunks grouped under the wrong intent, or the commit subject describing something different from what landed. Real sessions hit this. Repair steps that fall outside `pgs` are a deliberate scope boundary, not a missing feature.
+A "bad split" is any staging session whose commit boundary no longer matches the actual staged diff: wrong files staged, hunks grouped under the wrong intent, or the commit subject describing something different from what landed. Real sessions hit this. Boundary-rewrite repairs still fall outside `pgs`; message-only `HEAD` amend is supported by `pgs_commit`.
 
 ### Recognition
 
@@ -611,6 +612,6 @@ Re-scan (`pgs_scan`) to get fresh hunk IDs, re-plan the tail of the work, then r
 
 ### Message-only fix
 
-If the staged tree is correct but only the commit *message* is wrong, `git commit --amend` rewrites the message. **This is also outside pgs's MCP surface.** pgs's commit flow ends at `pgs_commit`; anything past that belongs to git.
+If the `HEAD` tree is correct but only the commit *message* is wrong, call `pgs_commit` with `amend: true` and the full replacement message. Verify `pgs_status` first: if the index contains staged changes, amend will include them in the rewritten commit.
 
-Repair steps that fall outside `pgs` are a deliberate scope boundary, not a missing feature.
+Boundary rewrites such as rebase or soft reset remain outside `pgs`.

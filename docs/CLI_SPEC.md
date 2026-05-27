@@ -190,6 +190,11 @@ Text record kinds:
 
 ### `commit`
 
+`pgs commit -m ...` creates a new child commit from staged changes. `pgs commit
+--amend -m ...` rewrites the current `HEAD` commit with the current index tree
+and message; message-only amend is allowed when the index already matches
+`HEAD`.
+
 JSON envelope:
 
 ```json

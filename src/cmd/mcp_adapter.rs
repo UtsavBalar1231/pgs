@@ -77,6 +77,8 @@ pub struct McpCommitRequest {
     pub repo_path: String,
     /// Commit message to pass through to the commit command.
     pub message: String,
+    /// Whether to replace the current HEAD commit instead of creating a child commit.
+    pub amend: bool,
 }
 
 /// Typed MCP payload for `pgs_overview` requests.
@@ -264,6 +266,7 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
             Some(request.repo_path.as_str()),
             commit::CommitArgs {
                 message: request.message,
+                amend: request.amend,
             },
         )
         .map(Into::into)

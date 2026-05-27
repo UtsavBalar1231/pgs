@@ -145,6 +145,8 @@ pub struct CommitToolInput {
     #[schemars(length(min = 1))]
     /// Non-empty commit message.
     pub message: String,
+    /// Replace the current HEAD commit instead of creating a new child commit.
+    pub amend: Option<bool>,
 }
 
 impl From<CommitToolInput> for McpCommitRequest {
@@ -152,6 +154,7 @@ impl From<CommitToolInput> for McpCommitRequest {
         Self {
             repo_path: value.repo_path,
             message: value.message,
+            amend: value.amend.unwrap_or(false),
         }
     }
 }
@@ -446,7 +449,7 @@ fn unstage_tool() -> Tool {
 fn commit_tool() -> Tool {
     Tool::new(
         PGS_COMMIT_TOOL,
-        "Create a git commit from currently staged changes in an explicit local repository path. This mutates repository history.",
+        "Create a git commit from currently staged changes, or amend the current HEAD when amend is true, in an explicit local repository path. This mutates repository history.",
         serde_json::Map::new(),
     )
     .with_title("Create commit")

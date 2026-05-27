@@ -26,7 +26,7 @@ All tools require `repo_path`.
 | `pgs_status` | Show staged changes | no | optional |
 | `pgs_stage` | Stage selected changes | yes | forbidden |
 | `pgs_unstage` | Remove selected changes from index | yes | forbidden |
-| `pgs_commit` | Create a git commit from staged changes | yes | forbidden |
+| `pgs_commit` | Create a git commit, or amend `HEAD` with `amend: true` | yes | forbidden |
 | `pgs_log` | Show recent commit history | no | optional |
 | `pgs_overview` | Show unstaged and staged changes together | no | optional |
 | `pgs_split_hunk` | Classify contiguous line runs in a hunk | no | optional |
@@ -98,6 +98,12 @@ Example mutating call:
 
 ```json
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pgs_stage","arguments":{"repo_path":"/path/to/other/project","selections":["src/main.rs"]}}}
+```
+
+Example amend call:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pgs_commit","arguments":{"repo_path":"/path/to/other/project","message":"feat: update subject\n\nExplain the rewritten commit.","amend":true}}}
 ```
 
 ## Notes For Integrators

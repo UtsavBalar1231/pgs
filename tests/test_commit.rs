@@ -39,3 +39,64 @@ fn commit_nothing_staged_returns_exit_code_1() {
     // No staged changes — should exit 1.
     run_pgs(dir.path(), &["commit", "-m", "empty commit"]).code(1);
 }
+
+#[test]
+fn commit_amend_message_only_rewrites_head_message_without_staged_changes() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "hello.txt", "line1\n", "old subject");
+
+    let old_head = repo.head().unwrap().peel_to_commit().unwrap();
+    let old_head_id = old_head.id();
+    let old_tree_id = old_head.tree_id();
+    let old_parent_id = old_head.parent_id(0).unwrap();
+
+    let message = "new subject\n\nAdd an explanatory body.";
+    let output = run_pgs(dir.path(), &["commit", "--amend", "-m", message]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["message"], message);
+    assert_eq!(json["files_changed"], 1);
+    assert_eq!(json["insertions"], 1);
+    assert_eq!(json["deletions"], 0);
+
+    let amended = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_ne!(amended.id(), old_head_id);
+    assert_eq!(amended.message().unwrap(), message);
+    assert_eq!(amended.tree_id(), old_tree_id);
+    assert_eq!(amended.parent_id(0).unwrap(), old_parent_id);
+}
+
+#[test]
+fn commit_amend_with_staged_changes_replaces_head_tree() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "hello.txt", "line1\n", "old subject");
+
+    let old_head = repo.head().unwrap().peel_to_commit().unwrap();
+    let old_parent_id = old_head.parent_id(0).unwrap();
+
+    write_file(dir.path(), "hello.txt", "line1\nline2\n");
+    run_pgs(dir.path(), &["stage", "hello.txt"]).success();
+
+    let message = "new subject\n\nInclude staged line2.";
+    let output = run_pgs(dir.path(), &["commit", "--amend", "-m", message]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["message"], message);
+    assert_eq!(json["files_changed"], 1);
+    assert_eq!(json["insertions"], 2);
+    assert_eq!(json["deletions"], 0);
+
+    let amended = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(amended.message().unwrap(), message);
+    assert_eq!(amended.parent_id(0).unwrap(), old_parent_id);
+
+    let tree = amended.tree().unwrap();
+    let entry = tree.get_path(std::path::Path::new("hello.txt")).unwrap();
+    let blob = repo.find_blob(entry.id()).unwrap();
+    assert_eq!(
+        std::str::from_utf8(blob.content()).unwrap(),
+        "line1\nline2\n"
+    );
+}
