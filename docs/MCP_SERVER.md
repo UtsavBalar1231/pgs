@@ -24,7 +24,7 @@ All tools require `repo_path`.
 |------|---------|--------------|-----------|
 | `pgs_scan` | Show unstaged changes | no | optional |
 | `pgs_status` | Show staged changes | no | optional |
-| `pgs_stage` | Stage selected changes | yes | forbidden |
+| `pgs_stage` | Stage selected changes, or preview with `dry_run` + `explain` | yes unless dry-run | forbidden |
 | `pgs_unstage` | Remove selected changes from index | yes | forbidden |
 | `pgs_commit` | Create a git commit, or amend `HEAD` with `amend: true` | yes | forbidden |
 | `pgs_log` | Show recent commit history | no | optional |
@@ -59,7 +59,7 @@ Mutating tools reject task augmentation by contract.
 
 ## Safety Notes
 
-- `pgs_stage`, `pgs_unstage`, and `pgs_commit` change repository state
+- `pgs_stage`, `pgs_unstage`, and `pgs_commit` change repository state unless `dry_run` is true
 - approve mutating tool use explicitly in any agent or automation policy before enabling them
 - same-repo mutating requests are serialized by canonical repo path
 - cancellation is only honored before a mutating request starts its atomic section
@@ -100,10 +100,16 @@ Example mutating call:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pgs_stage","arguments":{"repo_path":"/path/to/other/project","selections":["src/main.rs"]}}}
 ```
 
+Example exact preview call without mutation:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pgs_stage","arguments":{"repo_path":"/path/to/other/project","selections":["src/main.rs:10-20"],"dry_run":true,"explain":true,"limit":200}}}
+```
+
 Example amend call:
 
 ```json
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pgs_commit","arguments":{"repo_path":"/path/to/other/project","message":"feat: update subject\n\nExplain the rewritten commit.","amend":true}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"pgs_commit","arguments":{"repo_path":"/path/to/other/project","message":"feat: update subject\n\nExplain the rewritten commit.","amend":true}}}
 ```
 
 ## Notes For Integrators

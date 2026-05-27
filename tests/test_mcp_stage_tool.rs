@@ -141,6 +141,15 @@ fn mcp_stage_tool_matches_cli_contract() {
         required.iter().any(|field| field == "selections"),
         "pgs_stage input schema should require selections"
     );
+    let schema_properties = stage_tool["inputSchema"]["properties"].as_object().unwrap();
+    assert!(
+        schema_properties.contains_key("explain"),
+        "pgs_stage input schema should expose optional explain flag"
+    );
+    assert!(
+        schema_properties.contains_key("limit"),
+        "pgs_stage input schema should expose optional preview limit"
+    );
 
     let response = call_stage_tool(
         &mut stdin,
@@ -175,6 +184,109 @@ fn mcp_stage_tool_matches_cli_contract() {
     let content = result["content"].as_array().unwrap();
     let summary = content[0]["text"].as_str().unwrap();
     assert!(summary.contains("Staged 1 selection(s)."));
+}
+
+#[test]
+fn mcp_stage_tool_dry_run_explain_returns_previews_without_mutating_index() {
+    let (dir, repo) = setup_repo();
+    commit_file(
+        &repo,
+        dir.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"one\");\n    println!(\"two\");\n}\n",
+        "seed",
+    );
+    write_file(
+        dir.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"one\");\n    println!(\"two\");\n    println!(\"three\");\n    println!(\"four\");\n    println!(\"five\");\n}\n",
+    );
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    initialize_session(&mut stdin, &mut stdout);
+
+    let response = call_stage_tool(
+        &mut stdin,
+        &mut stdout,
+        &json!({
+            "repo_path": dir.path().display().to_string(),
+            "selections": ["src/main.rs:4-6"],
+            "dry_run": true,
+            "explain": true,
+            "limit": 10
+        }),
+    );
+
+    shutdown_child(child);
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 3);
+    assert_eq!(response["result"]["isError"], false);
+
+    let pgs = &response["result"]["structuredContent"]["pgs"];
+    assert_eq!(pgs["command"], "stage");
+    assert_eq!(pgs["status"], "dry_run");
+    assert_eq!(pgs["backup_id"], Value::Null);
+
+    let previews = pgs["previews"].as_array().expect("previews must be array");
+    assert_eq!(previews.len(), 1);
+    let preview = &previews[0];
+    assert_eq!(preview["selection"], "src/main.rs:4-6");
+    assert_eq!(preview["file_path"], "src/main.rs");
+    assert_eq!(preview["limit_applied"], 10);
+    assert_eq!(preview["truncated"], false);
+    let lines = preview["preview_lines"]
+        .as_array()
+        .expect("preview_lines must be array");
+    let contents: Vec<&str> = lines
+        .iter()
+        .map(|line| line["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        contents,
+        vec![
+            "    println!(\"three\");",
+            "    println!(\"four\");",
+            "    println!(\"five\");"
+        ]
+    );
+
+    let status_output = run_pgs(dir.path(), &["status"]).success();
+    let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
+    let status_json: Value = serde_json::from_str(&status_stdout).unwrap();
+    assert_eq!(status_json["summary"]["total_files"], 0);
+}
+
+#[test]
+fn mcp_stage_tool_explain_requires_dry_run() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "hello.txt", "line1\n", "seed");
+    write_file(dir.path(), "hello.txt", "line1\nline2\n");
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    initialize_session(&mut stdin, &mut stdout);
+
+    let response = call_stage_tool(
+        &mut stdin,
+        &mut stdout,
+        &json!({
+            "repo_path": dir.path().display().to_string(),
+            "selections": ["hello.txt"],
+            "explain": true
+        }),
+    );
+
+    shutdown_child(child);
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 3);
+    let result = &response["result"];
+    assert_eq!(result["isError"], true);
+    let structured = &result["structuredContent"];
+    assert_eq!(structured["outcome"], "error");
+    assert_eq!(structured["pgs_error"]["kind"], "user");
+    assert_eq!(structured["pgs_error"]["code"], "explain_without_dry_run");
+    assert_eq!(structured["pgs_error"]["exit_code"], 2);
 }
 
 #[test]

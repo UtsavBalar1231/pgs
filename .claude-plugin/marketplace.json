@@ -3,14 +3,23 @@
   "owner": {
     "name": "UtsavBalar1231"
   },
-  "metadata": {
-    "description": "pgs — non-interactive git staging plugin for Claude Code"
-  },
+  "description": "pgs - non-interactive git staging plugin for Claude Code",
   "plugins": [
     {
       "name": "pgs",
       "source": "./plugins/pgs",
-      "description": "Non-interactive git staging at file, hunk, and line granularity"
+      "description": "Non-interactive git staging at file, hunk, and line granularity",
+      "version": "0.3.1",
+      "author": {
+        "name": "UtsavBalar1231",
+        "url": "https://github.com/UtsavBalar1231"
+      },
+      "homepage": "https://github.com/UtsavBalar1231/pgs",
+      "repository": "https://github.com/UtsavBalar1231/pgs",
+      "license": "MIT",
+      "category": "Coding",
+      "tags": ["git", "staging", "commit", "hunk", "mcp"],
+      "strict": true
     }
   ]
 }

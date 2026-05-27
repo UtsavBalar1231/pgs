@@ -53,12 +53,30 @@ fn marketplace_entry_points_to_codex_compatible_plugin_path() {
         .expect("pgs marketplace entry must exist");
 
     assert_eq!(marketplace["name"], "pgs-marketplace");
+    assert!(marketplace["description"].is_string());
+    assert!(marketplace.get("metadata").is_none());
     assert_eq!(pgs["source"], "./plugins/pgs");
+    assert_eq!(
+        pgs["version"],
+        read_json("plugins/pgs/.claude-plugin/plugin.json")["version"]
+    );
+    assert_eq!(pgs["category"], "Coding");
+    assert_eq!(pgs["strict"], true);
+    assert!(
+        pgs["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tag| tag == "mcp")
+    );
     assert_regular_file("plugins/pgs/.codex-plugin/plugin.json");
     assert_regular_file("plugins/pgs/.claude-plugin/plugin.json");
     assert_regular_file("plugins/pgs/.mcp.json");
     assert_regular_file("plugins/pgs/hooks/hooks.json");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/SKILL.md");
+    assert_regular_file("plugins/pgs/skills/git-commit-staging/references/capability-table.md");
+    assert_regular_file("plugins/pgs/skills/git-commit-staging/references/tool-reference.md");
+    assert_regular_file("plugins/pgs/skills/git-commit-staging/references/commit-message-guide.md");
     assert_regular_file("plugins/pgs/scripts/run-pgs-mcp.sh");
     assert_regular_file("plugins/pgs/scripts/install-binary.sh");
     assert_regular_file("plugins/pgs/VERSION");
@@ -71,16 +89,8 @@ fn packaged_codex_plugin_matches_repo_sources() {
             ".codex-plugin/plugin.json",
             "plugins/pgs/.codex-plugin/plugin.json",
         ),
-        (
-            ".claude-plugin/plugin.json",
-            "plugins/pgs/.claude-plugin/plugin.json",
-        ),
         (".mcp.json", "plugins/pgs/.mcp.json"),
         ("hooks/hooks.json", "plugins/pgs/hooks/hooks.json"),
-        (
-            "skills/git-commit-staging/SKILL.md",
-            "plugins/pgs/skills/git-commit-staging/SKILL.md",
-        ),
         (
             "scripts/run-pgs-mcp.sh",
             "plugins/pgs/scripts/run-pgs-mcp.sh",
@@ -97,4 +107,24 @@ fn packaged_codex_plugin_matches_repo_sources() {
             "{packaged} must match {source}"
         );
     }
+}
+
+#[test]
+fn root_claude_directory_is_marketplace_only() {
+    assert!(
+        !std::path::Path::new(".claude-plugin/plugin.json").exists(),
+        "the repository root must not also be a Claude plugin; use plugins/pgs as the plugin root"
+    );
+}
+
+#[test]
+fn packaged_claude_plugin_manifest_uses_latest_metadata_fields() {
+    let manifest = read_json("plugins/pgs/.claude-plugin/plugin.json");
+
+    assert_eq!(manifest["name"], "pgs");
+    assert_eq!(manifest["displayName"], "pgs");
+    assert_eq!(manifest["keywords"][0], "git");
+    assert!(manifest.get("skills").is_none());
+    assert!(manifest.get("hooks").is_none());
+    assert!(manifest.get("mcpServers").is_none());
 }

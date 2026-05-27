@@ -74,8 +74,9 @@ codex plugin add pgs@pgs-marketplace
 ```
 
 The Codex plugin manifest lives in `.codex-plugin/plugin.json` and is mirrored
-into `plugins/pgs/` for marketplace installation. Codex loads the MCP server
-from `.mcp.json` and the skill from `skills/git-commit-staging/SKILL.md`.
+into `plugins/pgs/` for marketplace installation. The canonical skill source is
+`plugins/pgs/skills/git-commit-staging/SKILL.md`; top-level `skills/` is only a
+repo-local symlink for root-plugin development.
 
 ## Claude Code Plugin
 
@@ -92,7 +93,7 @@ Install `pgs` as a Claude Code plugin for automatic MCP tool integration and the
 Or test locally during development:
 
 ```bash
-claude --plugin-dir /path/to/pgs
+claude --plugin-dir /path/to/pgs/plugins/pgs
 ```
 
 **What you get:**

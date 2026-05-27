@@ -89,6 +89,8 @@ fn stage_via_mcp_adapter_on_symlink_produces_correct_blob() {
         selections: vec!["link".into()],
         exclude: vec![],
         dry_run: false,
+        explain: false,
+        limit: 200,
         context: 3,
     });
 

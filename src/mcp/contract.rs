@@ -94,6 +94,10 @@ pub struct StageToolInput {
     pub exclude: Option<Vec<String>>,
     /// Whether to validate without mutating the index.
     pub dry_run: Option<bool>,
+    /// Whether to include exact per-file preview lines. Requires `dry_run`.
+    pub explain: Option<bool>,
+    /// Per-file preview cap when `explain` is enabled.
+    pub limit: Option<u32>,
     /// Optional diff context override used while resolving selections.
     pub context: Option<u32>,
 }
@@ -105,6 +109,8 @@ impl From<StageToolInput> for McpStageRequest {
             selections: value.selections,
             exclude: value.exclude.unwrap_or_default(),
             dry_run: value.dry_run.unwrap_or(false),
+            explain: value.explain.unwrap_or(false),
+            limit: value.limit.unwrap_or(200),
             context: value.context.unwrap_or(DEFAULT_CONTEXT),
         }
     }
@@ -411,7 +417,7 @@ fn status_tool() -> Tool {
 fn stage_tool() -> Tool {
     Tool::new(
         PGS_STAGE_TOOL,
-        "Stage file, hunk, or line-range selections into the git index for an explicit local repository path. This mutates repository state.",
+        "Stage file, hunk, or line-range selections into the git index for an explicit local repository path. With dry_run and explain, returns exact preview lines without mutating repository state. Without dry_run, this mutates repository state.",
         serde_json::Map::new(),
     )
     .with_title("Stage selections")

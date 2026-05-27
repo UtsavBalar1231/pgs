@@ -40,6 +40,10 @@ pub struct McpStageRequest {
     pub exclude: Vec<String>,
     /// Whether to validate the request without mutating the index.
     pub dry_run: bool,
+    /// Whether to include exact per-file preview lines. Requires `dry_run`.
+    pub explain: bool,
+    /// Per-file preview cap when `explain` is enabled.
+    pub limit: u32,
     /// Unified diff context lines used while resolving selections.
     pub context: u32,
 }
@@ -245,8 +249,8 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 selections: request.selections,
                 exclude: request.exclude,
                 dry_run: request.dry_run,
-                explain: false,
-                limit: 200,
+                explain: request.explain,
+                limit: request.limit,
             },
         )
         .map(Into::into)
