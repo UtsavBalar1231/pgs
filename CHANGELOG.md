@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.4.0 - 2026-05-27
+
+### Added
+
+- Codex plugin packaging with bundled MCP server wiring and the `git-commit-staging` skill.
+- `pgs_commit` amend support for rewriting the HEAD commit message and tree through the MCP/CLI contract.
+- MCP `pgs_stage` exact dry-run previews via `dry_run`, `explain`, and `limit` fields.
+
+### Changed
+
+- Reworked the `git-commit-staging` skill into a concise MCP-only workflow with reference docs, full tool coverage, and an explicit commit-message quality gate.
+- Updated Claude Code plugin packaging to the current marketplace/plugin layout, with `plugins/pgs` as the packaged plugin root and top-level `skills` as a symlink to the packaged skill tree.
+
 ## 0.3.1 - 2026-05-04
 
 ### Fixed
