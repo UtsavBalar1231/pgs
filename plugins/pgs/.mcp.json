@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pgs": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-pgs-mcp.sh",
+      "env": {
+        "PGS_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}",
+        "PGS_PLUGIN_DATA": "${CLAUDE_PLUGIN_DATA}"
+      }
+    }
+  }
+}

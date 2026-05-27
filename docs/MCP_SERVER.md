@@ -27,6 +27,11 @@ All tools require `repo_path`.
 | `pgs_stage` | Stage selected changes | yes | forbidden |
 | `pgs_unstage` | Remove selected changes from index | yes | forbidden |
 | `pgs_commit` | Create a git commit from staged changes | yes | forbidden |
+| `pgs_log` | Show recent commit history | no | optional |
+| `pgs_overview` | Show unstaged and staged changes together | no | optional |
+| `pgs_split_hunk` | Classify contiguous line runs in a hunk | no | optional |
+| `pgs_plan_check` | Validate a commit plan against a fresh scan | no | optional |
+| `pgs_plan_diff` | Reconcile a saved commit plan against a fresh scan | no | optional |
 
 `repo_path` is canonicalized internally, so the worktree path and its `.git` path map to the same mutation lane.
 
@@ -37,6 +42,11 @@ All tools require `repo_path`.
 - `pgs_stage`: direct call only
 - `pgs_unstage`: direct call only
 - `pgs_commit`: direct call only
+- `pgs_log`: direct call or task-based invocation
+- `pgs_overview`: direct call or task-based invocation
+- `pgs_split_hunk`: direct call or task-based invocation
+- `pgs_plan_check`: direct call or task-based invocation
+- `pgs_plan_diff`: direct call or task-based invocation
 
 Task lifecycle support is server-side and limited to read-only tool calls:
 
@@ -61,6 +71,19 @@ Run the server locally from another project with stdio:
 
 ```bash
 cargo run --bin pgs-mcp
+```
+
+Install the bundled plugin in Codex:
+
+```bash
+codex plugin marketplace add UtsavBalar1231/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+Or add the stdio server manually in Codex without the plugin:
+
+```bash
+codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
 Example JSON-RPC session from another project:

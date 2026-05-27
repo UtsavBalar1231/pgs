@@ -1,0 +1,39 @@
+{
+  "name": "pgs",
+  "version": "0.3.1",
+  "description": "Non-interactive git staging at file, hunk, and line granularity. MCP server and skill for structured commit workflows.",
+  "author": {
+    "name": "UtsavBalar1231",
+    "url": "https://github.com/UtsavBalar1231"
+  },
+  "homepage": "https://github.com/UtsavBalar1231/pgs",
+  "repository": "https://github.com/UtsavBalar1231/pgs",
+  "license": "MIT",
+  "keywords": [
+    "git",
+    "staging",
+    "commit",
+    "hunk",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "pgs",
+    "shortDescription": "Stage and commit precise git changes through MCP",
+    "longDescription": "Use pgs to inspect unstaged and staged changes, stage or unstage files, hunks, and line ranges, validate commit plans, and create commits through a local stdio MCP server.",
+    "developerName": "UtsavBalar1231",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/UtsavBalar1231/pgs",
+    "brandColor": "#2563EB",
+    "defaultPrompt": [
+      "Split my git changes into atomic commits with pgs.",
+      "Stage selected hunks and create a commit."
+    ]
+  }
+}

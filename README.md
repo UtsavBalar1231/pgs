@@ -55,6 +55,27 @@ See `docs/CLI_SPEC.md` for the full output contract.
 | 3 | Conflict — re-scan and retry (stale scan, locked index) |
 | 4 | Internal error |
 
+## Codex Plugin
+
+Install `pgs` as a Codex plugin for automatic MCP tool integration and the
+`git-commit-staging` skill:
+
+```bash
+codex plugin marketplace add UtsavBalar1231/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+Or test locally during development:
+
+```bash
+codex plugin marketplace add /path/to/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+The Codex plugin manifest lives in `.codex-plugin/plugin.json` and is mirrored
+into `plugins/pgs/` for marketplace installation. Codex loads the MCP server
+from `.mcp.json` and the skill from `skills/git-commit-staging/SKILL.md`.
+
 ## Claude Code Plugin
 
 Install `pgs` as a Claude Code plugin for automatic MCP tool integration and the `git-commit-staging` skill:
@@ -74,9 +95,9 @@ claude --plugin-dir /path/to/pgs
 ```
 
 **What you get:**
-- **5 MCP tools**: `pgs_scan`, `pgs_stage`, `pgs_unstage`, `pgs_status`, `pgs_commit` — available automatically via the bundled MCP server
-- **git-commit-staging skill**: teaches Claude the scan → plan → stage → commit workflow with hunk-level precision
-- **Auto-install**: the plugin automatically downloads the correct prebuilt binary for your platform on first session
+- **10 MCP tools**: `pgs_scan`, `pgs_status`, `pgs_stage`, `pgs_unstage`, `pgs_commit`, `pgs_log`, `pgs_overview`, `pgs_split_hunk`, `pgs_plan_check`, and `pgs_plan_diff` — available automatically via the bundled MCP server
+- **git-commit-staging skill**: teaches agents the scan → plan → stage → commit workflow with hunk-level precision
+- **Auto-install**: the plugin automatically downloads the correct prebuilt binary for your platform before launching the MCP server
 
 **Supported platforms:** macOS (Intel + Apple Silicon), Linux (x86_64 + ARM64). Windows binaries are available for standalone use via `claude mcp add`.
 
@@ -88,10 +109,11 @@ claude --plugin-dir /path/to/pgs
 cargo run --bin pgs-mcp
 ```
 
-Or add it manually to Claude Code without the plugin:
+Or add it manually without the plugin:
 
 ```bash
 claude mcp add --transport stdio pgs -- /path/to/pgs-mcp
+codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
 MCP tool calls require an explicit `repo_path`. For full MCP usage, task support, and safety notes, see `docs/MCP_SERVER.md`.

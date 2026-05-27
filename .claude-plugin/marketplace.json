@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "pgs",
-      "source": "./",
+      "source": "./plugins/pgs",
       "description": "Non-interactive git staging at file, hunk, and line granularity"
     }
   ]
