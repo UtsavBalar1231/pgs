@@ -1,11 +1,12 @@
 {
   "mcpServers": {
     "pgs": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-pgs-mcp.sh",
-      "env": {
-        "PGS_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}",
-        "PGS_PLUGIN_DATA": "${CLAUDE_PLUGIN_DATA}"
-      }
+      "command": "sh",
+      "args": [
+        "-c",
+        "DATA=\"${PGS_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/pgs-plugin}\"; VERSION=\"0.4.0\"; BINARY=\"$DATA/bin/pgs-mcp\"; VERSION_FILE=\"$DATA/VERSION\"; INSTALLED_VERSION=\"$(tr -d '[:space:]' < \"$VERSION_FILE\" 2>/dev/null || true)\"; if [ ! -x \"$BINARY\" ] || [ \"$INSTALLED_VERSION\" != \"$VERSION\" ]; then OS=\"$(uname -s)\"; ARCH=\"$(uname -m)\"; case \"$OS:$ARCH\" in Darwin:*) BINARY_NAME=\"pgs-mcp-universal-apple-darwin\" ;; Linux:x86_64) BINARY_NAME=\"pgs-mcp-x86_64-unknown-linux-musl\" ;; Linux:aarch64) BINARY_NAME=\"pgs-mcp-aarch64-unknown-linux-musl\" ;; MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64) BINARY_NAME=\"pgs-mcp-x86_64-pc-windows-msvc.exe\" ;; *) printf 'pgs-mcp: unsupported platform: %s %s\\n' \"$OS\" \"$ARCH\" >&2; exit 127 ;; esac; if ! command -v curl >/dev/null 2>&1; then printf 'pgs-mcp: curl is required to install pgs-mcp %s\\n' \"$VERSION\" >&2; exit 127; fi; mkdir -p \"$DATA/bin\" || exit 127; URL=\"https://github.com/UtsavBalar1231/pgs/releases/download/v${VERSION}/${BINARY_NAME}\"; printf 'pgs-mcp: downloading %s\\n' \"$URL\" >&2; if ! curl -fsSL \"$URL\" -o \"$BINARY\"; then rm -f \"$BINARY\"; exit 127; fi; chmod +x \"$BINARY\" || exit 127; printf '%s\\n' \"$VERSION\" > \"$VERSION_FILE\" || exit 127; fi; exec \"$BINARY\" \"$@\"",
+        "pgs-mcp"
+      ]
     }
   }
 }

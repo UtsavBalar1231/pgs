@@ -5,6 +5,10 @@ fn read_json(path: &str) -> Value {
     serde_json::from_str(&contents).unwrap()
 }
 
+fn read_trimmed(path: &str) -> String {
+    std::fs::read_to_string(path).unwrap().trim().to_owned()
+}
+
 fn assert_regular_file(path: &str) {
     let metadata = std::fs::symlink_metadata(path).unwrap();
     assert!(
@@ -31,16 +35,22 @@ fn codex_plugin_manifest_wires_shared_mcp_server_and_skill() {
 }
 
 #[test]
-fn shared_mcp_manifest_uses_launcher_with_install_fallback_env() {
+fn shared_mcp_manifest_uses_codex_native_cached_binary_launcher() {
     let mcp_manifest = read_json(".mcp.json");
     let server = &mcp_manifest["mcpServers"]["pgs"];
+    let args = server["args"].as_array().unwrap();
+    let launcher = args[1].as_str().unwrap();
 
-    assert_eq!(
-        server["command"],
-        "${CLAUDE_PLUGIN_ROOT}/scripts/run-pgs-mcp.sh"
-    );
-    assert_eq!(server["env"]["PGS_PLUGIN_ROOT"], "${CLAUDE_PLUGIN_ROOT}");
-    assert_eq!(server["env"]["PGS_PLUGIN_DATA"], "${CLAUDE_PLUGIN_DATA}");
+    assert_eq!(server["command"], "sh");
+    assert_eq!(args[0], "-c");
+    assert_eq!(args[2], "pgs-mcp");
+    assert!(server.get("env").is_none());
+    assert!(!launcher.contains("CLAUDE_PLUGIN_ROOT"));
+    assert!(!launcher.contains("CLAUDE_PLUGIN_DATA"));
+    assert!(launcher.contains("${XDG_DATA_HOME:-$HOME/.local/share}/pgs-plugin"));
+    assert!(launcher.contains("releases/download/v${VERSION}/${BINARY_NAME}"));
+    assert!(launcher.contains("exec \"$BINARY\" \"$@\""));
+    assert!(launcher.contains(&format!("VERSION=\"{}\"", read_trimmed("VERSION"))));
 }
 
 #[test]
@@ -72,7 +82,6 @@ fn marketplace_entry_points_to_codex_compatible_plugin_path() {
     assert_regular_file("plugins/pgs/.codex-plugin/plugin.json");
     assert_regular_file("plugins/pgs/.claude-plugin/plugin.json");
     assert_regular_file("plugins/pgs/.mcp.json");
-    assert_regular_file("plugins/pgs/hooks/hooks.json");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/SKILL.md");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/references/capability-table.md");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/references/tool-reference.md");
@@ -80,6 +89,8 @@ fn marketplace_entry_points_to_codex_compatible_plugin_path() {
     assert_regular_file("plugins/pgs/scripts/run-pgs-mcp.sh");
     assert_regular_file("plugins/pgs/scripts/install-binary.sh");
     assert_regular_file("plugins/pgs/VERSION");
+    assert!(!std::path::Path::new("hooks/hooks.json").exists());
+    assert!(!std::path::Path::new("plugins/pgs/hooks/hooks.json").exists());
 }
 
 #[test]
@@ -90,7 +101,6 @@ fn packaged_codex_plugin_matches_repo_sources() {
             "plugins/pgs/.codex-plugin/plugin.json",
         ),
         (".mcp.json", "plugins/pgs/.mcp.json"),
-        ("hooks/hooks.json", "plugins/pgs/hooks/hooks.json"),
         (
             "scripts/run-pgs-mcp.sh",
             "plugins/pgs/scripts/run-pgs-mcp.sh",

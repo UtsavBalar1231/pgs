@@ -1,13 +1,14 @@
 #!/bin/sh
-# install-binary.sh — Download pgs-mcp binary from GitHub Releases.
-# Called by SessionStart hook and run-pgs-mcp.sh fallback.
-# NEVER exits non-zero on download failure — must not crash the session.
+# install-binary.sh - Download pgs-mcp binary from GitHub Releases.
+# Called by run-pgs-mcp.sh fallback.
+# NEVER exits non-zero on download failure; it must not crash the session.
 
 set -u
 
-# Resolve plugin root: prefer env var, fall back to two dirs above this script.
-PLUGIN_ROOT="${PGS_PLUGIN_ROOT:-$(dirname "$(dirname "$0")")}"
-PLUGIN_DATA="${PGS_PLUGIN_DATA:-${HOME}/.local/share/pgs-plugin}"
+# Resolve plugin root: prefer env var, fall back to one dir above this script.
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PLUGIN_ROOT="${PGS_PLUGIN_ROOT:-$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)}"
+PLUGIN_DATA="${PGS_PLUGIN_DATA:-${XDG_DATA_HOME:-${HOME}/.local/share}/pgs-plugin}"
 
 VERSION_FILE="${PLUGIN_ROOT}/VERSION"
 DATA_VERSION_FILE="${PLUGIN_DATA}/VERSION"
