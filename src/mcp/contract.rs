@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use rmcp::{
     model::{CallToolResult, Content, TaskSupport, Tool, ToolAnnotations, ToolExecution},
     schemars::{self, JsonSchema},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     cmd::mcp_adapter::{
@@ -351,6 +354,9 @@ pub fn tool_definitions() -> Vec<Tool> {
         plan_check_tool(),
         plan_diff_tool(),
     ]
+    .into_iter()
+    .map(sanitize_tool_schemas)
+    .collect()
 }
 
 /// Look up a frozen MCP tool definition by its MCP name.
@@ -393,6 +399,67 @@ fn scan_tool() -> Tool {
             .open_world(false),
     )
     .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
+}
+
+fn sanitize_tool_schemas(mut tool: Tool) -> Tool {
+    let mut input_schema = Value::Object(tool.input_schema.as_ref().clone());
+    strip_nonstandard_integer_formats(&mut input_schema);
+    if let Value::Object(schema) = input_schema {
+        tool.input_schema = Arc::new(schema);
+    }
+
+    if let Some(output_schema) = tool.output_schema.take() {
+        let mut output_schema_value = Value::Object(output_schema.as_ref().clone());
+        strip_nonstandard_integer_formats(&mut output_schema_value);
+        tool.output_schema = match output_schema_value {
+            Value::Object(schema) => Some(Arc::new(schema)),
+            _ => Some(output_schema),
+        };
+    }
+
+    tool
+}
+
+fn strip_nonstandard_integer_formats(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if object
+                .get("format")
+                .and_then(Value::as_str)
+                .is_some_and(is_nonstandard_integer_format)
+            {
+                object.remove("format");
+            }
+
+            for child in object.values_mut() {
+                strip_nonstandard_integer_formats(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                strip_nonstandard_integer_formats(item);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn is_nonstandard_integer_format(format: &str) -> bool {
+    matches!(
+        format,
+        "int"
+            | "int8"
+            | "int16"
+            | "int32"
+            | "int64"
+            | "isize"
+            | "uint"
+            | "uint8"
+            | "uint16"
+            | "uint32"
+            | "uint64"
+            | "usize"
+    )
 }
 
 fn status_tool() -> Tool {
@@ -1039,6 +1106,32 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn assert_no_nonstandard_integer_formats(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(format) = object.get("format").and_then(serde_json::Value::as_str) {
+                    assert!(
+                        !is_nonstandard_integer_format(format),
+                        "schema contains nonstandard integer format: {format}"
+                    );
+                }
+
+                for child in object.values() {
+                    assert_no_nonstandard_integer_formats(child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    assert_no_nonstandard_integer_formats(item);
+                }
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
+
     #[test]
     fn mcp_tool_schemas_require_repo_path() {
         let tools = tool_definitions();
@@ -1068,6 +1161,20 @@ mod tests {
                 tool.name,
                 serde_json::Value::Object(tool.input_schema.as_ref().clone())
             );
+        }
+    }
+
+    #[test]
+    fn mcp_tool_schemas_do_not_emit_nonstandard_integer_formats() {
+        for tool in tool_definitions() {
+            assert_no_nonstandard_integer_formats(&serde_json::Value::Object(
+                tool.input_schema.as_ref().clone(),
+            ));
+            if let Some(output_schema) = tool.output_schema {
+                assert_no_nonstandard_integer_formats(&serde_json::Value::Object(
+                    output_schema.as_ref().clone(),
+                ));
+            }
         }
     }
 
