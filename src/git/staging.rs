@@ -369,6 +369,21 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
     sel
 }
 
+/// Read the staging base blob for a file: current index, then HEAD, else empty.
+///
+/// Added/untracked files exist in neither the index nor HEAD, so their base is
+/// the empty byte string — every workdir line becomes an addition. Returning an
+/// error instead would break previewing newly-added files, especially inside a
+/// brand-new directory where the HEAD tree walk fails on the missing parent
+/// component (`class=Tree; code=NotFound`). The empty fallback only triggers
+/// when the path is in neither index nor HEAD; modified files still resolve to
+/// their HEAD content.
+fn read_base_blob_or_empty(repo: &Repository, file_path: &str) -> Vec<u8> {
+    read_index_blob(repo, file_path)
+        .or_else(|_| read_head_blob(repo, file_path))
+        .unwrap_or_default()
+}
+
 fn collect_preview_additions(
     repo: &Repository,
     file_path: &str,
@@ -386,8 +401,7 @@ fn collect_preview_additions(
     }
     let work_bytes = blob.bytes;
 
-    let base_bytes =
-        read_index_blob(repo, file_path).or_else(|_| read_head_blob(repo, file_path))?;
+    let base_bytes = read_base_blob_or_empty(repo, file_path);
 
     let base_text = String::from_utf8_lossy(&base_bytes);
     let work_text = String::from_utf8_lossy(&work_bytes);
@@ -1071,6 +1085,64 @@ mod tests {
             .get_path(std::path::Path::new("link"), 0)
             .expect("entry in index");
         assert_eq!(entry.mode, 0o120_000, "index entry mode must be 0o120000");
+    }
+
+    /// Regression: an added file inside a brand-new nested directory has no base
+    /// blob in either the index or HEAD. `preview_stage` (the `--dry-run
+    /// --explain` path) must treat the absent base as the empty string — every
+    /// workdir line is an addition — instead of erroring while walking the HEAD
+    /// tree for the missing parent directory component.
+    #[test]
+    fn preview_stage_added_file_in_new_nested_dir_lists_additions() {
+        let (dir, repo) =
+            setup_repo_with_commit(&[("overlay/etc/systemd/existing.conf", "base\n")]);
+
+        let nested = dir.path().join("overlay/etc/systemd/journald.conf.d");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::write(
+            nested.join("10-lapis.conf"),
+            "[Journal]\nStorage=persistent\n",
+        )
+        .expect("write");
+
+        let rel = "overlay/etc/systemd/journald.conf.d/10-lapis.conf";
+
+        let diff = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff");
+        let scan = crate::git::diff::build_scan_result(&repo, &diff, None).expect("scan");
+
+        let resolved = ResolvedSelection {
+            file_path: rel.to_owned(),
+            hunk_indices: vec![0],
+            line_ranges: None,
+        };
+        let request = PreviewRequest {
+            scan: &scan,
+            resolved: &resolved,
+            selection: rel,
+            limit: 200,
+        };
+
+        let preview = preview_stage(&repo, &request).expect("preview must not error on added file");
+
+        assert_eq!(
+            preview.preview_lines.len(),
+            2,
+            "both added lines should appear in the preview"
+        );
+        assert_eq!(preview.preview_lines[0].content, "[Journal]");
+        assert_eq!(preview.preview_lines[1].content, "Storage=persistent");
+        assert!(
+            preview
+                .preview_lines
+                .iter()
+                .all(|l| l.origin == LineOrigin::Addition),
+            "every preview line for an added file must be an Addition"
+        );
+        assert!(!preview.truncated, "small added file must not be truncated");
+        assert!(
+            preview.reason.is_none(),
+            "regular added file must not carry a reason"
+        );
     }
 
     #[cfg(unix)]
