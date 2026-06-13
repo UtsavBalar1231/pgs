@@ -46,11 +46,27 @@ fn shared_mcp_manifest_uses_codex_native_cached_binary_launcher() {
     assert_eq!(args[2], "pgs-mcp");
     assert!(server.get("env").is_none());
     assert!(!launcher.contains("CLAUDE_PLUGIN_ROOT"));
-    assert!(!launcher.contains("CLAUDE_PLUGIN_DATA"));
+    assert!(launcher.contains("CLAUDE_PLUGIN_DATA"));
     assert!(launcher.contains("${XDG_DATA_HOME:-$HOME/.local/share}/pgs-plugin"));
-    assert!(launcher.contains("releases/download/v${VERSION}/${BINARY_NAME}"));
+    assert!(launcher.contains("releases/download/v$VERSION/$BINARY_NAME"));
+    assert!(!launcher.contains("releases/download/v${VERSION}/${BINARY_NAME}"));
     assert!(launcher.contains("exec \"$BINARY\" \"$@\""));
     assert!(launcher.contains(&format!("VERSION=\"{}\"", read_trimmed("VERSION"))));
+}
+
+#[test]
+fn launcher_scripts_refresh_stale_cached_plugin_binary() {
+    let runner = std::fs::read_to_string("scripts/run-pgs-mcp.sh").unwrap();
+    let installer = std::fs::read_to_string("scripts/install-binary.sh").unwrap();
+
+    assert!(runner.contains("CLAUDE_PLUGIN_ROOT"));
+    assert!(runner.contains("CLAUDE_PLUGIN_DATA"));
+    assert!(runner.contains("DATA_VERSION_FILE="));
+    assert!(runner.contains("INSTALLED_VERSION="));
+    assert!(runner.contains("[ \"$INSTALLED_VERSION\" != \"$VERSION\" ]"));
+
+    assert!(installer.contains("CLAUDE_PLUGIN_ROOT"));
+    assert!(installer.contains("CLAUDE_PLUGIN_DATA"));
 }
 
 #[test]

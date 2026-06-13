@@ -6,9 +6,9 @@
 set -u
 
 # Resolve plugin root: prefer env var, fall back to one dir above this script.
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-PLUGIN_ROOT="${PGS_PLUGIN_ROOT:-$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)}"
-PLUGIN_DATA="${PGS_PLUGIN_DATA:-${XDG_DATA_HOME:-${HOME}/.local/share}/pgs-plugin}"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+PLUGIN_ROOT="${PGS_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)}}"
+PLUGIN_DATA="${PGS_PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-${HOME}/.local/share}/pgs-plugin}}"
 
 VERSION_FILE="${PLUGIN_ROOT}/VERSION"
 DATA_VERSION_FILE="${PLUGIN_DATA}/VERSION"
