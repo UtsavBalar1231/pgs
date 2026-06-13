@@ -9,7 +9,7 @@
       "name": "pgs",
       "source": "./plugins/pgs",
       "description": "Non-interactive git staging at file, hunk, and line granularity",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "UtsavBalar1231",
         "url": "https://github.com/UtsavBalar1231"
