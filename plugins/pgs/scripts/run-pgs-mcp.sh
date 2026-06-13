@@ -17,11 +17,15 @@ if [ -f "$VERSION_FILE" ]; then
 fi
 
 INSTALLED_VERSION=""
-if [ -f "$DATA_VERSION_FILE" ]; then
+if [ -r "$DATA_VERSION_FILE" ]; then
     INSTALLED_VERSION="$(tr -d '[:space:]' < "$DATA_VERSION_FILE")"
 fi
 
-if [ ! -x "$BINARY" ] || { [ -n "$VERSION" ] && [ "$INSTALLED_VERSION" != "$VERSION" ]; }; then
+needs_install() {
+    [ ! -x "$BINARY" ] || { [ -n "$VERSION" ] && [ "$INSTALLED_VERSION" != "$VERSION" ]; }
+}
+
+if needs_install; then
     PGS_PLUGIN_ROOT="$PLUGIN_ROOT" PGS_PLUGIN_DATA="$PLUGIN_DATA" \
         "${PLUGIN_ROOT}/scripts/install-binary.sh" >&2
 fi

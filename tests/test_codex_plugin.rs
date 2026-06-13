@@ -47,9 +47,22 @@ fn shared_mcp_manifest_uses_codex_native_cached_binary_launcher() {
     assert!(server.get("env").is_none());
     assert!(!launcher.contains("CLAUDE_PLUGIN_ROOT"));
     assert!(launcher.contains("CLAUDE_PLUGIN_DATA"));
-    assert!(launcher.contains("${XDG_DATA_HOME:-$HOME/.local/share}/pgs-plugin"));
+    assert!(launcher.contains("DATA=\"$PGS_PLUGIN_DATA\""));
+    assert!(launcher.contains("DATA=\"$CLAUDE_PLUGIN_DATA\""));
+    assert!(launcher.contains("BASE=\"$XDG_DATA_HOME\""));
+    assert!(launcher.contains("BASE=\"$HOME/.local/share\""));
+    assert!(launcher.contains("DATA=\"$BASE/pgs-plugin\""));
+    assert!(!launcher.contains(":-${"));
     assert!(launcher.contains("releases/download/v$VERSION/$BINARY_NAME"));
     assert!(!launcher.contains("releases/download/v${VERSION}/${BINARY_NAME}"));
+    assert!(launcher.contains("needs_install()"));
+    assert!(launcher.contains("[ -r \"$VERSION_FILE\" ]"));
+    assert!(launcher.contains("LOCK_DIR=\"$DATA/.install.lock\""));
+    assert!(launcher.contains("mkdir \"$LOCK_DIR\""));
+    assert!(launcher.contains("TMP_BINARY=\"$DATA/bin/.pgs-mcp.$$.tmp\""));
+    assert!(launcher.contains("mv -f \"$TMP_BINARY\" \"$BINARY\""));
+    assert!(launcher.contains("TMP_VERSION=\"$DATA/.VERSION.$$.tmp\""));
+    assert!(launcher.contains("mv -f \"$TMP_VERSION\" \"$VERSION_FILE\""));
     assert!(launcher.contains("exec \"$BINARY\" \"$@\""));
     assert!(launcher.contains(&format!("VERSION=\"{}\"", read_trimmed("VERSION"))));
 }
@@ -64,9 +77,16 @@ fn launcher_scripts_refresh_stale_cached_plugin_binary() {
     assert!(runner.contains("DATA_VERSION_FILE="));
     assert!(runner.contains("INSTALLED_VERSION="));
     assert!(runner.contains("[ \"$INSTALLED_VERSION\" != \"$VERSION\" ]"));
+    assert!(runner.contains("[ -r \"$DATA_VERSION_FILE\" ]"));
 
     assert!(installer.contains("CLAUDE_PLUGIN_ROOT"));
     assert!(installer.contains("CLAUDE_PLUGIN_DATA"));
+    assert!(installer.contains("LOCK_DIR="));
+    assert!(installer.contains("mkdir \"$LOCK_DIR\""));
+    assert!(installer.contains("TMP_BINARY="));
+    assert!(installer.contains("mv -f \"$TMP_BINARY\" \"$BINARY\""));
+    assert!(installer.contains("TMP_VERSION="));
+    assert!(installer.contains("mv -f \"$TMP_VERSION\" \"$DATA_VERSION_FILE\""));
 }
 
 #[test]
