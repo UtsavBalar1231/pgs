@@ -66,7 +66,7 @@ JSON envelope:
       "hunks_count": 1,
       "lines_added": 2,
       "lines_deleted": 0,
-      "checksum": "...optional in full...",
+      "checksum": "sha256-hex",
       "hunks": [
         {
           "id": "abc123def456",
@@ -78,7 +78,7 @@ JSON envelope:
           "additions": 1,
           "deletions": 0,
           "whitespace_only": false,
-          "checksum": "...optional in full...",
+          "checksum": "...present in full only...",
           "lines": [
             { "line_number": 1, "origin": "Context", "content": "fn main() {" }
           ]
@@ -103,7 +103,11 @@ Text record kinds:
 - full: `scan.begin`, `file.begin`, `hunk.begin`, raw diff body lines, `hunk.end`, `file.end`, `summary`, `scan.end`
 
 Hunk payload notes:
+- `id` (`hunk_id`) — position-DEPENDENT addressing key: `sha256(path:old_start:new_start:content)[..12]`. Shifts when an earlier hunk changes the line count. Use to select a hunk when the scan is fresh.
+- `checksum` (hunk-level) — position-STABLE content fingerprint: SHA-256 of all hunk lines (context + additions + deletions) concatenated, no positional data. Invariant under position shifts — if earlier edits push this hunk to a new line number, `checksum` survives unchanged. Agents should prefer `checksum` over `id` to re-locate a hunk after cross-hunk edits. `plan-diff` uses `checksum` for `High`-confidence shifted-hunk classification. Present in `scan --full` output only (omitted from compact hunks).
+- `checksum` (file-level) — SHA-256 hex digest of the working-tree file content. Present in **both** compact and `--full` scan output. Use with `--expect`/`expected_checksums` on `stage` to detect workdir drift between scan and stage calls.
 - `whitespace_only` — `true` when every `Addition`/`Deletion` line in the hunk has empty or whitespace-only trimmed content. `false` for binary hunks (binary files emit no hunks at all; the flag is meaningful only on text hunks) and for hunks that carry any non-whitespace change. The field is additive metadata; it does not enter the content-addressed hunk-ID input.
+- Non-UTF-8 line content — when a diff line's raw bytes are not valid UTF-8, the `content` field in `DiffLineInfo` is set to `""` (empty string). The hunk `id` and `checksum` are computed from the same collapsed representation and remain self-consistent and selectable. The file-level `checksum` (used by `--expect` on `stage`) is computed from the raw workdir bytes and is unaffected by UTF-8 validity.
 
 ### `stage` and `unstage`
 
@@ -161,6 +165,69 @@ and omits the `previews` field entirely.
   `content`), then `stage.preview.end`. Binary entries emit begin/end with no
   `stage.preview.line` records between them.
 
+#### Freshness guard and drift detection (stage only)
+
+`pgs stage` validates that each staged file's workdir content has not changed
+between the caller's scan and this call. A file that changed on disk after the
+scan produces a `StaleScan` error (exit 3) with zero index mutation — no backup
+is created, the index is never touched. Re-run `pgs scan` to obtain fresh hunk
+IDs and checksums before retrying.
+
+**`--expect <path>=<sha>` (CLI) / `expected_checksums` (MCP)**
+
+The caller asserts a per-file SHA-256 checksum captured from a prior
+`pgs scan` output (the file-level `checksum` field, present in both compact
+and `--full` scan envelopes). When supplied, pgs compares the asserted checksum against the
+checksum in the fresh scan. A mismatch returns `StaleScan` (exit 3)
+immediately.
+
+- CLI flag: `--expect src/main.rs=<sha256>`, repeatable once per file. Format
+  is exactly `PATH=SHA`; a missing `=` separator is a user error (exit 2).
+  Duplicate entries for the same path are a user error (exit 2).
+- MCP field: `expected_checksums` — optional `HashMap<String, String>` (path →
+  lowercase SHA-256 hex). Omit the field or pass an empty map to skip explicit
+  checksum assertion.
+- `--expect` paths must be part of the staging selection. Naming a path not in
+  the selection is a user error (exit 2).
+- Supplying `--expect` on a deleted file is a user error (exit 2): deleted
+  files have no workdir content and therefore no checksum.
+- When the scan produced an empty `checksum` for a file and `--expect` is
+  supplied, pgs fails closed with `StaleScan` (exit 3).
+
+**Implicit TOCTOU guard (no `--expect`)**
+
+Even without `--expect`, pgs re-hashes the workdir file after computing the
+scan and compares against the scan's own checksum. A mismatch returns `StaleScan`
+(exit 3). This is best-effort and does not eliminate the race window, but it
+catches common concurrent-edit scenarios. The implicit guard is skipped for
+deleted files and files where the scan produced an empty checksum.
+
+**Which selection kinds are drift-safe**
+
+| Selection kind | Drift behavior |
+|----------------|----------------|
+| Hunk ID (`abc123def456`) | Natively drift-safe: the ID is content-addressed (`sha256(path:old_start:new_start:content)`). A changed file produces different hunk IDs; the call fails with `unknown_hunk_id` (exit 2) before reaching the freshness guard. |
+| Line range (`path:A-B`) | Not natively drift-safe: a changed file may retain the same line numbers while pointing to different content. Supply `--expect`/`expected_checksums` to make line-range staging fail-safe on drift. |
+| Whole-file (`path`) | Always stages current workdir content. The implicit TOCTOU guard still applies; `--expect` makes it strict. |
+
+**Why the drift guard is `stage`-only**
+
+`unstage` diffs HEAD → Index and never reads the workdir. A workdir checksum is
+meaningless there, and the index is exclusively pgs's own prior output, so
+content drift between a scan and an unstage call cannot occur in the same way.
+No freshness guard is applied to `unstage`.
+
+#### Non-UTF-8 partial staging
+
+Partial staging (hunk or line-range selection) of a file whose workdir content
+is not valid UTF-8 returns `NonUtf8Partial` (exit 2) directing the caller to
+use whole-file staging instead. The rejection is conservative: the line-diff
+engine (`similar::TextDiff`) would silently replace invalid bytes with U+FFFD,
+producing a corrupted staged blob.
+
+Whole-file staging of a non-UTF-8 file is fully supported; pgs stages the raw
+bytes without encoding transformation.
+
 ### `status`
 
 JSON envelope:
@@ -212,6 +279,48 @@ JSON envelope:
 
 Text record kinds:
 - `commit.result`
+
+### `log`
+
+Read commit history. Returns up to `--max-count` commits (default 20) walking
+from HEAD. Optional path filters restrict output to commits that touch the
+given files.
+
+JSON envelope:
+
+```json
+{
+  "version": "v1",
+  "command": "log",
+  "commits": [
+    {
+      "hash": "40-char-sha",
+      "short_hash": "12-char prefix",
+      "author": "Name <email>",
+      "date": "2024-01-15T10:30:00+00:00",
+      "message": "feat: add feature"
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}
+```
+
+`truncated` is `true` when the walk hit the internal 1000-commit safety cap
+before reaching `--max-count`. `total` reflects the number of commits actually
+returned.
+
+Text record kind: `log` (single record containing the full envelope).
+
+Exit codes:
+- `0`: success (including an empty-history repo, which returns `commits: []`).
+- `1`: `NoChanges` — not applicable; `log` always returns `0` on success.
+- `2`: user error (invalid arguments).
+
+MCP tool: `pgs_log` — read-only, `task_support: Optional`. Input schema
+requires `repo_path`; optional `max_count` (default 20) and `paths` (array
+of file paths to filter by). The full `LogOutput` envelope is returned inside
+`structuredContent.pgs`.
 
 ### `overview`
 
@@ -332,7 +441,10 @@ JSON envelope:
   "unsafe_selectors": [
     { "commit_id": "wide", "selection": "src/main.rs:1-40", "reason": "spans_hunk_boundary" }
   ],
-  "unknown_paths": ["does/not/exist.rs"]
+  "unknown_paths": ["does/not/exist.rs"],
+  "unknown_hunk_ids": [
+    { "commit_id": "stale-commit", "hunk_id": "deadbeef0000" }
+  ]
 }
 ```
 
@@ -340,14 +452,22 @@ JSON envelope:
 - `spans_hunk_boundary` — a `path:A-B` range intersects two or more hunks.
 - `invalid_selection` — the selector failed positional auto-detection.
 
+`unknown_paths` carries only genuine file/directory path misses (the path string
+is not present in the current scan at all). `unknown_hunk_ids` carries stale
+12-hex hunk ids that were valid in a prior scan but are absent from the current
+one — the agent should re-run `pgs scan` to obtain a fresh id rather than
+treating this as a path problem. `commit_id` in each `unknown_hunk_ids` entry is
+`null`/absent when the referencing planned commit had no `id` field.
+
 Text record kinds:
 - `plan.check.begin`, `plan.check.overlap`, `plan.check.uncovered`,
-  `plan.check.unsafe`, `plan.check.unknown`, `plan.check.end`.
+  `plan.check.unsafe`, `plan.check.unknown`, `plan.check.unknown_hunk`,
+  `plan.check.end`.
 
 Exit codes:
 - `0` on a clean plan (every report array empty).
-- `1` when any issue is reported — the plan is rejected but nothing is
-  mutated.
+- `1` when any issue is reported (including non-empty `unknown_hunk_ids`) —
+  the plan is rejected but nothing is mutated.
 - `2` on malformed plan JSON or an unreadable `--plan` path.
 
 MCP tool: `pgs_plan_check` — read-only, `task_support: Optional`. Input schema
@@ -392,6 +512,13 @@ JSON envelope:
       "old_hunk_id": "oldhunkid0000",
       "new_hunk_id": "newhunkid1234",
       "match_confidence": "high"
+    },
+    {
+      "commit_id": "c2",
+      "selection": "src/lib.rs:5-10",
+      "file_path": "src/lib.rs",
+      "new_hunk_id": "aabbcc112233",
+      "match_confidence": "medium"
     }
   ],
   "gone": [
@@ -405,16 +532,22 @@ JSON envelope:
 }
 ```
 
-`match_confidence` values: `high` (checksum match), `medium` (>=50% range
-overlap), `low` (file match with no stronger evidence). Shifted entries
-never auto-upgrade to `still_valid` — callers reconcile explicitly.
+`match_confidence` values: `high` (checksum match against a live hunk),
+`medium` (≥50% old-range overlap with a live hunk). Shifted entries never
+auto-upgrade to `still_valid` — callers reconcile explicitly.
+
+`shifted[*].old_hunk_id` is optional: it is omitted when a checksum-only
+match drove the shift (no `captured_hunk_id` was set on the planned commit).
+
+`still_valid[*].reason` is optional. When present and set to
+`no_unstaged_hunks`, the selection resolved to a file whose unstaged hunk
+list is now empty (e.g. everything staged already); the caller may skip it.
 
 `gone[*].reason` values currently emitted:
 - `path_missing` — referenced path no longer present in the scan.
-- `covered_by_commit` — file exists but has no unstaged hunks left.
+- `covered_by_commit` — all unstaged hunks are gone from the file (consumed by a prior stage/commit).
 - `invalid_selection` — selector failed positional auto-detection.
-- `no_match` — a captured hunk id could not be fuzzy-matched.
-- `unresolved_selection` — selection could not be resolved or fuzzy-matched.
+- `no_match` — a captured hunk id could not be fuzzy-matched to any live hunk.
 
 Text record kinds:
 - `plan.diff.begin`, `plan.diff.valid`, `plan.diff.shifted`, `plan.diff.gone`,

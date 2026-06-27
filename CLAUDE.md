@@ -55,6 +55,14 @@ Read @docs/CLI_SPEC.md before adding/changing any CLI flag or output contract fi
 - Error messages must include context: what failed, on what input.
   `"failed to parse hunk header in src/foo.rs: expected @@ prefix"` not `"parse error"`.
 
+Notable variants added for staging safety (see `src/error.rs` for full enum):
+
+| Variant | Code | Exit | When raised |
+|---------|------|------|-------------|
+| `NonUtf8Partial` | `non_utf8_partial` | 2 | Granular staging on a non-UTF-8 file; use whole-file staging |
+| `CrlfMismatch` | `crlf_mismatch` | 2 | Cross-ending partial staging (LF base vs CRLF workdir or vice versa) |
+| `RestoreFailed` | `restore_failed` | 4 | Staging op failed AND automatic rollback failed; index may be inconsistent; `backup_id` in error for manual recovery from `.git/pgs/backups/` |
+
 ## Testing (TDD Enforced)
 
 1. Write a failing test first (RED)
