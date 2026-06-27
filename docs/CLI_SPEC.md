@@ -420,11 +420,14 @@ Input schema (JSON on stdin, default, or read from `--plan <path>`):
 }
 ```
 
-All fields other than `version`, `commits`, and `selections` are optional and
-defaulted via `#[serde(default)]`. pgs only receives `CommitPlan` (never emits
-one), so unknown input fields are silently tolerated. A6 `plan-diff` extends
-the schema additively (`captured_at`, `captured_hunk_id`, `expected_checksum`)
-without bumping `version`.
+All fields other than `commits` and `selections` are optional and defaulted via
+`#[serde(default)]`. In particular, `version` is **optional** and defaults to
+`"v1"` when omitted — agents following the MCP schema (which does not advertise
+`version`) may omit it and the input will parse correctly. Plans that include
+`"version":"v1"` continue to work unchanged. pgs only receives `CommitPlan`
+(never emits one), so unknown input fields are silently tolerated. A6
+`plan-diff` extends the schema additively (`captured_at`, `captured_hunk_id`,
+`expected_checksum`) without bumping `version`.
 
 JSON envelope:
 

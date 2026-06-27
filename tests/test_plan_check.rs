@@ -742,6 +742,36 @@ fn plan_check_text_marker_contains_unknown_hunk_record_for_stale_id() {
     );
 }
 
+/// A `CommitPlan` without a `version` field must be accepted by `plan-check --stdin`
+/// and treated as `"v1"`. Prior to the fix, serde rejected it with "missing field `version`".
+#[test]
+fn plan_check_stdin_accepts_plan_without_version_field() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.rs", "one\ntwo\n", "initial");
+    write_file(dir.path(), "f.rs", "one\ntwo\nthree\n");
+
+    // Plan JSON intentionally omits the `version` field.
+    let plan_no_version = r#"{"commits":[{"selections":["f.rs"]}]}"#;
+    let (code, stdout, stderr) = run_plan_check_stdin(dir.path(), plan_no_version, &[]);
+
+    assert_eq!(
+        code, 0,
+        "plan without version field must exit 0 (defaults to v1); stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-check emits JSON");
+    assert_eq!(envelope["command"], "plan-check");
+    assert!(
+        envelope["overlaps"].as_array().is_some_and(Vec::is_empty),
+        "no overlaps expected: {:?}",
+        envelope["overlaps"]
+    );
+    assert!(
+        envelope["uncovered"].as_array().is_some_and(Vec::is_empty),
+        "no uncovered expected: {:?}",
+        envelope["uncovered"]
+    );
+}
+
 /// JSON output from plan-check must include the `unknown_hunk_ids` array.
 /// When a stale hunk id is the only issue the array must be non-empty and
 /// exit code must be 1.
