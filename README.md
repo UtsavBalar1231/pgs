@@ -1,43 +1,88 @@
 # pgs
 
-Non-interactive git staging at file, hunk, and line granularity.
+Non-interactive git staging at file, hunk, and line granularity — built for AI
+agents and scripts.
 
-`git add -p` requires a TTY. `pgs` doesn't.
+`git add -p` needs a TTY. `pgs` doesn't.
 
 ## Why
 
-- `git add -p` is interactive — AI agents and scripts have no TTY
-- Manual patch construction via `git apply --cached` is fragile — one off-by-one line number and the patch fails
-- `git diff` output is unstructured — no stable way to reference a specific hunk across commands
+- **`git add -p` is interactive** — AI agents and scripts have no TTY.
+- **Hand-built patches are fragile** — one off-by-one line number and
+  `git apply --cached` rejects the whole patch.
+- **`git diff` is unstructured** — no stable way to name a specific hunk across
+  commands.
 
-`pgs` provides content-addressed hunk IDs (SHA-256), atomic staging with automatic backup/restore, and structured output parseable by both humans and machines.
+`pgs` gives every change a content-addressed hunk ID (SHA-256), stages
+atomically with automatic backup/restore, and emits structured output that both
+humans and machines can parse. It ships a CLI (`pgs`) and a stdio MCP server
+(`pgs-mcp`) over the same engine.
 
-## Quick Start
+## Quick start
 
 ```bash
-pgs scan                              # list unstaged changes
-pgs scan src/main.rs --full           # line-level diff for one file
-pgs stage src/main.rs                 # stage entire file
-pgs stage abc123def456                # stage specific hunk by ID
-pgs stage src/main.rs:10-20           # stage line range (1-indexed, inclusive)
-pgs stage src/main.rs --dry-run       # validate without modifying index
-pgs unstage src/main.rs               # remove file from index
-pgs status                            # show staged changes (HEAD vs index)
-pgs commit -m "feat: add feature"     # commit
-pgs commit --amend -m "feat: ..."     # rewrite HEAD with current index/message
+# Inspect
+pgs scan                       # unstaged changes + hunk IDs (Index → Workdir)
+pgs scan src/main.rs --full    # line-level diff for one file
+pgs status                     # staged changes (HEAD → Index)
+pgs overview                   # unstaged and staged changes in one view
+
+# Stage with the narrowest honest selector
+pgs stage src/main.rs                       # whole file
+pgs stage abc123def456                      # one hunk, by content-addressed ID
+pgs stage src/main.rs:10-20                 # a line range (1-indexed, inclusive)
+pgs stage src/main.rs --dry-run --explain   # preview exact staged lines, no mutation
+pgs unstage src/main.rs                     # remove from the index
+
+# Commit
+pgs commit -m "feat: add feature"           # commit staged changes
+pgs commit --amend -m "feat: reword"        # rewrite HEAD with current index/message
+pgs log                                     # recent history (for message style)
 ```
 
-## Selection Syntax
+## Splitting and planning
+
+```bash
+pgs split-hunk abc123def456            # classify addition/deletion/mixed runs in a hunk
+pgs plan-check --stdin < plan.json     # validate a multi-commit plan against a fresh scan
+pgs plan-diff  --stdin < plan.json     # reconcile a saved plan after edits or commits
+```
+
+A plan looks like
+`{"commits": [{"id": "c1", "selections": ["src/a.rs:abc123def456"], "message": "..."}]}`.
+`plan-check` and `plan-diff` are descriptive — they report overlaps, gaps, and
+drift but never stage or commit.
+
+## Selection syntax
 
 Positional arguments are auto-detected:
 
 | Pattern | Example | Meaning |
 |---------|---------|---------|
 | File path | `src/main.rs` | Entire file |
-| Hunk ID | `abc123def456` | 12-hex content-addressed ID from scan |
+| Directory | `src/` | All files under a directory |
+| Hunk ID | `abc123def456` | 12-hex content-addressed ID from `scan` |
 | Line range | `src/main.rs:10-20,30-40` | 1-indexed, inclusive |
 
-`--exclude` uses the same syntax: `pgs stage src/main.rs --exclude abc123def456`
+`--exclude` uses the same syntax: `pgs stage src/main.rs --exclude abc123def456`.
+If a real file path is exactly 12 hex characters, prefix it with `./` so it is
+read as a path, not a hunk ID.
+
+Hunk IDs are stable only while a hunk's content and position are unchanged.
+Re-scan after any edit, commit, or index change before reusing them.
+
+## Guard against drift
+
+`scan` reports a per-file `checksum`. Pass it back to `stage` to refuse staging
+if the file changed between the scan and the stage:
+
+```bash
+pgs stage src/main.rs:10-20 --expect "src/main.rs=<checksum from scan>"
+```
+
+A stale checksum fails with exit code 3 (`stale_scan`) and leaves the index
+untouched — re-scan and retry. Partial (hunk/line) staging also refuses non-UTF-8
+files and files whose line endings differ from the index; stage those whole-file.
 
 ## Output
 
@@ -46,41 +91,20 @@ JSON: opt-in via `--json` or `--output json`.
 
 See `docs/CLI_SPEC.md` for the full output contract.
 
-## Exit Codes
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
 | 1 | No effect (nothing to stage, empty selection) |
-| 2 | User error (bad syntax, binary file constraint) |
+| 2 | User error (bad selector; binary, non-UTF-8, or CRLF partial-stage constraint) |
 | 3 | Conflict — re-scan and retry (stale scan, locked index) |
 | 4 | Internal error |
 
-## Codex Plugin
+## Claude Code plugin
 
-Install `pgs` as a Codex plugin for automatic MCP tool integration and the
+Install `pgs` as a Claude Code plugin for automatic MCP tool integration and the
 `git-commit-staging` skill:
-
-```bash
-codex plugin marketplace add UtsavBalar1231/pgs
-codex plugin add pgs@pgs-marketplace
-```
-
-Or test locally during development:
-
-```bash
-codex plugin marketplace add /path/to/pgs
-codex plugin add pgs@pgs-marketplace
-```
-
-The Codex plugin manifest lives in `.codex-plugin/plugin.json` and is mirrored
-into `plugins/pgs/` for marketplace installation. The canonical skill source is
-`plugins/pgs/skills/git-commit-staging/SKILL.md`; top-level `skills/` is only a
-repo-local symlink for root-plugin development.
-
-## Claude Code Plugin
-
-Install `pgs` as a Claude Code plugin for automatic MCP tool integration and the `git-commit-staging` skill:
 
 ```bash
 # Add the marketplace
@@ -97,15 +121,42 @@ claude --plugin-dir /path/to/pgs/plugins/pgs
 ```
 
 **What you get:**
-- **10 MCP tools**: `pgs_scan`, `pgs_status`, `pgs_stage`, `pgs_unstage`, `pgs_commit`, `pgs_log`, `pgs_overview`, `pgs_split_hunk`, `pgs_plan_check`, and `pgs_plan_diff` — available automatically via the bundled MCP server
-- **git-commit-staging skill**: teaches agents the scan → plan → stage → commit workflow with hunk-level precision
-- **Auto-install**: the plugin automatically downloads the correct prebuilt binary for your platform before launching the MCP server
+- **10 MCP tools**: `pgs_scan`, `pgs_status`, `pgs_stage`, `pgs_unstage`,
+  `pgs_commit`, `pgs_log`, `pgs_overview`, `pgs_split_hunk`, `pgs_plan_check`,
+  and `pgs_plan_diff` — available automatically via the bundled MCP server.
+- **git-commit-staging skill**: teaches agents the scan → plan → stage → commit
+  workflow with hunk-level precision.
+- **Auto-install**: the plugin downloads the correct prebuilt binary for your
+  platform before launching the MCP server.
 
-**Supported platforms:** macOS (Intel + Apple Silicon), Linux (x86_64 + ARM64). Windows binaries are available for standalone use via `claude mcp add`.
+**Supported platforms:** macOS (Intel + Apple Silicon), Linux (x86_64 + ARM64).
+Windows binaries are available for standalone use via `claude mcp add`.
 
-## MCP Server
+## Codex plugin
 
-`pgs` also ships `pgs-mcp`, a local stdio MCP server for the same scan/status/stage/unstage/commit workflow.
+Install `pgs` as a Codex plugin for the same MCP tools and skill:
+
+```bash
+codex plugin marketplace add UtsavBalar1231/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+Or test locally during development:
+
+```bash
+codex plugin marketplace add /path/to/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+The Codex manifest lives in `.codex-plugin/plugin.json` and is mirrored into
+`plugins/pgs/` for marketplace installation. The canonical skill source is
+`plugins/pgs/skills/git-commit-staging/SKILL.md`; the top-level `skills/` path is
+a repo-local symlink for root-plugin development.
+
+## MCP server
+
+`pgs` also ships `pgs-mcp`, a local stdio MCP server over the same
+scan/status/stage/unstage/commit workflow.
 
 ```bash
 cargo run --bin pgs-mcp
@@ -118,7 +169,8 @@ claude mcp add --transport stdio pgs -- /path/to/pgs-mcp
 codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
-MCP tool calls require an explicit `repo_path`. For full MCP usage, task support, and safety notes, see `docs/MCP_SERVER.md`.
+MCP tool calls require an explicit `repo_path`. For full MCP usage, task support,
+and safety notes, see `docs/MCP_SERVER.md`.
 
 ## Build
 
@@ -131,4 +183,5 @@ cargo fmt --check                  # format check
 
 Requires Rust 1.85+ and a C compiler (for libgit2).
 
-See `docs/CLI_SPEC.md` for the complete output contract and `docs/ARCHITECTURE.md` for system design.
+See `docs/CLI_SPEC.md` for the complete output contract and
+`docs/ARCHITECTURE.md` for system design.
