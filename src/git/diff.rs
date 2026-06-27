@@ -102,7 +102,10 @@ pub fn build_scan_result(
         if is_binary {
             summary.binary += 1;
         }
-        if old_mode != new_mode {
+        // Count mode changes only on files that existed on both sides. Added files
+        // have `old_mode == 0` (no prior entry) and deleted files have `new_mode == 0`;
+        // both must be excluded — a real mode transition requires non-zero modes on both sides.
+        if old_mode != 0 && new_mode != 0 && old_mode != new_mode {
             summary.mode_changed += 1;
         }
 
@@ -1074,6 +1077,43 @@ mod tests {
         assert!(
             lines_deleted <= 2,
             "at most 2 deleted lines for target string diff"
+        );
+    }
+
+    /// `mode_changed` must only count files that existed on BOTH sides (i.e. a real
+    /// permission flip on a Modified file). Added files have `old_mode == 0` and
+    /// must NOT increment the counter, even though their modes differ from zero.
+    #[cfg(unix)]
+    #[test]
+    fn mode_changed_excludes_added_and_deleted_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, repo) = setup_repo();
+
+        // (a) Committed file that gets chmod+x — a true mode change.
+        commit_file(&repo, dir.path(), "script.sh", "#!/bin/sh\n", "add script");
+        // (b) Brand-new untracked file — Added, no old_mode.
+        write_file(dir.path(), "brand_new.rs", "fn new() {}\n");
+
+        // Enable filemode so libgit2 reports the permission change.
+        repo.config()
+            .expect("config")
+            .set_bool("core.filemode", true)
+            .expect("set filemode");
+
+        // Make script.sh executable in the workdir.
+        let full = dir.path().join("script.sh");
+        std::fs::set_permissions(&full, std::fs::Permissions::from_mode(0o755)).expect("chmod +x");
+
+        let diff = diff_index_to_workdir(&repo, 3).expect("diff");
+        let result = build_scan_result(&repo, &diff, None).expect("scan");
+
+        // script.sh (mode change) + brand_new.rs (added) = 2 files total
+        assert_eq!(result.summary.total_files, 2, "expected 2 files in scan");
+        // Only script.sh has a real mode transition — brand_new.rs must NOT count.
+        assert_eq!(
+            result.summary.mode_changed, 1,
+            "mode_changed must be 1 (script.sh only); added files must not increment it"
         );
     }
 
