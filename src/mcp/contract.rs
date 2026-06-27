@@ -103,6 +103,9 @@ pub struct StageToolInput {
     pub limit: Option<u32>,
     /// Optional diff context override used while resolving selections.
     pub context: Option<u32>,
+    /// Per-file checksums from a prior scan (path → SHA-256). When present for
+    /// a file, returns `StaleScan` (exit 3) if the file changed since the scan.
+    pub expected_checksums: Option<std::collections::HashMap<String, String>>,
 }
 
 impl From<StageToolInput> for McpStageRequest {
@@ -115,6 +118,7 @@ impl From<StageToolInput> for McpStageRequest {
             explain: value.explain.unwrap_or(false),
             limit: value.limit.unwrap_or(200),
             context: value.context.unwrap_or(DEFAULT_CONTEXT),
+            expected_checksums: value.expected_checksums.unwrap_or_default(),
         }
     }
 }
@@ -339,6 +343,14 @@ define_tool_output!(OverviewToolOutput, OverviewOutput);
 define_tool_output!(SplitHunkToolOutput, SplitHunkOutput);
 define_tool_output!(PlanCheckToolOutput, PlanCheckOutput);
 define_tool_output!(PlanDiffToolOutput, PlanDiffOutput);
+
+/// No-effect/error envelope. All typed output structs skip `pgs` when `None`, so the
+/// JSON is command-agnostic: `{"outcome": ..., "pgs_error": ...}` for every command.
+#[derive(Serialize)]
+struct ToolOutcomeOnly {
+    outcome: ToolOutcome,
+    pgs_error: PgsToolError,
+}
 
 /// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
 pub fn tool_definitions() -> Vec<Tool> {
@@ -645,267 +657,56 @@ fn log_summary_text(log: &LogOutput) -> String {
 }
 
 fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
+    macro_rules! ok {
+        ($wrapper:ident, $pgs:expr, $summary_fn:expr) => {{
+            let pgs = $pgs;
+            let text = $summary_fn(&pgs);
+            structured_tool_result(
+                $wrapper {
+                    outcome: ToolOutcome::Ok,
+                    pgs: Some(pgs),
+                    pgs_error: None,
+                },
+                text,
+                false,
+            )
+        }};
+    }
     match output {
-        McpTypedOutput::Scan(scan) => structured_tool_result(
-            ScanToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(scan.clone()),
-                pgs_error: None,
-            },
-            scan_summary_text(&scan),
-            false,
-        ),
-        McpTypedOutput::Operation(operation) => structured_tool_result(
-            OperationToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(operation.clone()),
-                pgs_error: None,
-            },
-            operation_summary_text(&operation),
-            false,
-        ),
-        McpTypedOutput::Status(status) => structured_tool_result(
-            StatusToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(status.clone()),
-                pgs_error: None,
-            },
-            status_summary_text(&status),
-            false,
-        ),
-        McpTypedOutput::Commit(commit) => structured_tool_result(
-            CommitToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(commit.clone()),
-                pgs_error: None,
-            },
-            commit_summary_text(&commit),
-            false,
-        ),
-        McpTypedOutput::Log(log) => structured_tool_result(
-            LogToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(log.clone()),
-                pgs_error: None,
-            },
-            log_summary_text(&log),
-            false,
-        ),
-        McpTypedOutput::Overview(overview) => structured_tool_result(
-            OverviewToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(overview.clone()),
-                pgs_error: None,
-            },
-            overview_summary_text(&overview),
-            false,
-        ),
-        McpTypedOutput::SplitHunk(split) => structured_tool_result(
-            SplitHunkToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(split.clone()),
-                pgs_error: None,
-            },
-            split_hunk_summary_text(&split),
-            false,
-        ),
-        McpTypedOutput::PlanCheck(plan_check) => structured_tool_result(
-            PlanCheckToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(plan_check.clone()),
-                pgs_error: None,
-            },
-            plan_check_summary_text(&plan_check),
-            false,
-        ),
-        McpTypedOutput::PlanDiff(plan_diff) => structured_tool_result(
-            PlanDiffToolOutput {
-                outcome: ToolOutcome::Ok,
-                pgs: Some(plan_diff.clone()),
-                pgs_error: None,
-            },
-            plan_diff_summary_text(&plan_diff),
-            false,
-        ),
+        McpTypedOutput::Scan(v) => ok!(ScanToolOutput, v, scan_summary_text),
+        McpTypedOutput::Operation(v) => ok!(OperationToolOutput, v, operation_summary_text),
+        McpTypedOutput::Status(v) => ok!(StatusToolOutput, v, status_summary_text),
+        McpTypedOutput::Commit(v) => ok!(CommitToolOutput, v, commit_summary_text),
+        McpTypedOutput::Log(v) => ok!(LogToolOutput, v, log_summary_text),
+        McpTypedOutput::Overview(v) => ok!(OverviewToolOutput, v, overview_summary_text),
+        McpTypedOutput::SplitHunk(v) => ok!(SplitHunkToolOutput, v, split_hunk_summary_text),
+        McpTypedOutput::PlanCheck(v) => ok!(PlanCheckToolOutput, v, plan_check_summary_text),
+        McpTypedOutput::PlanDiff(v) => ok!(PlanDiffToolOutput, v, plan_diff_summary_text),
     }
 }
 
 fn no_effect_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
-    let pgs_error = build_pgs_error(error);
-    let text = no_effect_text(&error.source);
-
-    match error.command {
-        OutputCommand::Scan => structured_tool_result(
-            ScanToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::Stage | OutputCommand::Unstage => structured_tool_result(
-            OperationToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::Commit => structured_tool_result(
-            CommitToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::Status => structured_tool_result(
-            StatusToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::Log => structured_tool_result(
-            LogToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::Overview => structured_tool_result(
-            OverviewToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::SplitHunk => structured_tool_result(
-            SplitHunkToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::PlanCheck => structured_tool_result(
-            PlanCheckToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-        OutputCommand::PlanDiff => structured_tool_result(
-            PlanDiffToolOutput {
-                outcome: ToolOutcome::NoEffect,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            false,
-        ),
-    }
+    structured_tool_result(
+        ToolOutcomeOnly {
+            outcome: ToolOutcome::NoEffect,
+            pgs_error: build_pgs_error(error),
+        },
+        no_effect_text(&error.source),
+        false,
+    )
 }
 
 fn error_result(error: &McpAdapterError) -> Result<CallToolResult, PgsError> {
     let pgs_error = build_pgs_error(error);
     let text = format!("{} Guidance: {}", error.source, pgs_error.guidance);
-
-    match error.command {
-        OutputCommand::Scan => structured_tool_result(
-            ScanToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::Stage | OutputCommand::Unstage => structured_tool_result(
-            OperationToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::Commit => structured_tool_result(
-            CommitToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::Status => structured_tool_result(
-            StatusToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::Log => structured_tool_result(
-            LogToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::Overview => structured_tool_result(
-            OverviewToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::SplitHunk => structured_tool_result(
-            SplitHunkToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::PlanCheck => structured_tool_result(
-            PlanCheckToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-        OutputCommand::PlanDiff => structured_tool_result(
-            PlanDiffToolOutput {
-                outcome: ToolOutcome::Error,
-                pgs: None,
-                pgs_error: Some(pgs_error),
-            },
-            text,
-            true,
-        ),
-    }
+    structured_tool_result(
+        ToolOutcomeOnly {
+            outcome: ToolOutcome::Error,
+            pgs_error,
+        },
+        text,
+        true,
+    )
 }
 
 fn structured_tool_result<T: Serialize>(
@@ -934,11 +735,14 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::FileNotInDiff { .. }
         | PgsError::BinaryFileGranular { .. }
         | PgsError::GranularOnWholeFile { .. }
-        | PgsError::ExplainWithoutDryRun => PgsToolErrorKind::User,
+        | PgsError::ExplainWithoutDryRun
+        | PgsError::NonUtf8Partial { .. }
+        | PgsError::CrlfMismatch { .. } => PgsToolErrorKind::User,
         PgsError::StaleScan { .. } | PgsError::IndexLocked | PgsError::StagingFailed { .. } => {
             PgsToolErrorKind::Retryable
         }
-        PgsError::WorkdirMismatch { .. }
+        PgsError::RestoreFailed { .. }
+        | PgsError::WorkdirMismatch { .. }
         | PgsError::Git(_)
         | PgsError::Io { .. }
         | PgsError::Json(_)
@@ -984,11 +788,12 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
 
 fn plan_check_summary_text(output: &PlanCheckOutput) -> String {
     format!(
-        "Plan check: {} overlap(s), {} uncovered, {} unsafe selector(s), {} unknown path(s).",
+        "Plan check: {} overlap(s), {} uncovered, {} unsafe selector(s), {} unknown path(s), {} unknown hunk id(s).",
         output.overlaps.len(),
         output.uncovered.len(),
         output.unsafe_selectors.len(),
-        output.unknown_paths.len()
+        output.unknown_paths.len(),
+        output.unknown_hunk_ids.len()
     )
 }
 
@@ -1061,7 +866,10 @@ fn error_guidance(error: &PgsError) -> String {
         PgsError::UnknownHunkId { .. } | PgsError::FileNotInDiff { .. } => {
             "Run pgs_scan again and retry with a current hunk ID or file path.".to_owned()
         }
-        PgsError::BinaryFileGranular { .. } | PgsError::GranularOnWholeFile { .. } => {
+        PgsError::BinaryFileGranular { .. }
+        | PgsError::GranularOnWholeFile { .. }
+        | PgsError::NonUtf8Partial { .. }
+        | PgsError::CrlfMismatch { .. } => {
             "Retry with a file-level selection instead of hunk or line granularity.".to_owned()
         }
         PgsError::ExplainWithoutDryRun => {
@@ -1076,6 +884,10 @@ fn error_guidance(error: &PgsError) -> String {
         PgsError::StagingFailed { .. } => {
             "Retry the request once the repository index is stable.".to_owned()
         }
+        PgsError::RestoreFailed { backup_id, .. } => format!(
+            "The index may be inconsistent. Restore manually: \
+             cp .git/pgs/backups/{backup_id}.index .git/index"
+        ),
         PgsError::WorkdirMismatch { .. }
         | PgsError::Git(_)
         | PgsError::Io { .. }
@@ -1299,6 +1111,165 @@ mod tests {
             annotations.destructive_hint,
             Some(false),
             "log tool should not be annotated as destructive"
+        );
+    }
+
+    #[test]
+    fn mcp_error_result_carries_structured_error_content() {
+        let result = map_execution_result(Err(McpAdapterError::new(
+            OutputCommand::Scan,
+            PgsError::IndexLocked,
+        )))
+        .expect("error result should serialize");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content,
+            Some(serde_json::json!({
+                "outcome": "error",
+                "pgs_error": {
+                    "kind": "retryable",
+                    "code": "index_locked",
+                    "message": "git index is locked by another process",
+                    "exit_code": 3,
+                    "retryable": true,
+                    "guidance": "Wait for the git index lock to clear, then retry the request."
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn mcp_no_effect_and_error_outcomes_are_command_agnostic() {
+        // no_effect and error outcomes carry no pgs payload; the JSON is identical for
+        // every command. Assert the invariant across all 10 OutputCommand variants.
+        let expected_no_effect = serde_json::json!({
+            "outcome": "no_effect",
+            "pgs_error": {
+                "kind": "no_effect",
+                "code": "no_changes",
+                "message": "no changes detected in working tree",
+                "exit_code": 1,
+                "retryable": false,
+                "guidance": "Check the repository state or narrow the request before retrying."
+            }
+        });
+        let expected_error = serde_json::json!({
+            "outcome": "error",
+            "pgs_error": {
+                "kind": "retryable",
+                "code": "index_locked",
+                "message": "git index is locked by another process",
+                "exit_code": 3,
+                "retryable": true,
+                "guidance": "Wait for the git index lock to clear, then retry the request."
+            }
+        });
+
+        macro_rules! check_command {
+            ($cmd:expr) => {
+                let no_effect =
+                    map_execution_result(Err(McpAdapterError::new($cmd, PgsError::NoChanges)))
+                        .expect("no-effect result should serialize");
+                assert_eq!(no_effect.is_error, Some(false));
+                assert_eq!(
+                    no_effect.structured_content.as_ref(),
+                    Some(&expected_no_effect)
+                );
+
+                let err =
+                    map_execution_result(Err(McpAdapterError::new($cmd, PgsError::IndexLocked)))
+                        .expect("error result should serialize");
+                assert_eq!(err.is_error, Some(true));
+                assert_eq!(err.structured_content.as_ref(), Some(&expected_error));
+            };
+        }
+
+        check_command!(OutputCommand::Scan);
+        check_command!(OutputCommand::Stage);
+        check_command!(OutputCommand::Unstage);
+        check_command!(OutputCommand::Status);
+        check_command!(OutputCommand::Commit);
+        check_command!(OutputCommand::Log);
+        check_command!(OutputCommand::Overview);
+        check_command!(OutputCommand::SplitHunk);
+        check_command!(OutputCommand::PlanCheck);
+        check_command!(OutputCommand::PlanDiff);
+    }
+
+    /// Guards the exact `structuredContent` shape of scan and status success envelopes.
+    #[test]
+    fn mcp_success_envelopes_match_snapshot() {
+        use crate::cmd::mcp_adapter::McpTypedOutput;
+        use crate::models::{ScanResult, ScanSummary, StatusReport, StatusSummary};
+
+        // Build via the public factory methods to avoid depending on private view types.
+        let scan_output = ScanOutput::compact(&ScanResult {
+            files: vec![],
+            summary: ScanSummary {
+                total_files: 0,
+                total_hunks: 0,
+                added: 0,
+                modified: 0,
+                deleted: 0,
+                renamed: 0,
+                binary: 0,
+                mode_changed: 0,
+            },
+        });
+        let scan_result = map_execution_result(Ok(McpTypedOutput::Scan(scan_output)))
+            .expect("scan success result must serialize");
+        assert_eq!(scan_result.is_error, Some(false));
+        assert_eq!(
+            scan_result.structured_content,
+            Some(serde_json::json!({
+                "outcome": "ok",
+                "pgs": {
+                    "version": "v1",
+                    "command": "scan",
+                    "detail": "compact",
+                    "files": [],
+                    "summary": {
+                        "total_files": 0,
+                        "total_hunks": 0,
+                        "added": 0,
+                        "modified": 0,
+                        "deleted": 0,
+                        "renamed": 0,
+                        "binary": 0,
+                        "mode_changed": 0
+                    }
+                }
+            })),
+            "scan success envelope changed — update snapshot if intentional"
+        );
+
+        let status_output = StatusOutput::from(StatusReport {
+            staged_files: vec![],
+            summary: StatusSummary {
+                total_files: 0,
+                total_additions: 0,
+                total_deletions: 0,
+            },
+        });
+        let status_result = map_execution_result(Ok(McpTypedOutput::Status(status_output)))
+            .expect("status success result must serialize");
+        assert_eq!(status_result.is_error, Some(false));
+        assert_eq!(
+            status_result.structured_content,
+            Some(serde_json::json!({
+                "outcome": "ok",
+                "pgs": {
+                    "version": "v1",
+                    "command": "status",
+                    "files": [],
+                    "summary": {
+                        "total_files": 0,
+                        "total_additions": 0,
+                        "total_deletions": 0
+                    }
+                }
+            })),
+            "status success envelope changed — update snapshot if intentional"
         );
     }
 }
