@@ -9,7 +9,7 @@ use crate::models::{
     FileStatus, OperationPreview, OperationStatus, ResolvedSelection, SelectionSpec,
     format_selection,
 };
-use crate::output::view::{CommandOutput, OperationItemView, OperationOutput};
+use crate::output::view::{CommandOutput, OperationItemView, OperationOutput, OutputCommand};
 use crate::safety::{backup, lock};
 use crate::selection::{parse, resolve};
 
@@ -33,6 +33,12 @@ pub struct StageArgs {
     /// Per-file preview cap (default 200, 0 = unlimited); applies only with --dry-run --explain.
     #[arg(long, default_value_t = 200)]
     pub limit: u32,
+
+    /// Assert that a file still has a given SHA-256 checksum from a prior scan
+    /// (`PATH=SHA` format, repeatable). Fails with `StaleScan` (exit 3) when the
+    /// file changed between the agent's scan and this stage call.
+    #[arg(long = "expect", value_name = "PATH=SHA")]
+    pub expect: Vec<String>,
 }
 
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
@@ -45,6 +51,9 @@ pub fn execute(
     if args.explain && !args.dry_run {
         return Err(PgsError::ExplainWithoutDryRun);
     }
+
+    // Parse --expect pairs early; fail fast on format errors before any I/O.
+    let expected_checksums = parse_expect_pairs(&args.expect)?;
 
     // 1. Open repo
     let repository = repo::open(repo_path)?;
@@ -175,8 +184,24 @@ pub fn execute(
         return Err(PgsError::SelectionEmpty);
     }
 
+    // Reject --expect paths that name a file not in the resolved selection.
+    let resolved_paths: HashSet<&str> = work_items
+        .iter()
+        .map(|(_, r)| r.file_path.as_str())
+        .collect();
+    for path in expected_checksums.keys() {
+        if !resolved_paths.contains(path.as_str()) {
+            return Err(PgsError::InvalidSelection {
+                detail: format!("--expect path '{path}' is not part of the staging selection"),
+            });
+        }
+    }
+
     for (_, resolved) in &work_items {
-        resolve::validate_freshness(&repository, &scan, &resolved.file_path)?;
+        let expected = expected_checksums
+            .get(&resolved.file_path)
+            .map(String::as_str);
+        resolve::validate_freshness(&repository, &scan, &resolved.file_path, expected)?;
     }
 
     if args.dry_run {
@@ -187,7 +212,13 @@ pub fn execute(
             })
             .collect();
 
-        let output = OperationOutput::stage(OperationStatus::DryRun, items, vec![], None);
+        let output = OperationOutput::new(
+            OutputCommand::Stage,
+            OperationStatus::DryRun,
+            items,
+            vec![],
+            None,
+        );
         if args.explain {
             let previews = compute_previews(&repository, &scan, &work_items, args.limit)?;
             return Ok(output.with_previews(previews).into());
@@ -245,8 +276,15 @@ pub fn execute(
                 actual_lines_by_file.insert(file_path.clone(), lines_affected);
             }
             Err(e) => {
-                // Rollback on failure
-                let _ = backup::restore_backup(&repository, &backup_info.backup_id);
+                if let Err(restore_err) =
+                    backup::restore_backup(&repository, &backup_info.backup_id)
+                {
+                    return Err(PgsError::RestoreFailed {
+                        backup_id: backup_info.backup_id.clone(),
+                        op_error: e.to_string(),
+                        restore_error: restore_err.to_string(),
+                    });
+                }
                 return Err(e);
             }
         }
@@ -278,7 +316,8 @@ pub fn execute(
         })
         .collect();
 
-    Ok(OperationOutput::stage(
+    Ok(OperationOutput::new(
+        OutputCommand::Stage,
         OperationStatus::Ok,
         items,
         warnings,
@@ -347,7 +386,13 @@ fn execute_single_stage(
         // Modified + lines selection
         (FileStatus::Modified, true, _, false) => {
             let sel = line_selection_for(scan, resolved);
-            staging::stage_lines(repo, file_path, &sel)
+            let mode_override = scan
+                .files
+                .iter()
+                .find(|f| f.path == file_path)
+                .filter(|fi| fi.old_mode != fi.new_mode)
+                .map(|fi| fi.new_mode);
+            staging::stage_lines(repo, file_path, &sel, mode_override)
         }
 
         // Modified + hunk selection (or file selection with excluded hunks)
@@ -367,7 +412,10 @@ fn execute_single_stage(
             // Collect selected lines across hunks via line_selection_for, then
             // make a single stage_lines call (avoids overwriting index per-hunk).
             let sel = line_selection_for(scan, resolved);
-            staging::stage_lines(repo, file_path, &sel)
+            let mode_override = file_info
+                .filter(|fi| fi.old_mode != fi.new_mode)
+                .map(|fi| fi.new_mode);
+            staging::stage_lines(repo, file_path, &sel, mode_override)
         }
 
         // Binary or Added file-level: stage the whole file
@@ -396,6 +444,30 @@ fn is_reportable_selection(scan: &crate::models::ScanResult, resolved: &Resolved
     !resolved.hunk_indices.is_empty() || is_whole_file_operation(scan, &resolved.file_path)
 }
 
+/// Parse `--expect PATH=SHA` pairs into a map, rejecting malformed or duplicate entries.
+///
+/// # Errors
+///
+/// [`PgsError::InvalidSelection`] on missing `=` separator or duplicate path.
+fn parse_expect_pairs(pairs: &[String]) -> Result<HashMap<String, String>, PgsError> {
+    let mut map = HashMap::new();
+    for pair in pairs {
+        // rsplit_once: SHA is hex (no '='), so split on the LAST '=' to handle
+        // file paths that contain '=' (e.g. "src/foo=bar.rs").
+        let (path, sha) = pair
+            .rsplit_once('=')
+            .ok_or_else(|| PgsError::InvalidSelection {
+                detail: format!("--expect requires PATH=SHA format, got: '{pair}'"),
+            })?;
+        if map.insert(path.to_owned(), sha.to_owned()).is_some() {
+            return Err(PgsError::InvalidSelection {
+                detail: format!("--expect has duplicate entry for path: '{path}'"),
+            });
+        }
+    }
+    Ok(map)
+}
+
 /// Estimate lines staged for dry-run reporting.
 fn estimate_lines(scan: &crate::models::ScanResult, resolved: &ResolvedSelection) -> u32 {
     let file_info = scan.files.iter().find(|f| f.path == resolved.file_path);
@@ -417,5 +489,37 @@ fn estimate_lines(scan: &crate::models::ScanResult, resolved: &ResolvedSelection
                 )
             })
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_expect_pairs;
+
+    #[test]
+    fn parse_expect_pairs_path_with_equals_sign_splits_on_last_equals() {
+        // A file path containing '=' must not truncate the path at the first '='.
+        let pairs = vec!["src/foo=bar.rs=abc123def456abc1".to_owned()];
+        let map = parse_expect_pairs(&pairs).expect("parse");
+        assert_eq!(
+            map.get("src/foo=bar.rs").map(String::as_str),
+            Some("abc123def456abc1")
+        );
+    }
+
+    #[test]
+    fn parse_expect_pairs_simple_path_parses_correctly() {
+        let pairs = vec!["src/main.rs=deadbeefcafe0000".to_owned()];
+        let map = parse_expect_pairs(&pairs).expect("parse");
+        assert_eq!(
+            map.get("src/main.rs").map(String::as_str),
+            Some("deadbeefcafe0000")
+        );
+    }
+
+    #[test]
+    fn parse_expect_pairs_missing_equals_returns_error() {
+        let pairs = vec!["src/main.rs".to_owned()];
+        assert!(parse_expect_pairs(&pairs).is_err());
     }
 }

@@ -73,6 +73,32 @@ pub enum PgsError {
     #[error("--explain requires --dry-run")]
     ExplainWithoutDryRun,
 
+    /// Partial staging (lines/hunk) was attempted on a non-UTF-8 file.
+    ///
+    /// The line-diff engine would silently replace invalid bytes with U+FFFD,
+    /// corrupting the staged blob. Use whole-file staging to preserve bytes exactly.
+    #[error(
+        "non-UTF-8 file {path}: partial staging is not supported; \
+         use whole-file staging instead"
+    )]
+    NonUtf8Partial {
+        /// Path to the non-UTF-8 file.
+        path: String,
+    },
+
+    /// Partial staging across a line-ending boundary: one side is predominantly LF,
+    /// the other predominantly CRLF. `similar::TextDiff` would treat every line as
+    /// changed (the `\r` is part of each value), yielding a mixed-ending blob.
+    #[error(
+        "line-ending mismatch in {path}: base and workdir use different dominant \
+         line endings (one predominantly LF, the other predominantly CRLF); \
+         use whole-file staging instead of partial staging"
+    )]
+    CrlfMismatch {
+        /// Path to the file with mismatched line endings.
+        path: String,
+    },
+
     // --- Exit code 3: Conflict (retryable — agent should re-scan) ---
     /// The file has changed on disk since the last scan.
     #[error("stale scan detected for {path}: file has changed since last scan")]
@@ -95,6 +121,23 @@ pub enum PgsError {
     },
 
     // --- Exit code 4: Internal error ---
+    /// The operation failed and the automatic rollback via `restore_backup` also failed.
+    /// The index may be inconsistent; use `backup_id` to restore manually from
+    /// `.git/pgs/backups/`.
+    #[error(
+        "staging operation failed: {op_error}; \
+         automatic rollback also failed (backup_id `{backup_id}`): {restore_error}. \
+         The index may be inconsistent — restore manually from backup."
+    )]
+    RestoreFailed {
+        /// Backup ID under `.git/pgs/backups/` for manual recovery.
+        backup_id: String,
+        /// Original staging/unstaging error.
+        op_error: String,
+        /// `restore_backup` error.
+        restore_error: String,
+    },
+
     /// Working directory resolved to the wrong path (non-standard `.git` layout).
     #[error("working directory mismatch: expected {expected}, got {actual}")]
     WorkdirMismatch {
@@ -139,9 +182,12 @@ impl PgsError {
             Self::BinaryFileGranular { .. } => "binary_file_granular",
             Self::GranularOnWholeFile { .. } => "granular_on_whole_file",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
+            Self::NonUtf8Partial { .. } => "non_utf8_partial",
+            Self::CrlfMismatch { .. } => "crlf_mismatch",
             Self::StaleScan { .. } => "stale_scan",
             Self::IndexLocked => "index_locked",
             Self::StagingFailed { .. } => "staging_failed",
+            Self::RestoreFailed { .. } => "restore_failed",
             Self::WorkdirMismatch { .. } => "workdir_mismatch",
             Self::Git(_) => "git_error",
             Self::Io { .. } => "io_error",
@@ -161,11 +207,14 @@ impl PgsError {
             | Self::FileNotInDiff { .. }
             | Self::BinaryFileGranular { .. }
             | Self::GranularOnWholeFile { .. }
-            | Self::ExplainWithoutDryRun => 2,
+            | Self::ExplainWithoutDryRun
+            | Self::NonUtf8Partial { .. }
+            | Self::CrlfMismatch { .. } => 2,
 
             Self::StaleScan { .. } | Self::IndexLocked | Self::StagingFailed { .. } => 3,
 
-            Self::WorkdirMismatch { .. }
+            Self::RestoreFailed { .. }
+            | Self::WorkdirMismatch { .. }
             | Self::Git(_)
             | Self::Io { .. }
             | Self::Json(_)
@@ -275,6 +324,37 @@ mod tests {
             path: "src/main.rs".into(),
         };
         assert_eq!(err.code(), "stale_scan");
+    }
+
+    #[test]
+    fn restore_failed_maps_to_exit_code_4() {
+        let err = PgsError::RestoreFailed {
+            backup_id: "backup-20260101T000000-abcd1234".into(),
+            op_error: "staging failed for src/main.rs: blob write failed".into(),
+            restore_error: "backup not found: backup-20260101T000000-abcd1234".into(),
+        };
+        assert_eq!(err.exit_code(), 4);
+        assert_eq!(err.code(), "restore_failed");
+    }
+
+    #[test]
+    fn restore_failed_display_includes_backup_id_and_both_errors() {
+        let err = PgsError::RestoreFailed {
+            backup_id: "backup-xyz".into(),
+            op_error: "op went wrong".into(),
+            restore_error: "backup file missing".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("backup-xyz"), "backup_id missing: {msg}");
+        assert!(msg.contains("op went wrong"), "op_error missing: {msg}");
+        assert!(
+            msg.contains("backup file missing"),
+            "restore_error missing: {msg}"
+        );
+        assert!(
+            msg.contains("inconsistent"),
+            "inconsistency warning missing: {msg}"
+        );
     }
 
     #[test]

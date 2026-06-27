@@ -80,6 +80,7 @@ pub(crate) fn stage_lines(
     repo: &Repository,
     file_path: &str,
     selection: &LineSelection,
+    mode_override: Option<u32>,
 ) -> Result<u32, PgsError> {
     let workdir = repo::workdir(repo)?;
     let blob = read_workdir_for_blob(workdir, file_path)?;
@@ -104,13 +105,31 @@ pub(crate) fn stage_lines(
     let base_bytes =
         read_index_blob(repo, file_path).or_else(|_| read_head_blob(repo, file_path))?;
 
-    let base_text = String::from_utf8_lossy(&base_bytes);
-    let work_text = String::from_utf8_lossy(&work_bytes);
+    // Guard: line-diffing requires valid UTF-8. `from_utf8_lossy` replaces bad bytes
+    // with U+FFFD (3 bytes each), which would corrupt the staged blob silently.
+    let base_text = std::str::from_utf8(&base_bytes).map_err(|_| PgsError::NonUtf8Partial {
+        path: file_path.to_owned(),
+    })?;
+    let work_text = std::str::from_utf8(&work_bytes).map_err(|_| PgsError::NonUtf8Partial {
+        path: file_path.to_owned(),
+    })?;
+
+    // Guard: cross-line-ending mismatch causes diff artifacts (e.g. spurious context lines).
+    if let (Some(base_crlf), Some(work_crlf)) = (
+        crate::git::is_predominantly_crlf(base_text),
+        crate::git::is_predominantly_crlf(work_text),
+    ) {
+        if base_crlf != work_crlf {
+            return Err(PgsError::CrlfMismatch {
+                path: file_path.to_owned(),
+            });
+        }
+    }
 
     let base_has_trailing_newline = base_text.ends_with('\n');
     let work_has_trailing_newline = work_text.ends_with('\n');
 
-    let diff = TextDiff::from_lines(base_text.as_ref(), work_text.as_ref());
+    let diff = TextDiff::from_lines(base_text, work_text);
 
     let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_staged: u32 = 0;
@@ -136,33 +155,37 @@ pub(crate) fn stage_lines(
         }
     }
 
-    // Reconstruct content: join lines (each already has its own newline from the diff)
+    // Reconstruct content: join lines (each already carries its own newline from the diff).
     let mut result = result_lines.concat();
 
-    // Trailing newline preservation:
-    // - If workdir has trailing newline and we staged something, result should end with newline
-    // - If neither had trailing newline, result should not end with newline
-    // - Preserve the "expected" trailing newline state:
-    //   If no lines were staged, result should match HEAD's trailing newline.
-    //   If lines were staged, match the mix: if any selected lines came from workdir
-    //   (which has trailing newline), preserve that.
-    let should_have_trailing_newline = if lines_staged > 0 {
-        work_has_trailing_newline
-    } else {
-        base_has_trailing_newline
-    };
+    // Trailing-newline fixup: only adjust non-empty results.
+    // An empty result (all lines deleted) must stay empty — adding '\n' would produce a
+    // one-byte blob that differs from the workdir and breaks the round-trip invariant.
+    if !result.is_empty() {
+        let should_have_trailing_newline = if lines_staged > 0 {
+            work_has_trailing_newline
+        } else {
+            base_has_trailing_newline
+        };
 
-    if should_have_trailing_newline && !result.ends_with('\n') {
-        result.push('\n');
-    } else if !should_have_trailing_newline && result.ends_with('\n') {
-        result.pop();
+        if should_have_trailing_newline && !result.ends_with('\n') {
+            result.push('\n');
+        } else if !should_have_trailing_newline && result.ends_with('\n') {
+            result.pop();
+        }
     }
 
     let content = result.into_bytes();
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
 
-    let entry = build_index_entry(&index, file_path, oid, saturating_u32(content.len()), None);
+    let entry = build_index_entry(
+        &index,
+        file_path,
+        oid,
+        saturating_u32(content.len()),
+        mode_override,
+    );
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
 
@@ -173,14 +196,19 @@ pub(crate) fn stage_lines(
 ///
 /// `Addition` lines → `sel.new_lines` (workdir-side line numbers, gate Insert ops).
 /// `Deletion` lines → `sel.old_lines` (HEAD/index-side line numbers, gate Delete ops).
-/// `Context` and `Mixed` lines are skipped — they never need gating.
+/// `Context` lines are skipped — they never need gating.
 ///
 /// Delegates to [`stage_lines`].
 ///
 /// # Errors
 ///
 /// Propagates all errors from [`stage_lines`].
-pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result<u32, PgsError> {
+pub fn stage_hunk(
+    repo: &Repository,
+    file_path: &str,
+    hunk: &HunkInfo,
+    mode_override: Option<u32>,
+) -> Result<u32, PgsError> {
     let mut sel = LineSelection::default();
     for line in &hunk.lines {
         match line.origin {
@@ -190,10 +218,10 @@ pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result
             LineOrigin::Deletion => {
                 sel.old_lines.insert(line.line_number);
             }
-            LineOrigin::Context | LineOrigin::Mixed => {}
+            LineOrigin::Context => {}
         }
     }
-    stage_lines(repo, file_path, &sel)
+    stage_lines(repo, file_path, &sel, mode_override)
 }
 
 /// Inputs for [`preview_stage`] — bundled to keep the function under four params.
@@ -341,7 +369,6 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
                         }
                         old_cursor = old_cursor.saturating_add(1);
                     }
-                    LineOrigin::Mixed => {}
                 }
             }
         }
@@ -362,7 +389,7 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
                 LineOrigin::Deletion => {
                     sel.old_lines.insert(line.line_number);
                 }
-                LineOrigin::Context | LineOrigin::Mixed => {}
+                LineOrigin::Context => {}
             }
         }
     }
@@ -403,9 +430,25 @@ fn collect_preview_additions(
 
     let base_bytes = read_base_blob_or_empty(repo, file_path);
 
-    let base_text = String::from_utf8_lossy(&base_bytes);
-    let work_text = String::from_utf8_lossy(&work_bytes);
-    let diff = TextDiff::from_lines(base_text.as_ref(), work_text.as_ref());
+    // Same guards as `stage_lines`: reject non-UTF-8 or CRLF-mismatched content so
+    // the preview accurately reflects what the real stage call would do (or refuse).
+    let base_text = std::str::from_utf8(&base_bytes).map_err(|_| PgsError::NonUtf8Partial {
+        path: file_path.to_owned(),
+    })?;
+    let work_text = std::str::from_utf8(&work_bytes).map_err(|_| PgsError::NonUtf8Partial {
+        path: file_path.to_owned(),
+    })?;
+    if let (Some(base_crlf), Some(work_crlf)) = (
+        crate::git::is_predominantly_crlf(base_text),
+        crate::git::is_predominantly_crlf(work_text),
+    ) {
+        if base_crlf != work_crlf {
+            return Err(PgsError::CrlfMismatch {
+                path: file_path.to_owned(),
+            });
+        }
+    }
+    let diff = TextDiff::from_lines(base_text, work_text);
 
     let mut out: Vec<PreviewLine> = Vec::new();
     for change in diff.iter_all_changes() {
@@ -682,7 +725,7 @@ mod tests {
         sel.old_lines.insert(2);
         sel.new_lines.insert(2);
 
-        let count = stage_lines(&repo, "file.txt", &sel).expect("stage_lines");
+        let count = stage_lines(&repo, "file.txt", &sel, None).expect("stage_lines");
 
         assert_eq!(count, 1); // only 1 line staged (the "MODIFIED" insertion)
         let staged = read_index_content(&repo, "file.txt");
@@ -703,7 +746,7 @@ mod tests {
         sel.old_lines.insert(2);
         sel.new_lines.insert(2);
 
-        stage_lines(&repo, "file.txt", &sel).expect("stage_lines");
+        stage_lines(&repo, "file.txt", &sel, None).expect("stage_lines");
 
         let staged = read_index_content(&repo, "file.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -726,7 +769,7 @@ mod tests {
         sel.old_lines.insert(2);
         sel.new_lines.insert(2);
 
-        stage_lines(&repo, "file.txt", &sel).expect("stage_lines");
+        stage_lines(&repo, "file.txt", &sel, None).expect("stage_lines");
 
         let staged = read_index_content(&repo, "file.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -811,7 +854,7 @@ mod tests {
         assert!(!scan.files[0].hunks.is_empty(), "expected at least 1 hunk");
 
         let hunk = &scan.files[0].hunks[0];
-        stage_hunk(&repo, "file.txt", hunk).expect("stage_hunk");
+        stage_hunk(&repo, "file.txt", hunk, None).expect("stage_hunk");
 
         let staged = read_index_content(&repo, "file.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -839,7 +882,7 @@ mod tests {
         assert!(!scan.files[0].hunks.is_empty(), "expected at least 1 hunk");
 
         let hunk = &scan.files[0].hunks[0];
-        stage_hunk(&repo, "file.txt", hunk).expect("stage_hunk");
+        stage_hunk(&repo, "file.txt", hunk, None).expect("stage_hunk");
 
         let staged = read_index_content(&repo, "file.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -887,10 +930,10 @@ mod tests {
                 LineOrigin::Deletion => {
                     sel0.old_lines.insert(line.line_number);
                 }
-                _ => {}
+                LineOrigin::Context => {}
             }
         }
-        stage_lines(&repo, "multi.txt", &sel0).expect("stage_lines hunk0");
+        stage_lines(&repo, "multi.txt", &sel0, None).expect("stage_lines hunk0");
 
         let mut sel1 = LineSelection::default();
         for line in &file.hunks[1].lines {
@@ -901,10 +944,10 @@ mod tests {
                 LineOrigin::Deletion => {
                     sel1.old_lines.insert(line.line_number);
                 }
-                _ => {}
+                LineOrigin::Context => {}
             }
         }
-        stage_lines(&repo, "multi.txt", &sel1).expect("stage_lines hunk1");
+        stage_lines(&repo, "multi.txt", &sel1, None).expect("stage_lines hunk1");
 
         let staged = read_index_content(&repo, "multi.txt");
         let staged_text = String::from_utf8(staged).expect("utf8");
@@ -951,7 +994,7 @@ mod tests {
         );
 
         // Stage hunk[0] (substitution) and commit
-        stage_hunk(&repo, "multi.txt", &scan.files[0].hunks[0]).expect("stage hunk0");
+        stage_hunk(&repo, "multi.txt", &scan.files[0].hunks[0], None).expect("stage hunk0");
         {
             let tree_oid = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(tree_oid).unwrap();
@@ -971,7 +1014,8 @@ mod tests {
         );
 
         // Stage the remaining pure-deletion hunk and commit
-        stage_hunk(&repo, "multi.txt", &scan2.files[0].hunks[0]).expect("stage deletion hunk");
+        stage_hunk(&repo, "multi.txt", &scan2.files[0].hunks[0], None)
+            .expect("stage deletion hunk");
         {
             let tree_oid = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(tree_oid).unwrap();
@@ -1042,7 +1086,7 @@ mod tests {
             whitespace_only: false,
         };
 
-        let count = stage_hunk(&repo, "file.txt", &hunk).expect("stage_hunk");
+        let count = stage_hunk(&repo, "file.txt", &hunk, None).expect("stage_hunk");
 
         // Should stage line 2 (BBB) but NOT line 4 (DDD) since it's outside the hunk
         assert!(count > 0, "should have staged at least one line");
@@ -1073,7 +1117,7 @@ mod tests {
         let mut sel = LineSelection::default();
         sel.new_lines.insert(1);
 
-        let count = stage_lines(&repo, "link", &sel).expect("stage_lines on symlink");
+        let count = stage_lines(&repo, "link", &sel, None).expect("stage_lines on symlink");
 
         assert_eq!(count, 1, "symlink short-circuit should return Ok(1)");
 
@@ -1622,6 +1666,48 @@ mod tests {
         assert!(
             !sel.new_lines.contains(&20),
             "new-line 20 from hunk[1] must not be selected by range [1..10]"
+        );
+    }
+
+    #[test]
+    fn stage_file_empty_file_whole_stages_zero_bytes() {
+        // Empty 0-byte file added to workdir must produce a 0-byte index blob.
+        let (dir, repo) = setup_repo_with_commit(&[("other.txt", "existing\n")]);
+        fs::write(dir.path().join("empty.txt"), b"").expect("write empty file");
+        stage_file(&repo, "empty.txt", None).expect("stage_file empty");
+        let staged = read_index_content(&repo, "empty.txt");
+        assert!(
+            staged.is_empty(),
+            "staged blob for empty file must be zero bytes, got: {staged:?}"
+        );
+    }
+
+    #[test]
+    fn stage_lines_pure_deletion_all_lines_produces_empty_blob() {
+        // Staging a deletion of all lines from a file with trailing newline must
+        // produce an empty blob, not a one-byte "\n" blob.
+        let (dir, repo) = setup_repo_with_commit(&[("f.txt", "line1\n")]);
+        // Workdir is empty — the file has been cleared.
+        fs::write(dir.path().join("f.txt"), b"").expect("write empty");
+
+        let diff = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff");
+        let scan = crate::git::diff::build_scan_result(&repo, &diff, None).expect("scan");
+        assert_eq!(scan.files.len(), 1);
+        let hunk = &scan.files[0].hunks[0];
+
+        // Select the deletion (old_lines contains line 1).
+        let mut sel = LineSelection::default();
+        for l in &hunk.lines {
+            if l.origin == LineOrigin::Deletion {
+                sel.old_lines.insert(l.line_number);
+            }
+        }
+        stage_lines(&repo, "f.txt", &sel, None).expect("stage_lines");
+
+        let staged = read_index_content(&repo, "f.txt");
+        assert!(
+            staged.is_empty(),
+            "staging deletion of all lines must produce empty blob, got: {staged:?}"
         );
     }
 }

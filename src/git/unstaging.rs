@@ -91,12 +91,30 @@ pub fn unstage_lines(
     let head_content = read_head_blob(repo, file_path)?;
     let index_content = read_index_blob(repo, file_path)?;
 
-    let head_text = String::from_utf8_lossy(&head_content);
-    let index_text = String::from_utf8_lossy(&index_content);
+    // Guard: line-diffing requires valid UTF-8. Invalid bytes would be silently replaced
+    // by U+FFFD (3 bytes each), corrupting the unstaged blob. Fail loud instead.
+    let head_text = std::str::from_utf8(&head_content).map_err(|_| PgsError::NonUtf8Partial {
+        path: file_path.to_owned(),
+    })?;
+    let index_text = std::str::from_utf8(&index_content).map_err(|_| PgsError::NonUtf8Partial {
+        path: file_path.to_owned(),
+    })?;
+
+    // Guard: cross-ending mismatch — same rationale as in stage_lines.
+    if let (Some(head_crlf), Some(idx_crlf)) = (
+        crate::git::is_predominantly_crlf(head_text),
+        crate::git::is_predominantly_crlf(index_text),
+    ) {
+        if head_crlf != idx_crlf {
+            return Err(PgsError::CrlfMismatch {
+                path: file_path.to_owned(),
+            });
+        }
+    }
 
     let trailing_newline = index_text.ends_with('\n');
 
-    let diff = TextDiff::from_lines(head_text.as_ref(), index_text.as_ref());
+    let diff = TextDiff::from_lines(head_text, index_text);
 
     let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_affected: u32 = 0;
@@ -109,9 +127,7 @@ pub fn unstage_lines(
             similar::ChangeTag::Delete => {
                 // Line exists in HEAD but was deleted in index (staged deletion).
                 // old_index() gives the 0-based index in the old (HEAD) text.
-                let old_line = change
-                    .old_index()
-                    .map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX) + 1);
+                let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
                 if selection.old_lines.contains(&old_line) {
                     // Restore from HEAD — unstage the deletion
                     result_lines.push(change.value());
@@ -122,9 +138,7 @@ pub fn unstage_lines(
             similar::ChangeTag::Insert => {
                 // Line was added in the index (staged addition).
                 // new_index() gives the 0-based index in the new (index) text.
-                let new_line = change
-                    .new_index()
-                    .map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX) + 1);
+                let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
                 if selection.new_lines.contains(&new_line) {
                     // Drop it — unstage the addition (revert to HEAD)
                     lines_affected += 1;
@@ -184,7 +198,7 @@ pub fn unstage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Resu
             LineOrigin::Deletion => {
                 sel.old_lines.insert(line.line_number);
             }
-            LineOrigin::Context | LineOrigin::Mixed => {}
+            LineOrigin::Context => {}
         }
     }
     unstage_lines(repo, file_path, &sel)
@@ -433,9 +447,9 @@ mod tests {
             };
             let line_number = match origin {
                 crate::models::LineOrigin::Deletion => line.old_lineno().unwrap_or(0),
-                crate::models::LineOrigin::Context
-                | crate::models::LineOrigin::Addition
-                | crate::models::LineOrigin::Mixed => line.new_lineno().unwrap_or(0),
+                crate::models::LineOrigin::Context | crate::models::LineOrigin::Addition => {
+                    line.new_lineno().unwrap_or(0)
+                }
             };
             lines.push(crate::models::DiffLineInfo {
                 line_number,
@@ -518,5 +532,125 @@ mod tests {
         // Verify index is restored to HEAD content
         let result = read_index_content(&repo, "h.txt").expect("in index");
         assert_eq!(result, "alpha\nbeta\ngamma\n");
+    }
+
+    #[test]
+    fn unstage_lines_crlf_index_lf_head_returns_crlf_mismatch() {
+        // HEAD is LF; index was staged with CRLF bytes. Partial unstage must refuse.
+        let head_lf = "line1\nline2\nline3\n";
+        let index_crlf = b"line1\r\nline2\r\nMODIFIED\r\n";
+        let (dir, repo) = setup_repo_with_commit(&[("file.txt", head_lf)]);
+
+        // Plant CRLF bytes directly into the index (bypasses workdir).
+        let oid = repo.blob(index_crlf).expect("blob");
+        {
+            use crate::git::build_index_entry;
+            use crate::saturating_u32;
+            let mut index = repo.index().expect("index");
+            let entry = build_index_entry(
+                &index,
+                "file.txt",
+                oid,
+                saturating_u32(index_crlf.len()),
+                None,
+            );
+            index
+                .add_frombuffer(&entry, index_crlf)
+                .expect("add_frombuffer");
+            index.write().expect("write");
+        }
+
+        let mut sel = LineSelection::default();
+        sel.new_lines.insert(3);
+
+        let result = unstage_lines(&repo, "file.txt", &sel);
+        assert!(
+            matches!(result, Err(PgsError::CrlfMismatch { ref path }) if path == "file.txt"),
+            "expected CrlfMismatch for LF HEAD / CRLF index, got: {result:?}"
+        );
+        drop(dir);
+    }
+
+    /// Stage arbitrary raw bytes directly into the index (bypasses workdir write so
+    /// we can plant non-UTF-8 content without going through `index.add_path`).
+    fn stage_raw_bytes_into_index(repo: &Repository, file_path: &str, content: &[u8]) {
+        use crate::git::build_index_entry;
+        use crate::saturating_u32;
+
+        let oid = repo.blob(content).expect("blob");
+        let mut index = repo.index().expect("index");
+        let entry = build_index_entry(&index, file_path, oid, saturating_u32(content.len()), None);
+        index
+            .add_frombuffer(&entry, content)
+            .expect("add_frombuffer");
+        index.write().expect("index write");
+    }
+
+    fn read_index_raw(repo: &Repository, path: &str) -> Vec<u8> {
+        let index = repo.index().expect("index");
+        let entry = index.get_path(Path::new(path), 0).expect("entry in index");
+        let blob = repo.find_blob(entry.id).expect("find blob");
+        blob.content().to_vec()
+    }
+
+    #[test]
+    fn unstage_lines_non_utf8_staged_blob_returns_non_utf8_partial() {
+        // HEAD has valid UTF-8; index is overwritten with non-UTF-8 bytes (no null byte,
+        // so the binary heuristic does not fire). Partial unstage must refuse with
+        // NonUtf8Partial rather than silently corrupting the blob via from_utf8_lossy.
+        let non_utf8: &[u8] = &[0x68, 0xe9, 0x0a]; // h + latin-1 é + newline
+        let (dir, repo) = setup_repo_with_commit(&[("file.bin", "hello\n")]);
+
+        stage_raw_bytes_into_index(&repo, "file.bin", non_utf8);
+
+        let index_before = read_index_raw(&repo, "file.bin");
+        assert_eq!(
+            index_before, non_utf8,
+            "index should hold the non-UTF-8 blob"
+        );
+
+        let mut sel = LineSelection::default();
+        sel.new_lines.insert(1);
+
+        let result = unstage_lines(&repo, "file.bin", &sel);
+        assert!(
+            matches!(result, Err(PgsError::NonUtf8Partial { ref path }) if path == "file.bin"),
+            "expected NonUtf8Partial, got: {result:?}"
+        );
+
+        // Index must be unchanged after the refused operation.
+        let index_after = read_index_raw(&repo, "file.bin");
+        assert_eq!(
+            index_after, non_utf8,
+            "index must be unmodified after NonUtf8Partial error"
+        );
+        drop(dir);
+    }
+
+    #[test]
+    fn unstage_lines_crlf_consistent_success_byte_exact() {
+        // HEAD has two CRLF lines; index has a third added. Unstaging that addition
+        // must restore exact HEAD bytes — no LF mangling allowed.
+        let head_crlf: &[u8] = b"line1\r\nline2\r\n";
+        let index_crlf: &[u8] = b"line1\r\nline2\r\nline3\r\n";
+        let (dir, repo) = setup_repo_with_commit(&[("f.txt", "line1\r\nline2\r\n")]);
+
+        // Plant the CRLF addition directly into the index.
+        stage_raw_bytes_into_index(&repo, "f.txt", index_crlf);
+        assert_eq!(read_index_raw(&repo, "f.txt"), index_crlf);
+
+        // Unstage the pure addition at new-side line 3 in the HEAD→index diff.
+        let mut sel = LineSelection::default();
+        sel.new_lines.insert(3);
+        let affected = unstage_lines(&repo, "f.txt", &sel).expect("unstage_lines crlf");
+        assert!(affected > 0, "should have affected at least one line");
+
+        // Index blob must equal HEAD bytes exactly — "line1\r\nline2\r\n".
+        let result = read_index_raw(&repo, "f.txt");
+        assert_eq!(
+            result, head_crlf,
+            "index blob must be exact CRLF bytes after unstage, got: {result:?}"
+        );
+        drop(dir);
     }
 }

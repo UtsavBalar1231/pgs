@@ -240,33 +240,50 @@ pub fn validate_whole_file_constraints(
     Ok(())
 }
 
-/// Validate that the file on disk matches the checksum recorded in the scan.
+/// Validate file freshness before staging.
 ///
-/// Skips validation when:
-/// - The file status is `Deleted` (no working-tree file to read).
-/// - The recorded `file_checksum` is empty (checksum was skipped via
-///   `--skip-checksum` or `--max-filesize`).
-///
-/// # Errors
-///
-/// - [`PgsError::StaleScan`] when the working-tree content differs from
-///   the scan-time checksum.
-/// - [`PgsError::Io`] when the file cannot be read from disk.
+/// `expected_checksum` vs `scan.file_checksum` (agent drift). Absent → TOCTOU
+/// workdir hash. Errors: [`PgsError::StaleScan`], [`PgsError::InvalidSelection`],
+/// [`PgsError::Io`].
 pub fn validate_freshness(
     repo: &git2::Repository,
     scan: &ScanResult,
     file_path: &str,
+    expected_checksum: Option<&str>,
 ) -> Result<(), PgsError> {
     let Some(file_info) = scan.files.iter().find(|f| f.path == file_path) else {
         return Ok(()); // Not in scan — nothing to validate.
     };
 
-    // Skip for deleted files: they have no workdir content to checksum.
+    if let Some(expected) = expected_checksum {
+        // Deleted files carry no workdir content; --expect on one is invalid.
+        if matches!(file_info.status, FileStatus::Deleted) {
+            return Err(PgsError::InvalidSelection {
+                detail: format!(
+                    "--expect supplied for deleted file '{file_path}': deleted files carry no workdir checksum"
+                ),
+            });
+        }
+        // Scan skipped checksum computation — fail closed so we never silently pass.
+        if file_info.file_checksum.is_empty() {
+            return Err(PgsError::StaleScan {
+                path: file_path.to_owned(),
+            });
+        }
+        // Agent-captured checksum vs. the fresh scan's hash.
+        if expected != file_info.file_checksum {
+            return Err(PgsError::StaleScan {
+                path: file_path.to_owned(),
+            });
+        }
+        return Ok(());
+    }
+
+    // TOCTOU guard: check current workdir content against the just-computed scan.
     if matches!(file_info.status, FileStatus::Deleted) {
         return Ok(());
     }
 
-    // Skip when checksum was intentionally omitted.
     if file_info.file_checksum.is_empty() {
         return Ok(());
     }
@@ -617,7 +634,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).ok();
         std::fs::write(dir.path().join("src/main.rs"), content).unwrap();
 
-        let result = validate_freshness(&repo, &scan, "src/main.rs");
+        let result = validate_freshness(&repo, &scan, "src/main.rs", None);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -642,7 +659,7 @@ mod tests {
             summary: ScanSummary::default(),
         };
 
-        let err = validate_freshness(&repo, &scan, "file.txt").unwrap_err();
+        let err = validate_freshness(&repo, &scan, "file.txt", None).unwrap_err();
         assert!(
             matches!(err, PgsError::StaleScan { .. }),
             "unexpected: {err}"
@@ -668,7 +685,7 @@ mod tests {
             summary: ScanSummary::default(),
         };
 
-        let result = validate_freshness(&repo, &scan, "gone.rs");
+        let result = validate_freshness(&repo, &scan, "gone.rs", None);
         assert!(
             result.is_ok(),
             "expected Ok for deleted file, got: {result:?}"
@@ -696,11 +713,93 @@ mod tests {
             summary: ScanSummary::default(),
         };
 
-        let result = validate_freshness(&repo, &scan, "file.txt");
+        let result = validate_freshness(&repo, &scan, "file.txt", None);
         assert!(
             result.is_ok(),
             "expected Ok for empty checksum, got: {result:?}"
         );
+    }
+
+    #[test]
+    fn validate_freshness_with_matching_expected_checksum_passes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "f.rs".into(),
+                status: FileStatus::Modified,
+                file_checksum: "abc123".into(),
+                is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
+                hunks: vec![],
+            }],
+            summary: ScanSummary::default(),
+        };
+        assert!(validate_freshness(&repo, &scan, "f.rs", Some("abc123")).is_ok());
+    }
+
+    #[test]
+    fn validate_freshness_with_mismatched_expected_checksum_returns_stale_scan() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "f.rs".into(),
+                status: FileStatus::Modified,
+                file_checksum: "current_sha".into(),
+                is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
+                hunks: vec![],
+            }],
+            summary: ScanSummary::default(),
+        };
+        let err = validate_freshness(&repo, &scan, "f.rs", Some("stale_sha")).unwrap_err();
+        assert!(matches!(err, PgsError::StaleScan { .. }), "got: {err}");
+    }
+
+    #[test]
+    fn validate_freshness_with_expected_on_deleted_file_returns_invalid_selection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "gone.rs".into(),
+                status: FileStatus::Deleted,
+                file_checksum: String::new(),
+                is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
+                hunks: vec![],
+            }],
+            summary: ScanSummary::default(),
+        };
+        let err = validate_freshness(&repo, &scan, "gone.rs", Some("somehash")).unwrap_err();
+        assert!(
+            matches!(err, PgsError::InvalidSelection { .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_freshness_with_expected_on_empty_scan_checksum_fails_closed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let scan = ScanResult {
+            files: vec![FileInfo {
+                path: "f.rs".into(),
+                status: FileStatus::Modified,
+                file_checksum: String::new(),
+                is_binary: false,
+                old_mode: 0o100_644,
+                new_mode: 0o100_644,
+                hunks: vec![],
+            }],
+            summary: ScanSummary::default(),
+        };
+        let err = validate_freshness(&repo, &scan, "f.rs", Some("anyhash")).unwrap_err();
+        assert!(matches!(err, PgsError::StaleScan { .. }), "got: {err}");
     }
 
     // ── resolve_directory ─────────────────────────────────────────
@@ -801,7 +900,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let (repo, scan) = setup_symlink_scan(dir.path(), "link", "target.bin");
         // Validate freshness without modifying the symlink.
-        let result = validate_freshness(&repo, &scan, "link");
+        let result = validate_freshness(&repo, &scan, "link", None);
         assert!(
             result.is_ok(),
             "unchanged symlink should pass freshness: {result:?}"
@@ -818,7 +917,8 @@ mod tests {
         std::fs::remove_file(dir.path().join("link")).expect("remove");
         std::os::unix::fs::symlink("new_target.bin", dir.path().join("link")).expect("re-symlink");
 
-        let err = validate_freshness(&repo, &scan, "link").expect_err("should detect stale scan");
+        let err =
+            validate_freshness(&repo, &scan, "link", None).expect_err("should detect stale scan");
         assert!(
             matches!(err, PgsError::StaleScan { .. }),
             "expected StaleScan, got: {err}"

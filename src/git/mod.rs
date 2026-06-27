@@ -155,6 +155,19 @@ pub fn content_is_binary(content: &[u8]) -> bool {
     content.iter().take(8000).any(|&b| b == 0)
 }
 
+/// `None` when there are no `\n` chars (cannot classify; skip the CRLF guard).
+/// `Some(true)` when more than half of endings are `\r\n`, `Some(false)` otherwise.
+#[allow(clippy::naive_bytecount)] // bytecount dep is not worth it for this guard
+pub(crate) fn is_predominantly_crlf(text: &str) -> Option<bool> {
+    let bytes = text.as_bytes();
+    let lf_count = bytes.iter().filter(|&&b| b == b'\n').count();
+    if lf_count == 0 {
+        return None;
+    }
+    let crlf_count = bytes.windows(2).filter(|w| *w == b"\r\n").count();
+    Some(crlf_count * 2 > lf_count)
+}
+
 /// Coordinate-space–safe line selection for partial staging and unstaging.
 ///
 /// Git diffs operate in two distinct coordinate spaces: the HEAD/index side

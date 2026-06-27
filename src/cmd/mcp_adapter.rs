@@ -46,6 +46,10 @@ pub struct McpStageRequest {
     pub limit: u32,
     /// Unified diff context lines used while resolving selections.
     pub context: u32,
+    /// Per-file checksums captured from a prior scan (path → SHA-256). When
+    /// present for a file, `StaleScan` (exit 3) is returned if the file changed
+    /// between the agent's scan and this stage call.
+    pub expected_checksums: std::collections::HashMap<String, String>,
 }
 
 /// Typed MCP payload for `pgs_unstage` requests.
@@ -251,6 +255,11 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 dry_run: request.dry_run,
                 explain: request.explain,
                 limit: request.limit,
+                expect: request
+                    .expected_checksums
+                    .into_iter()
+                    .map(|(path, sha)| format!("{path}={sha}"))
+                    .collect(),
             },
         )
         .map(Into::into)

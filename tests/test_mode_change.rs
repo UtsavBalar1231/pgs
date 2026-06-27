@@ -193,8 +193,11 @@ fn stage_content_plus_mode_stages_both() {
     );
 }
 
+/// Partial line-range stage of a file that has BOTH a mode change and content
+/// edits must propagate the new mode into the index entry — the exec bit must
+/// not be silently dropped.
 #[test]
-fn stage_lines_does_not_change_mode() {
+fn stage_lines_with_mode_change_propagates_exec_bit() {
     let (dir, repo) = setup_repo();
     repo.config()
         .unwrap()
@@ -219,13 +222,94 @@ fn stage_lines_does_not_change_mode() {
 
     assert_eq!(json["status"], "ok", "line-level staging should succeed");
 
-    // Verify the index mode is still the original 0o100644
-    // (line-level staging does not carry over the mode change)
+    // The index entry must carry the new executable mode even though only a
+    // line range was staged (not the whole file).
+    let repo2 = git2::Repository::open(dir.path()).unwrap();
+    let index_mode = read_index_mode(&repo2, "script.sh");
+    assert_eq!(
+        index_mode, 0o100_755,
+        "line-level staging with mode change must propagate exec bit, got {index_mode:#o}"
+    );
+}
+
+/// Partial line-range stage where the file has NO mode change must preserve
+/// the existing index mode (regression: `mode_override=None` must not clobber).
+#[test]
+fn stage_lines_content_only_preserves_existing_mode() {
+    let (dir, repo) = setup_repo();
+    repo.config()
+        .unwrap()
+        .set_bool("core.filemode", true)
+        .unwrap();
+    commit_file(
+        &repo,
+        dir.path(),
+        "script.sh",
+        "line1\nline2\nline3\n",
+        "add script",
+    );
+
+    // Modify content only — no chmod, mode stays 0o100644
+    common::write_file(dir.path(), "script.sh", "line1\nMODIFIED\nline3\n");
+
+    let output = run_pgs(dir.path(), &["stage", "script.sh:2-2"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(
+        json["status"], "ok",
+        "content-only line staging should succeed"
+    );
+
     let repo2 = git2::Repository::open(dir.path()).unwrap();
     let index_mode = read_index_mode(&repo2, "script.sh");
     assert_eq!(
         index_mode, 0o100_644,
-        "line-level staging should not change index mode, got {index_mode:#o}"
+        "content-only line staging must not change existing mode, got {index_mode:#o}"
+    );
+}
+
+/// Partial hunk stage of a file with both mode change and content edits must
+/// propagate the new executable mode into the index entry.
+#[test]
+fn stage_hunk_with_mode_change_propagates_exec_bit() {
+    let (dir, repo) = setup_repo();
+    repo.config()
+        .unwrap()
+        .set_bool("core.filemode", true)
+        .unwrap();
+    commit_file(
+        &repo,
+        dir.path(),
+        "script.sh",
+        "line1\nline2\nline3\n",
+        "add script",
+    );
+
+    // Modify content AND make executable
+    common::write_file(dir.path(), "script.sh", "line1\nMODIFIED\nline3\n");
+    make_executable(dir.path(), "script.sh");
+
+    // Scan to get the hunk ID, then stage by hunk ID
+    let scan_out = run_pgs(dir.path(), &["scan"]).success();
+    let scan_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(scan_out.get_output().stdout.clone()).unwrap())
+            .unwrap();
+    let hunk_id = scan_json["files"][0]["hunks"][0]["id"]
+        .as_str()
+        .expect("hunk id");
+
+    let output = run_pgs(dir.path(), &["stage", hunk_id]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["status"], "ok", "hunk staging should succeed");
+
+    let repo2 = git2::Repository::open(dir.path()).unwrap();
+    let index_mode = read_index_mode(&repo2, "script.sh");
+    assert_eq!(
+        index_mode, 0o100_755,
+        "hunk staging with mode change must propagate exec bit, got {index_mode:#o}"
     );
 }
 
@@ -309,31 +393,39 @@ fn stage_renamed_executable_file_preserves_mode() {
     common::write_file(dir.path(), "new_script.sh", "#!/bin/sh\necho hello\n");
     make_executable(dir.path(), "new_script.sh");
 
-    // Check what pgs scan reports so we know how to stage
+    // pgs does NOT perform rename detection (`diff_index_to_workdir` never calls
+    // `find_similar`), so a filesystem rename always surfaces deterministically as
+    // Deleted(old_script.sh) + Added(new_script.sh) — never as Renamed.
     let scan_output = run_pgs(dir.path(), &["scan"]).success();
     let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
     let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
     let files = scan_json["files"].as_array().unwrap();
 
-    // pgs may detect this as Renamed or as Deleted+Added depending on similarity
-    let new_file = files.iter().find(|f| f["path"] == "new_script.sh");
-    if let Some(file) = new_file {
-        let status_type = file["status"]["type"].as_str().unwrap_or("");
-        if status_type == "Renamed" || status_type == "Added" {
-            // Stage new_script.sh (either as rename target or new file)
-            let output = run_pgs(dir.path(), &["stage", "new_script.sh"]).success();
-            let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-            let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-            assert_eq!(json["status"], "ok", "staging should succeed");
+    let new_file = files
+        .iter()
+        .find(|f| f["path"] == "new_script.sh")
+        .expect("new_script.sh must appear in scan — rename surfaces as Added");
+    assert_eq!(
+        new_file["status"]["type"], "Added",
+        "pgs never emits Renamed (no find_similar); expected Added, got {:?}",
+        new_file["status"]["type"]
+    );
 
-            let repo2 = git2::Repository::open(dir.path()).unwrap();
-            let index_mode = read_index_mode(&repo2, "new_script.sh");
-            assert_eq!(
-                index_mode, 0o100_755,
-                "renamed/added executable file should have mode 0o100755 in index, got {index_mode:#o}"
-            );
-        }
-    }
+    // Stage the Added file and verify the executable mode is preserved in the index.
+    let output = run_pgs(dir.path(), &["stage", "new_script.sh"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json["status"], "ok",
+        "staging Added executable file should succeed"
+    );
+
+    let repo2 = git2::Repository::open(dir.path()).unwrap();
+    let index_mode = read_index_mode(&repo2, "new_script.sh");
+    assert_eq!(
+        index_mode, 0o100_755,
+        "Added executable file must be staged with mode 0o100755, got {index_mode:#o}"
+    );
 }
 
 #[test]

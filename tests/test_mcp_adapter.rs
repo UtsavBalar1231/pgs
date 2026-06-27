@@ -92,6 +92,7 @@ fn stage_via_mcp_adapter_on_symlink_produces_correct_blob() {
         explain: false,
         limit: 200,
         context: 3,
+        expected_checksums: std::collections::HashMap::new(),
     });
 
     let output = execute(request).expect("stage via MCP should succeed");

@@ -453,7 +453,7 @@ fn stage_hunk_by_id_does_not_leak_adjacent_hunk_when_old_line_aliases_new_line()
     );
 
     let hunk_a = &file_info.hunks[0];
-    stage_hunk(&repo, "f.txt", hunk_a).expect("stage_hunk should succeed");
+    stage_hunk(&repo, "f.txt", hunk_a, None).expect("stage_hunk should succeed");
 
     let staged = read_staged_blob(&repo, "f.txt");
 

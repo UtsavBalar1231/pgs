@@ -7,7 +7,7 @@ use crate::git::{diff, repo, staging::line_selection_for, unstaging};
 use crate::models::{
     FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
 };
-use crate::output::view::{CommandOutput, OperationItemView, OperationOutput};
+use crate::output::view::{CommandOutput, OperationItemView, OperationOutput, OutputCommand};
 use crate::safety::{backup, lock};
 use crate::selection::{parse, resolve};
 
@@ -166,7 +166,14 @@ pub fn execute(
             })
             .collect();
 
-        return Ok(OperationOutput::unstage(OperationStatus::DryRun, items, vec![], None).into());
+        return Ok(OperationOutput::new(
+            OutputCommand::Unstage,
+            OperationStatus::DryRun,
+            items,
+            vec![],
+            None,
+        )
+        .into());
     }
 
     let backup_info = backup::create_backup(&repository)?;
@@ -189,7 +196,15 @@ pub fn execute(
                 actual_lines_by_file.insert(file_path.clone(), lines_unstaged);
             }
             Err(e) => {
-                let _ = backup::restore_backup(&repository, &backup_info.backup_id);
+                if let Err(restore_err) =
+                    backup::restore_backup(&repository, &backup_info.backup_id)
+                {
+                    return Err(PgsError::RestoreFailed {
+                        backup_id: backup_info.backup_id.clone(),
+                        op_error: e.to_string(),
+                        restore_error: restore_err.to_string(),
+                    });
+                }
                 return Err(e);
             }
         }
@@ -221,7 +236,8 @@ pub fn execute(
         })
         .collect();
 
-    Ok(OperationOutput::unstage(
+    Ok(OperationOutput::new(
+        OutputCommand::Unstage,
         OperationStatus::Ok,
         items,
         vec![],
