@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.5.0 - 2026-06-27
+
+### Added
+
+- Scan-drift detection: `pgs stage --expect PATH=SHA` (CLI) and
+  `expected_checksums` (MCP `pgs_stage`) abort with `StaleScan` (exit code 3,
+  zero index mutation) when a file changed between the scan and the stage.
+- `file_checksum` is now reported in compact `scan` output (and MCP `pgs_scan`),
+  not only under `--full`, so agents can capture it to drive the drift guard.
+- Executable-mode changes now propagate through partial (hunk/line) staging.
+- `plan-check` reports stale hunk IDs in a dedicated `unknown_hunk_ids` array,
+  distinct from `unknown_paths`.
+
+### Changed
+
+- Partial (hunk/line) staging now refuses non-UTF-8 files (`NonUtf8Partial`) and
+  files whose line endings differ from the index (`CrlfMismatch`) instead of
+  silently corrupting the staged blob; stage those whole-file.
+- Backup-restore failures during a stage/unstage rollback are now surfaced via
+  `RestoreFailed` (exit code 4) instead of being swallowed.
+- `CommitPlan.version` is optional and defaults to `"v1"` when omitted.
+- Internal refactor: the models and view layers were modularized and the MCP
+  tool-result builders collapsed, with byte-identical tool output.
+- The published `git-commit-staging` skill and the README were rewritten for
+  clarity; internal implementation details were removed from the skill.
+
+### Fixed
+
+- Whole-file staging reported a byte count as `lines_affected`; it now reports
+  the line count, consistent with hunk and line staging.
+- The scan `mode_changed` summary no longer counts added or deleted files.
+- `plan-diff` fuzzy matching dropped a dishonest first-hunk fallback: it now
+  searches all files for a content-checksum match, allows checksum-only shifts,
+  and classifies selections with no genuine signal as `gone`.
+- Fixed a line-index overflow in `unstage`.
+
 ## 0.4.2 - 2026-06-13
 
 ### Fixed

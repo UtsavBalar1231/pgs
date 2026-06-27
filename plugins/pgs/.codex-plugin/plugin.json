@@ -1,6 +1,6 @@
 {
   "name": "pgs",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Non-interactive git staging at file, hunk, and line granularity. MCP server and skill for structured commit workflows.",
   "author": {
     "name": "UtsavBalar1231",
