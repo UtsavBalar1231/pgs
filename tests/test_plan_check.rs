@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 // ─── CLI RED tests ────────────────────────────────────────────────────────────
 
-/// Helper: spawn `pgs plan-check --stdin` with `plan_json` piped on stdin, with
+/// Helper: spawn `pgs plan-check` with `plan_json` piped on stdin, with
 /// the given `--repo` target. Returns exit code + stdout + stderr.
 fn run_plan_check_stdin(
     dir: &std::path::Path,
@@ -26,12 +26,12 @@ fn run_plan_check_stdin(
         .arg("--repo")
         .arg(dir.to_str().unwrap())
         .args(extra_args)
-        .args(["plan-check", "--stdin"])
+        .arg("plan-check")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn pgs plan-check --stdin");
+        .expect("spawn pgs plan-check via stdin");
 
     {
         let mut stdin = cmd.stdin.take().expect("plan-check stdin piped");
@@ -296,6 +296,85 @@ fn plan_check_flags_line_range_spanning_hunk_boundary_as_unsafe() {
     );
 }
 
+/// A `path:A-B` range that straddles exactly the boundary between two adjacent
+/// hunks must also be flagged as `spans_hunk_boundary`. This proves the
+/// detection fires for narrow ranges, not only maximally-wide ones like `1-40`.
+#[test]
+fn plan_check_flags_narrow_line_range_straddling_adjacent_hunk_boundary_as_unsafe() {
+    let (dir, repo) = setup_repo();
+    let mut original = String::new();
+    for i in 1..=40 {
+        writeln!(&mut original, "line{i}").expect("write to string");
+    }
+    commit_file(&repo, dir.path(), "f.rs", &original, "initial");
+
+    let mut modified = String::new();
+    for i in 1..=40 {
+        if i == 3 {
+            modified.push_str("CHANGED_3\n");
+        } else if i == 35 {
+            modified.push_str("CHANGED_35\n");
+        } else {
+            writeln!(&mut modified, "line{i}").expect("write to string");
+        }
+    }
+    write_file(dir.path(), "f.rs", &modified);
+
+    // Precondition: scan yields two hunks so there is a boundary to straddle.
+    let scan = run_pgs(dir.path(), &["scan"]).success();
+    let scan_json: Value =
+        serde_json::from_slice(&scan.get_output().stdout).expect("scan JSON parses");
+    let hunks = scan_json["files"][0]["hunks"]
+        .as_array()
+        .expect("hunks array");
+    assert!(
+        hunks.len() >= 2,
+        "test precondition: expected >=2 hunks, got {}",
+        hunks.len()
+    );
+
+    // Compute a minimal straddling range: last line of hunk 1 through first line
+    // of hunk 2. This is much narrower than the 1-40 range in the sibling test.
+    let h1_end =
+        hunks[0]["new_start"].as_u64().unwrap() + hunks[0]["new_lines"].as_u64().unwrap() - 1;
+    let h2_start = hunks[1]["new_start"].as_u64().unwrap();
+    assert!(
+        h1_end < h2_start,
+        "precondition: hunk 1 end ({h1_end}) must precede hunk 2 start ({h2_start})"
+    );
+    let narrow_straddle = format!("f.rs:{h1_end}-{h2_start}");
+
+    let plan = json!({
+        "version": "v1",
+        "commits": [
+            { "id": "narrow-range", "selections": [narrow_straddle] }
+        ]
+    });
+    let (code, stdout, _) = run_plan_check_stdin(dir.path(), &plan.to_string(), &[]);
+    assert_eq!(
+        code, 1,
+        "narrow straddling selector must surface as exit code 1"
+    );
+
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-check emits JSON envelope");
+    let unsafe_selectors = envelope["unsafe_selectors"]
+        .as_array()
+        .expect("unsafe_selectors must be an array");
+    assert!(
+        !unsafe_selectors.is_empty(),
+        "expected at least one unsafe selector for narrow straddling range, got: {envelope}"
+    );
+    let entry = &unsafe_selectors[0];
+    assert_eq!(
+        entry["selection"], narrow_straddle,
+        "unsafe record must cite the narrow straddling selector"
+    );
+    assert_eq!(
+        entry["reason"], "spans_hunk_boundary",
+        "narrow straddling range must have reason spans_hunk_boundary"
+    );
+}
+
 /// An empty plan (`commits: []`) must report every hunk in the scan as
 /// uncovered.
 #[test]
@@ -535,7 +614,13 @@ fn pgs_plan_check_mcp_tool_returns_structured_content() {
     assert_eq!(pgs["version"], "v1");
     assert_eq!(pgs["command"], "plan-check");
 
-    for key in ["overlaps", "uncovered", "unsafe_selectors", "unknown_paths"] {
+    for key in [
+        "overlaps",
+        "uncovered",
+        "unsafe_selectors",
+        "unknown_paths",
+        "unknown_hunk_ids",
+    ] {
         let arr = pgs[key]
             .as_array()
             .unwrap_or_else(|| panic!("pgs.{key} must be an array, got: {pgs}"));
@@ -544,4 +629,169 @@ fn pgs_plan_check_mcp_tool_returns_structured_content() {
             "clean plan must have empty {key}, got: {arr:?}"
         );
     }
+}
+
+/// A plan referencing a stale 12-hex hunk id (absent from current scan) AND
+/// a genuinely missing path must route each to the correct bucket: the hunk
+/// id into `unknown_hunk_ids` and the path into `unknown_paths`, never
+/// conflated. Exit code must be 1.
+#[test]
+fn plan_check_disambiguates_stale_hunk_id_from_unknown_path() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.rs", "one\ntwo\n", "initial");
+    write_file(dir.path(), "f.rs", "one\ntwo\nthree\n");
+
+    // A well-formed 12-hex id that cannot exist in the current scan.
+    let stale_id = "deadbeef0000";
+    let ghost_path = "does/not/exist.rs";
+
+    let plan = json!({
+        "version": "v1",
+        "commits": [
+            { "id": "cover-all", "selections": ["f.rs"] },
+            { "id": "stale-hunk", "selections": [stale_id] },
+            { "id": "bad-path",   "selections": [ghost_path] }
+        ]
+    });
+    let (code, stdout, stderr) = run_plan_check_stdin(dir.path(), &plan.to_string(), &[]);
+    assert_eq!(
+        code, 1,
+        "issues must exit 1; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-check emits JSON envelope");
+
+    // stale hunk id must land in unknown_hunk_ids
+    let unknown_hunk_ids = envelope["unknown_hunk_ids"]
+        .as_array()
+        .expect("unknown_hunk_ids must be an array");
+    assert_eq!(
+        unknown_hunk_ids.len(),
+        1,
+        "expected exactly one unknown_hunk_ids entry, got: {unknown_hunk_ids:?}"
+    );
+    assert_eq!(
+        unknown_hunk_ids[0]["hunk_id"], stale_id,
+        "unknown_hunk_ids entry must cite the stale id"
+    );
+    assert_eq!(
+        unknown_hunk_ids[0]["commit_id"], "stale-hunk",
+        "unknown_hunk_ids entry must include owning commit_id"
+    );
+
+    // ghost path must land in unknown_paths
+    let unknown_paths: Vec<&str> = envelope["unknown_paths"]
+        .as_array()
+        .expect("unknown_paths must be an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        unknown_paths.contains(&ghost_path),
+        "ghost path must be in unknown_paths, got: {unknown_paths:?}"
+    );
+
+    // stale hunk id must NOT appear in unknown_paths
+    assert!(
+        !unknown_paths.contains(&stale_id),
+        "stale hunk id must NOT be in unknown_paths"
+    );
+}
+
+/// The text-marker output for a plan with a stale hunk id must include a
+/// `plan.check.unknown_hunk` record.
+#[test]
+fn plan_check_text_marker_contains_unknown_hunk_record_for_stale_id() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.rs", "one\ntwo\n", "initial");
+    write_file(dir.path(), "f.rs", "one\ntwo\nthree\n");
+
+    let stale_id = "deadbeef0000";
+    let plan = json!({
+        "version": "v1",
+        "commits": [
+            { "id": "s1", "selections": [stale_id] }
+        ]
+    });
+
+    // Invoke without --json to get text-marker output.
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("pgs"))
+        .arg("--repo")
+        .arg(dir.path())
+        .arg("plan-check")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn pgs plan-check text mode");
+    {
+        let mut stdin = child.stdin.take().expect("stdin piped");
+        stdin
+            .write_all(plan.to_string().as_bytes())
+            .expect("write plan JSON");
+    }
+    let out = child.wait_with_output().expect("wait");
+    let code = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8(out.stdout).unwrap_or_default();
+    assert_eq!(code, 1, "stale hunk id must exit 1");
+    assert!(
+        stdout.lines().any(|line| {
+            line.starts_with("@@pgs:v1 plan.check.unknown_hunk ") && line.contains(stale_id)
+        }),
+        "expected a plan.check.unknown_hunk marker containing {stale_id} in:\n{stdout}"
+    );
+}
+
+/// JSON output from plan-check must include the `unknown_hunk_ids` array.
+/// When a stale hunk id is the only issue the array must be non-empty and
+/// exit code must be 1.
+#[test]
+fn plan_check_json_contains_unknown_hunk_ids_field_when_stale_id_used() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.rs", "one\ntwo\n", "initial");
+    write_file(dir.path(), "f.rs", "one\ntwo\nthree\n");
+
+    // Cover the real hunk so uncovered is empty, and add a stale id.
+    let stale_id = "cafe00000000";
+    let plan = json!({
+        "version": "v1",
+        "commits": [
+            { "id": "good", "selections": ["f.rs"] },
+            { "id": "stale", "selections": [stale_id] }
+        ]
+    });
+    let (code, stdout, stderr) = run_plan_check_stdin(dir.path(), &plan.to_string(), &[]);
+    assert_eq!(
+        code, 1,
+        "a stale hunk id alone must exit 1; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-check emits JSON envelope");
+    assert_eq!(envelope["version"], "v1");
+    assert_eq!(envelope["command"], "plan-check");
+
+    let unknown_hunk_ids = envelope["unknown_hunk_ids"]
+        .as_array()
+        .expect("unknown_hunk_ids must be present as an array");
+    assert!(
+        !unknown_hunk_ids.is_empty(),
+        "unknown_hunk_ids must be non-empty when a stale hunk id is referenced"
+    );
+    assert!(
+        unknown_hunk_ids.iter().any(|e| e["hunk_id"] == stale_id),
+        "expected {stale_id} in unknown_hunk_ids, got: {unknown_hunk_ids:?}"
+    );
+
+    // uncovered must be empty (f.rs was covered by "good")
+    assert!(
+        envelope["uncovered"].as_array().is_some_and(Vec::is_empty),
+        "uncovered must be empty when real hunk is covered"
+    );
+    // unknown_paths must be empty (stale_id is a hunk id, not a path)
+    assert!(
+        envelope["unknown_paths"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "unknown_paths must be empty when only a stale hunk id is given"
+    );
 }

@@ -5,8 +5,6 @@
 //! additive fields on [`CommitPlan`] / [`PlannedCommit`] enable higher-
 //! confidence matching but remain optional.
 
-use std::io::{self, Read};
-
 use clap::Args;
 
 use crate::error::PgsError;
@@ -20,10 +18,10 @@ use crate::selection::{parse::detect_selection, resolve};
 #[derive(Args)]
 pub struct PlanDiffArgs {
     /// Path to a `CommitPlan` JSON file. Mutually exclusive with `--stdin`.
-    #[arg(long, conflicts_with = "stdin")]
+    #[arg(long)]
     pub plan: Option<String>,
     /// Read the `CommitPlan` JSON from stdin. Default when `--plan` is omitted.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "plan")]
     pub stdin: bool,
 }
 
@@ -38,7 +36,7 @@ pub fn execute(
     context: u32,
     args: PlanDiffArgs,
 ) -> Result<CommandOutput, PgsError> {
-    let plan = load_plan(&args)?;
+    let plan = crate::cmd::plan_io::load_commit_plan(args.plan.as_deref())?;
     run_with_plan(repo_path, context, &plan)
 }
 
@@ -55,30 +53,6 @@ pub fn run_with_plan(
     let d = diff::diff_index_to_workdir(&repository, context)?;
     let scan = diff::build_scan_result(&repository, &d, None)?;
     Ok(diff_plan(plan, &scan).into())
-}
-
-fn load_plan(args: &PlanDiffArgs) -> Result<CommitPlan, PgsError> {
-    let raw = match (&args.plan, args.stdin) {
-        (Some(path), _) => std::fs::read_to_string(path).map_err(|e| PgsError::Io {
-            path: path.into(),
-            source: e,
-        })?,
-        (None, _) => read_stdin()?,
-    };
-    serde_json::from_str(&raw).map_err(|e| PgsError::InvalidSelection {
-        detail: format!("malformed CommitPlan JSON: {e}"),
-    })
-}
-
-fn read_stdin() -> Result<String, PgsError> {
-    let mut buf = String::new();
-    io::stdin()
-        .read_to_string(&mut buf)
-        .map_err(|e| PgsError::Io {
-            path: "<stdin>".into(),
-            source: e,
-        })?;
-    Ok(buf)
 }
 
 /// Pure core: reconcile a plan against a pre-built [`ScanResult`].
@@ -129,7 +103,7 @@ fn classify_entry(
         let hunk_id = resolved_hunk_id(&spec, scan, &resolved);
         let (hunk_field, reason) = match hunk_id {
             Some(id) => (Some(id), None),
-            None => (None, Some("file_unchanged".to_owned())),
+            None => (None, Some("no_unstaged_hunks".to_owned())),
         };
         still_valid.push(PlanDiffEntry {
             commit_id: commit.id.clone(),
@@ -141,8 +115,29 @@ fn classify_entry(
         return;
     }
 
+    // For bare hunk-id selections, search ALL files for a checksum match before
+    // narrowing to a single file. The content checksum is position- and file-
+    // independent, so a hunk may have moved to a different file entirely.
+    if file_path.is_none() {
+        if let Some(expected) = commit.expected_checksum.as_deref() {
+            for scan_file in &scan.files {
+                if let Some(h) = scan_file.hunks.iter().find(|h| h.checksum == expected) {
+                    shifted.push(PlanDiffShift {
+                        commit_id: commit.id.clone(),
+                        selection: selection.to_owned(),
+                        file_path: scan_file.path.clone(),
+                        old_hunk_id: captured_hunk_id_for(commit, &spec),
+                        new_hunk_id: h.hunk_id.clone(),
+                        match_confidence: PlanDiffMatchConfidence::High,
+                    });
+                    return;
+                }
+            }
+        }
+    }
+
     // Resolution failed — try to locate a file context (either from the spec
-    // or by searching scan for any hunk with the right id).
+    // or by searching scan for any file with live hunks).
     let file = match file_path {
         Some(path) => scan.files.iter().find(|f| f.path == path),
         None => find_file_for_unresolved_hunk(scan),
@@ -190,21 +185,19 @@ fn classify_entry(
             return;
         }
 
+        // Fuzzy match runs unconditionally so a checksum-only signal (no
+        // `captured_hunk_id`) can still produce a `shifted/High` entry.
         let captured_id = captured_hunk_id_for(commit, &spec);
-        if let Some(old_id) = captured_id {
-            if let Some((new_hunk, confidence)) =
-                find_fuzzy_match(commit, &spec, file, old_id.as_str(), scan)
-            {
-                shifted.push(PlanDiffShift {
-                    commit_id: commit.id.clone(),
-                    selection: selection.to_owned(),
-                    file_path: path_for_report,
-                    old_hunk_id: old_id,
-                    new_hunk_id: new_hunk.hunk_id.clone(),
-                    match_confidence: confidence,
-                });
-                return;
-            }
+        if let Some((new_hunk, confidence)) = find_fuzzy_match(commit, &spec, file) {
+            shifted.push(PlanDiffShift {
+                commit_id: commit.id.clone(),
+                selection: selection.to_owned(),
+                file_path: path_for_report,
+                old_hunk_id: captured_id,
+                new_hunk_id: new_hunk.hunk_id.clone(),
+                match_confidence: confidence,
+            });
+            return;
         }
     }
 
@@ -257,23 +250,24 @@ fn captured_hunk_id_for(commit: &PlannedCommit, spec: &SelectionSpec) -> Option<
     }
 }
 
-/// Descriptive fuzzy match — returns the best candidate hunk + confidence.
-/// Never upgrades to `still_valid`; always classifies as shifted.
+/// Descriptive fuzzy match — returns the best candidate hunk + confidence,
+/// or `None` when there is no genuine content/range signal (caller emits
+/// `gone/no_match` instead of a spurious `shifted/Low`).
 fn find_fuzzy_match<'a>(
     commit: &PlannedCommit,
     spec: &SelectionSpec,
     file: &'a crate::models::FileInfo,
-    _old_id: &str,
-    _scan: &ScanResult,
 ) -> Option<(&'a HunkInfo, PlanDiffMatchConfidence)> {
-    // High: checksum matches (plan recorded expected_checksum).
+    // High: `expected_checksum` matches a live hunk's content-addressed checksum.
     if let Some(expected) = commit.expected_checksum.as_deref() {
         if let Some(h) = file.hunks.iter().find(|h| h.checksum == expected) {
             return Some((h, PlanDiffMatchConfidence::High));
         }
     }
 
-    // Medium: overlap heuristic when the old selection points at a line range.
+    // Medium: ≥50% of the old line range is covered by the best live hunk.
+    // Ranges below the threshold have no genuine positional signal and fall
+    // through to `None` so the caller can emit `gone/no_match`.
     if let SelectionSpec::Lines { ranges, .. } = spec {
         if let Some(range) = ranges.first() {
             if let Some(h) = file
@@ -281,21 +275,15 @@ fn find_fuzzy_match<'a>(
                 .iter()
                 .max_by_key(|h| overlap_fraction(range.start, range.end, h))
             {
-                let overlap = overlap_fraction(range.start, range.end, h);
-                let confidence = if overlap >= 50 {
-                    PlanDiffMatchConfidence::Medium
-                } else {
-                    PlanDiffMatchConfidence::Low
-                };
-                return Some((h, confidence));
+                if overlap_fraction(range.start, range.end, h) >= 50 {
+                    return Some((h, PlanDiffMatchConfidence::Medium));
+                }
             }
         }
     }
 
-    // Low: same file, no further evidence — return the first hunk.
-    file.hunks
-        .first()
-        .map(|h| (h, PlanDiffMatchConfidence::Low))
+    // No genuine content or range relationship — caller emits `gone/no_match`.
+    None
 }
 
 /// Percentage (0..=100) of `[old_start..=old_end]` covered by `hunk`'s new range.
@@ -395,8 +383,9 @@ mod tests {
         assert!(result.has_drift());
     }
 
+    // (a) No content/range relationship → gone/no_match, never spurious shifted/Low.
     #[test]
-    fn unresolved_hunk_id_falls_back_to_low_confidence_shift() {
+    fn unresolved_hunk_id_no_content_signal_classifies_gone_no_match() {
         let scan = scan_one_file("f.rs", vec![hunk("cccccc111111", 1, 2, "cs-a")]);
         let plan = CommitPlan {
             version: "v1".into(),
@@ -408,12 +397,80 @@ mod tests {
             ..CommitPlan::default()
         };
         let result = diff_plan(&plan, &scan);
-        // Unknown hunk id + one live hunk in scan → Low-confidence shift.
+        assert!(result.shifted.is_empty(), "no shift expected");
+        assert_eq!(result.gone.len(), 1);
+        assert_eq!(result.gone[0].reason.as_deref(), Some("no_match"));
+    }
+
+    // (b) Checksum match after positional shift → shifted/High (regression guard).
+    #[test]
+    fn checksum_match_after_position_shift_classifies_shifted_high() {
+        let scan = scan_one_file(
+            "f.rs",
+            vec![hunk("newhunkid5678", 20, 5, "stable-checksum")],
+        );
+        let plan = CommitPlan {
+            version: "v1".into(),
+            commits: vec![PlannedCommit {
+                id: Some("c1".into()),
+                selections: vec!["f.rs:1-5".into()],
+                expected_checksum: Some("stable-checksum".into()),
+                captured_hunk_id: Some("oldhunkid0000".into()),
+                ..PlannedCommit::default()
+            }],
+            ..CommitPlan::default()
+        };
+        let result = diff_plan(&plan, &scan);
         assert_eq!(result.shifted.len(), 1);
         assert!(matches!(
             result.shifted[0].match_confidence,
-            PlanDiffMatchConfidence::Low
+            PlanDiffMatchConfidence::High
         ));
+    }
+
+    // (c) ≥50% range overlap → shifted/Medium (Medium tier preserved).
+    #[test]
+    fn find_fuzzy_match_lines_overlap_geq_50_returns_medium() {
+        use crate::models::{FileStatus, LineRange};
+        // Hunk at new_start=10, new_lines=10 (lines 10-19).
+        // Old selection [14, 23]: overlap [14,19] = 6/10 = 60% ≥ 50% → Medium.
+        let h = hunk("newhunkid1234", 10, 10, "unrelated-cs");
+        let file = crate::models::FileInfo {
+            path: "f.rs".into(),
+            status: FileStatus::Modified,
+            file_checksum: String::new(),
+            is_binary: false,
+            old_mode: 0o100_644,
+            new_mode: 0o100_644,
+            hunks: vec![h],
+        };
+        let commit = PlannedCommit::default();
+        let spec = SelectionSpec::Lines {
+            path: "f.rs".into(),
+            ranges: vec![LineRange { start: 14, end: 23 }],
+        };
+        let result = find_fuzzy_match(&commit, &spec, &file);
+        assert!(result.is_some(), "expected Medium match, got None");
+        assert!(matches!(result.unwrap().1, PlanDiffMatchConfidence::Medium));
+    }
+
+    // (d) Regression: still-resolvable selection → still_valid (not shifted/gone).
+    #[test]
+    fn resolvable_file_selection_classifies_still_valid_regression() {
+        let scan = scan_one_file("f.rs", vec![hunk("h1xxxxxxxxx0", 1, 2, "cs-a")]);
+        let plan = CommitPlan {
+            version: "v1".into(),
+            commits: vec![PlannedCommit {
+                id: Some("c1".into()),
+                selections: vec!["f.rs".into()],
+                ..PlannedCommit::default()
+            }],
+            ..CommitPlan::default()
+        };
+        let result = diff_plan(&plan, &scan);
+        assert_eq!(result.still_valid.len(), 1);
+        assert!(result.shifted.is_empty());
+        assert!(result.gone.is_empty());
     }
 
     #[test]

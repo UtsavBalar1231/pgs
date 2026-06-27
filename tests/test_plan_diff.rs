@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 // ─── CLI RED tests ────────────────────────────────────────────────────────────
 
-/// Helper: spawn `pgs plan-diff --stdin` with `plan_json` piped on stdin.
+/// Helper: spawn `pgs plan-diff` with `plan_json` piped on stdin.
 /// Returns (exit code, stdout, stderr).
 fn run_plan_diff_stdin(
     dir: &std::path::Path,
@@ -28,12 +28,12 @@ fn run_plan_diff_stdin(
         .arg("--repo")
         .arg(dir.to_str().unwrap())
         .args(extra_args)
-        .args(["plan-diff", "--stdin"])
+        .arg("plan-diff")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn pgs plan-diff --stdin");
+        .expect("spawn pgs plan-diff via stdin");
 
     {
         let mut stdin = cmd.stdin.take().expect("plan-diff stdin piped");
@@ -149,14 +149,17 @@ fn plan_diff_after_commit_reports_covered_entries_as_gone() {
     );
 }
 
-/// When an edit shifts the hunk id but the same conceptual change is still
-/// present at overlapping lines in the same file, plan-diff must classify the
-/// entry as `shifted` with a new 12-hex hunk id different from the captured
-/// one.
+/// When an edit changes the hunk content with no checksum or range signal
+/// linking the captured id to any live hunk, plan-diff must classify the entry
+/// as `gone/no_match` — never a spurious `shifted/Low`.
 ///
 /// Expected RED failure: subcommand missing → exit 2.
 #[test]
-fn plan_diff_after_content_edit_reports_shifted_entries() {
+fn plan_diff_after_content_edit_reports_gone_no_match() {
+    // The plan captures a bare hunk id. The workdir then changes in a way
+    // that alters the hunk content (adding "zero\n" shifts the whole diff),
+    // so there is no checksum or range signal linking the captured id to any
+    // live hunk. Correct result: gone/no_match — not a spurious shifted/Low.
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "f.rs", "one\ntwo\n", "initial");
     write_file(dir.path(), "f.rs", "one\ntwo\nthree\n");
@@ -169,41 +172,28 @@ fn plan_diff_after_content_edit_reports_shifted_entries() {
         ]
     });
 
-    // Edit the file: insert an extra line BEFORE the tracked hunk so the
-    // hunk id recomputes (new_start shifts) but the conceptual hunk is still
-    // at the tail of the file.
+    // Inserting "zero\n" before the existing content changes the diff from
+    // "add three\n" to "add zero\n + add three\n" — a new hunk with a new
+    // checksum. No genuine content or range relationship survives.
     write_file(dir.path(), "f.rs", "zero\none\ntwo\nthree\n");
 
     let (code, stdout, stderr) = run_plan_diff_stdin(dir.path(), &plan.to_string(), &[]);
     assert_eq!(
         code, 1,
-        "shifted entries must surface as exit code 1. stderr: {stderr}"
+        "gone entries must surface as exit code 1. stderr: {stderr}"
     );
 
     let envelope: Value = serde_json::from_str(&stdout).expect("plan-diff emits JSON envelope");
-    let shifted = envelope["shifted"]
-        .as_array()
-        .expect("shifted must be an array");
-    assert_eq!(
-        shifted.len(),
-        1,
-        "edited file should surface as shifted, envelope: {envelope}"
-    );
-    let new_id = shifted[0]["new_hunk_id"]
-        .as_str()
-        .expect("shifted entry must expose new_hunk_id");
-    assert_eq!(new_id.len(), 12, "hunk ids are 12-hex");
-    assert_ne!(
-        new_id, old_hunk_id,
-        "shifted hunk id must differ from captured one"
-    );
-    assert_eq!(
-        shifted[0]["old_hunk_id"], old_hunk_id,
-        "shifted entry must preserve the captured hunk id"
-    );
     assert!(
-        shifted[0]["match_confidence"].is_string(),
-        "shifted entry must include a match_confidence"
+        envelope["shifted"].as_array().unwrap().is_empty(),
+        "no spurious shifted entry expected, got: {envelope}"
+    );
+    let gone = envelope["gone"].as_array().expect("gone must be an array");
+    assert_eq!(gone.len(), 1, "one gone entry expected, got: {envelope}");
+    assert_eq!(
+        gone[0]["reason"].as_str(),
+        Some("no_match"),
+        "reason must be no_match, got: {envelope}"
     );
 }
 
@@ -239,7 +229,7 @@ fn plan_diff_on_missing_file_reports_entry_as_gone() {
     );
 }
 
-/// `pgs plan-diff --stdin` must accept a `CommitPlan` piped on stdin and
+/// `pgs plan-diff` must accept a `CommitPlan` piped on stdin and
 /// produce a diff report.
 ///
 /// Expected RED failure: subcommand missing → exit 2, never reaches the
@@ -299,6 +289,173 @@ fn plan_diff_preserves_unknown_fields_in_plan_input() {
         .as_array()
         .expect("still_valid must be an array");
     assert_eq!(still_valid.len(), 1, "known fields must still round-trip");
+}
+
+// ─── Fuzzy-match integration tests ───────────────────────────────────────────
+
+/// Hunk that shifts position within a file (`hunk_id` changes at `new_start`)
+/// but keeps the same content (checksum stable). The plan carries the old
+/// `hunk_id` as a bare selection plus `expected_checksum`. After the shift the
+/// old id no longer resolves → cross-file checksum search finds the hunk at
+/// its new position → `shifted/High`.
+#[test]
+fn plan_diff_shifted_hunk_via_checksum_classifies_shifted_high() {
+    let (dir, repo) = setup_repo();
+    let base = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n";
+    commit_file(&repo, dir.path(), "f.rs", base, "initial");
+
+    // Phase 1: add BOTTOM_NEW at the end — one hunk far from the top.
+    write_file(dir.path(), "f.rs", &format!("{base}BOTTOM_NEW\n"));
+    let scan1: Value = {
+        let out = run_pgs(dir.path(), &["scan", "--full"]).success();
+        serde_json::from_slice(&out.get_output().stdout).expect("scan JSON")
+    };
+    let old_hunk_id = scan1["files"][0]["hunks"][0]["id"]
+        .as_str()
+        .expect("hunk id")
+        .to_owned();
+    let checksum = scan1["files"][0]["hunks"][0]["checksum"]
+        .as_str()
+        .expect("hunk checksum in full mode")
+        .to_owned();
+
+    // Phase 2: also insert TOP_NEW at the very beginning. TOP_NEW is far from
+    // BOTTOM_NEW so BOTTOM_NEW's context lines are unchanged → same checksum,
+    // but BOTTOM_NEW's new_start shifts → different hunk_id.
+    write_file(dir.path(), "f.rs", &format!("TOP_NEW\n{base}BOTTOM_NEW\n"));
+
+    let plan = json!({
+        "version": "v1",
+        "commits": [{ "id": "c1", "selections": [&old_hunk_id], "expected_checksum": checksum }]
+    });
+    let (code, stdout, stderr) = run_plan_diff_stdin(dir.path(), &plan.to_string(), &[]);
+    assert_eq!(code, 1, "shifted exits 1. stderr: {stderr}");
+
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-diff JSON");
+    let shifted = envelope["shifted"].as_array().expect("shifted array");
+    assert_eq!(
+        shifted.len(),
+        1,
+        "one shifted entry expected, got: {envelope}"
+    );
+    assert_eq!(shifted[0]["match_confidence"], "high", "got: {envelope}");
+    assert!(
+        envelope["gone"].as_array().unwrap().is_empty(),
+        "no false gone: {envelope}"
+    );
+}
+
+/// Bare hunk-id that is stale (not in the current scan) with `expected_checksum`
+/// matching a hunk in `zzz.rs`. `aaa.rs` has a live hunk and comes first
+/// alphabetically — the old code searched only that first file and missed the
+/// match. The fixed code searches all files and finds it in `zzz.rs`.
+#[test]
+fn plan_diff_bare_hunk_id_cross_file_checksum_match_classifies_shifted_high() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "aaa.rs", "p\nq\nr\n", "initial aaa");
+    commit_file(&repo, dir.path(), "zzz.rs", "x\ny\nz\n", "initial zzz");
+
+    write_file(dir.path(), "zzz.rs", "x\ny\nNEW\nz\n");
+    let scan_json: Value = {
+        let out = run_pgs(dir.path(), &["scan", "--full"]).success();
+        serde_json::from_slice(&out.get_output().stdout).expect("scan JSON")
+    };
+    let zzz_file = scan_json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "zzz.rs")
+        .expect("zzz.rs in scan");
+    let zzz_checksum = zzz_file["hunks"][0]["checksum"]
+        .as_str()
+        .expect("zzz.rs hunk checksum")
+        .to_owned();
+
+    // Give aaa.rs a live hunk with different content so it comes first in scan
+    // but does not have the matching checksum.
+    write_file(dir.path(), "aaa.rs", "p\nDECOY\nq\nr\n");
+
+    let plan = json!({
+        "version": "v1",
+        "commits": [{
+            "id": "c1",
+            "selections": ["deadbeef1234"],
+            "expected_checksum": zzz_checksum
+        }]
+    });
+    let (code, stdout, stderr) = run_plan_diff_stdin(dir.path(), &plan.to_string(), &[]);
+    assert_eq!(code, 1, "shifted exits 1. stderr: {stderr}");
+
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-diff JSON");
+    let shifted = envelope["shifted"].as_array().expect("shifted array");
+    assert_eq!(
+        shifted.len(),
+        1,
+        "cross-file match → shifted, got: {envelope}"
+    );
+    assert_eq!(shifted[0]["match_confidence"], "high", "got: {envelope}");
+    assert_eq!(
+        shifted[0]["file_path"], "zzz.rs",
+        "located in zzz.rs, got: {envelope}"
+    );
+    assert!(
+        envelope["gone"].as_array().unwrap().is_empty(),
+        "no false gone: {envelope}"
+    );
+}
+
+/// `Lines` selection (`f.rs:5-10`) that no longer overlaps any live hunk,
+/// paired with `expected_checksum` matching a hunk at a different position and
+/// NO `captured_hunk_id`. The old code gated fuzzy-matching on `captured_hunk_id`
+/// being present, so this was incorrectly classified `gone/no_match`. The fixed
+/// code calls `find_fuzzy_match` unconditionally → `shifted/High`.
+#[test]
+fn plan_diff_lines_checksum_only_no_captured_hunk_id_classifies_shifted_high() {
+    let (dir, repo) = setup_repo();
+    let base = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n\
+                line11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\n";
+    commit_file(&repo, dir.path(), "f.rs", base, "initial");
+
+    // Phase 1: append CHANGE at the end — hunk far below lines 5-10.
+    write_file(dir.path(), "f.rs", &format!("{base}CHANGE\n"));
+    let scan1: Value = {
+        let out = run_pgs(dir.path(), &["scan", "--full"]).success();
+        serde_json::from_slice(&out.get_output().stdout).expect("scan JSON")
+    };
+    let checksum = scan1["files"][0]["hunks"][0]["checksum"]
+        .as_str()
+        .expect("hunk checksum")
+        .to_owned();
+
+    // Phase 2: also prepend a line at the top so CHANGE shifts further down.
+    // Context lines around CHANGE (line18..line20) are unaffected → same checksum.
+    write_file(dir.path(), "f.rs", &format!("PREPEND\n{base}CHANGE\n"));
+
+    // Plan uses range 5-10 (no live hunk there), checksum matches CHANGE hunk,
+    // no captured_hunk_id supplied.
+    let plan = json!({
+        "version": "v1",
+        "commits": [{
+            "id": "c1",
+            "selections": ["f.rs:5-10"],
+            "expected_checksum": checksum
+        }]
+    });
+    let (code, stdout, stderr) = run_plan_diff_stdin(dir.path(), &plan.to_string(), &[]);
+    assert_eq!(code, 1, "shifted exits 1. stderr: {stderr}");
+
+    let envelope: Value = serde_json::from_str(&stdout).expect("plan-diff JSON");
+    let shifted = envelope["shifted"].as_array().expect("shifted array");
+    assert_eq!(
+        shifted.len(),
+        1,
+        "checksum-only Lines match → shifted, got: {envelope}"
+    );
+    assert_eq!(shifted[0]["match_confidence"], "high", "got: {envelope}");
+    assert!(
+        envelope["gone"].as_array().unwrap().is_empty(),
+        "no false gone: {envelope}"
+    );
 }
 
 // ─── MCP RED tests ────────────────────────────────────────────────────────────

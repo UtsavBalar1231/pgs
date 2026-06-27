@@ -5,23 +5,24 @@
 //! missing from the scan. Descriptive — no mutation.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, Read};
 
 use clap::Args;
 
 use crate::error::PgsError;
 use crate::git::{diff, repo};
 use crate::models::{CommitPlan, LineRange, PlannedCommit, ScanResult, SelectionSpec};
-use crate::output::view::{CommandOutput, HunkRef, PlanCheckOutput, PlanOverlap, UnsafeSelector};
+use crate::output::view::{
+    CommandOutput, HunkRef, PlanCheckOutput, PlanOverlap, UnknownHunkId, UnsafeSelector,
+};
 use crate::selection::{parse::detect_selection, resolve};
 
 #[derive(Args)]
 pub struct PlanCheckArgs {
     /// Path to a `CommitPlan` JSON file. Mutually exclusive with `--stdin`.
-    #[arg(long, conflicts_with = "stdin")]
+    #[arg(long)]
     pub plan: Option<String>,
     /// Read the `CommitPlan` JSON from stdin. Default when `--plan` is omitted.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "plan")]
     pub stdin: bool,
 }
 
@@ -37,7 +38,7 @@ pub fn execute(
     context: u32,
     args: PlanCheckArgs,
 ) -> Result<CommandOutput, PgsError> {
-    let plan = load_plan(&args)?;
+    let plan = crate::cmd::plan_io::load_commit_plan(args.plan.as_deref())?;
     run_with_plan(repo_path, context, &plan)
 }
 
@@ -55,31 +56,6 @@ pub fn run_with_plan(
     let d = diff::diff_index_to_workdir(&repository, context)?;
     let scan = diff::build_scan_result(&repository, &d, None)?;
     Ok(check_plan(plan, &scan).into())
-}
-
-fn load_plan(args: &PlanCheckArgs) -> Result<CommitPlan, PgsError> {
-    let raw = match (&args.plan, args.stdin) {
-        (Some(path), _) => std::fs::read_to_string(path).map_err(|e| PgsError::Io {
-            path: path.into(),
-            source: e,
-        })?,
-        (None, _) => read_stdin()?,
-    };
-
-    serde_json::from_str(&raw).map_err(|e| PgsError::InvalidSelection {
-        detail: format!("malformed CommitPlan JSON: {e}"),
-    })
-}
-
-fn read_stdin() -> Result<String, PgsError> {
-    let mut buf = String::new();
-    io::stdin()
-        .read_to_string(&mut buf)
-        .map_err(|e| PgsError::Io {
-            path: "<stdin>".into(),
-            source: e,
-        })?;
-    Ok(buf)
 }
 
 /// Run the plan-check analysis with a pre-built [`ScanResult`]. Broken out for
@@ -102,6 +78,7 @@ fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
     let mut coverage: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut unsafe_selectors: Vec<UnsafeSelector> = Vec::new();
     let mut unknown_paths: BTreeSet<String> = BTreeSet::new();
+    let mut unknown_hunk_ids: Vec<UnknownHunkId> = Vec::new();
 
     for (commit_idx, commit) in plan.commits.iter().enumerate() {
         let commit_label = commit_label(commit, commit_idx);
@@ -113,6 +90,7 @@ fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
             &mut coverage,
             &mut unsafe_selectors,
             &mut unknown_paths,
+            &mut unknown_hunk_ids,
         );
     }
 
@@ -140,6 +118,7 @@ fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
         uncovered,
         unsafe_selectors,
         unknown_paths.into_iter().collect(),
+        unknown_hunk_ids,
     )
 }
 
@@ -150,6 +129,7 @@ fn commit_label(commit: &PlannedCommit, index: usize) -> String {
         .unwrap_or_else(|| format!("commit-{index}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn analyze_commit(
     commit: &PlannedCommit,
     commit_label: &str,
@@ -158,6 +138,7 @@ fn analyze_commit(
     coverage: &mut BTreeMap<String, BTreeSet<String>>,
     unsafe_selectors: &mut Vec<UnsafeSelector>,
     unknown_paths: &mut BTreeSet<String>,
+    unknown_hunk_ids: &mut Vec<UnknownHunkId>,
 ) {
     for selection in &commit.selections {
         let Ok(spec) = detect_selection(selection) else {
@@ -206,9 +187,12 @@ fn analyze_commit(
                 }
             }
         } else if let SelectionSpec::Hunk { hunk_id } = &spec {
-            // Unknown hunk id → surface via unknown_paths keyed by hunk id so the
-            // agent sees it instead of silently mis-counting coverage.
-            unknown_paths.insert(hunk_id.clone());
+            // Unknown hunk id — stale from a prior scan. Route into `unknown_hunk_ids`
+            // so agents can distinguish "re-scan and refresh this id" from a bad path.
+            unknown_hunk_ids.push(UnknownHunkId {
+                commit_id: commit.id.clone(),
+                hunk_id: hunk_id.clone(),
+            });
         }
     }
 }
@@ -356,6 +340,107 @@ mod tests {
                 .contains(&"does/not/exist.rs".to_owned()),
             "expected ghost path in unknown_paths, got: {:?}",
             result.unknown_paths
+        );
+    }
+
+    #[test]
+    fn stale_hunk_id_lands_in_unknown_hunk_ids_not_unknown_paths() {
+        // A 12-hex id that was valid in a prior scan but is absent now must go
+        // into `unknown_hunk_ids`, never into `unknown_paths`.
+        let scan = scan_one_file("f.rs", vec![hunk("aaa111bbb222", 1, 1)]);
+        let stale_id = "deadbeef0000";
+        let plan = CommitPlan {
+            version: "v1".into(),
+            commits: vec![PlannedCommit {
+                id: Some("c1".into()),
+                selections: vec![stale_id.to_owned()],
+                ..PlannedCommit::default()
+            }],
+            ..CommitPlan::default()
+        };
+        let result = check_plan(&plan, &scan);
+
+        assert!(
+            result.unknown_paths.is_empty(),
+            "stale hunk id must not appear in unknown_paths, got: {:?}",
+            result.unknown_paths
+        );
+        assert_eq!(
+            result.unknown_hunk_ids.len(),
+            1,
+            "expected exactly one unknown_hunk_ids entry, got: {:?}",
+            result.unknown_hunk_ids
+        );
+        assert_eq!(result.unknown_hunk_ids[0].hunk_id, stale_id);
+        assert_eq!(result.unknown_hunk_ids[0].commit_id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn unknown_hunk_id_and_unknown_path_are_not_conflated() {
+        // One selection is a genuine missing path, one is a stale hunk id.
+        // Each must land in the correct bucket.
+        let scan = scan_one_file("f.rs", vec![hunk("aaa111bbb222", 1, 1)]);
+        let stale_id = "deadbeef0000"; // valid 12-hex, absent from scan
+        let ghost_path = "does/not/exist.rs";
+        let plan = CommitPlan {
+            version: "v1".into(),
+            commits: vec![PlannedCommit {
+                id: Some("mixed".into()),
+                selections: vec![stale_id.to_owned(), ghost_path.to_owned()],
+                ..PlannedCommit::default()
+            }],
+            ..CommitPlan::default()
+        };
+        let result = check_plan(&plan, &scan);
+
+        assert!(
+            result.unknown_paths.contains(&ghost_path.to_owned()),
+            "missing path must be in unknown_paths, got: {:?}",
+            result.unknown_paths
+        );
+        assert!(
+            !result.unknown_paths.contains(&stale_id.to_owned()),
+            "stale hunk id must NOT be in unknown_paths"
+        );
+        assert!(
+            result
+                .unknown_hunk_ids
+                .iter()
+                .any(|u| u.hunk_id == stale_id),
+            "stale hunk id must be in unknown_hunk_ids, got: {:?}",
+            result.unknown_hunk_ids
+        );
+        assert!(
+            result.has_issues(),
+            "has_issues must be true when unknown_hunk_ids is non-empty"
+        );
+    }
+
+    #[test]
+    fn has_issues_true_when_only_unknown_hunk_id_reported() {
+        let scan = scan_one_file("f.rs", vec![hunk("aaa111bbb222", 1, 1)]);
+        let plan = CommitPlan {
+            version: "v1".into(),
+            commits: vec![PlannedCommit {
+                id: None,
+                // Cover the real hunk AND reference a stale 12-hex id.
+                selections: vec!["aaa111bbb222".to_owned(), "deadbeef0000".to_owned()],
+                ..PlannedCommit::default()
+            }],
+            ..CommitPlan::default()
+        };
+        let result = check_plan(&plan, &scan);
+
+        // overlaps empty, uncovered empty, unsafe_selectors empty, unknown_paths empty
+        assert!(result.overlaps.is_empty());
+        assert!(result.uncovered.is_empty());
+        assert!(result.unsafe_selectors.is_empty());
+        assert!(result.unknown_paths.is_empty());
+        // but unknown_hunk_ids is not
+        assert!(!result.unknown_hunk_ids.is_empty());
+        assert!(
+            result.has_issues(),
+            "has_issues must return true when only unknown_hunk_ids is non-empty"
         );
     }
 

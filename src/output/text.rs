@@ -8,7 +8,8 @@ use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, HunkRef, LineOriginView,
     OperationOutput, OperationStatusView, OutputCommand, OverviewOutput, PlanCheckOutput,
     PlanDiffEntry, PlanDiffOutput, PlanDiffShift, PlanOverlap, ScanDetail, ScanFileView,
-    ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput, StatusOutput, UnsafeSelector,
+    ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput, StatusOutput, UnknownHunkId,
+    UnsafeSelector,
 };
 
 const MARKER_PREFIX: &str = "@@pgs:v1";
@@ -215,8 +216,6 @@ impl<'a> From<(&'a OperationPreview, &'a PreviewLine)> for PreviewLineRecord<'a>
                 LineOrigin::Context => "context",
                 LineOrigin::Addition => "addition",
                 LineOrigin::Deletion => "deletion",
-                // `Mixed` is a split-hunk classification tag; `PreviewLine` never carries it.
-                LineOrigin::Mixed => "mixed",
             },
             content: &line.content,
         }
@@ -428,6 +427,23 @@ struct PlanCheckBoundaryRecord {
     uncovered: usize,
     unsafe_selectors: usize,
     unknown_paths: usize,
+    unknown_hunk_ids: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct UnknownHunkIdRecord<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_id: Option<&'a str>,
+    hunk_id: &'a str,
+}
+
+impl<'a> From<&'a UnknownHunkId> for UnknownHunkIdRecord<'a> {
+    fn from(u: &'a UnknownHunkId) -> Self {
+        Self {
+            commit_id: u.commit_id.as_deref(),
+            hunk_id: &u.hunk_id,
+        }
+    }
 }
 
 fn render_plan_check(output: &PlanCheckOutput) -> Result<String, PgsError> {
@@ -437,6 +453,7 @@ fn render_plan_check(output: &PlanCheckOutput) -> Result<String, PgsError> {
         uncovered: output.uncovered.len(),
         unsafe_selectors: output.unsafe_selectors.len(),
         unknown_paths: output.unknown_paths.len(),
+        unknown_hunk_ids: output.unknown_hunk_ids.len(),
     };
 
     let mut lines = Vec::with_capacity(
@@ -444,6 +461,7 @@ fn render_plan_check(output: &PlanCheckOutput) -> Result<String, PgsError> {
             + output.uncovered.len()
             + output.unsafe_selectors.len()
             + output.unknown_paths.len()
+            + output.unknown_hunk_ids.len()
             + 2,
     );
     lines.push(render_marker("plan.check.begin", &boundary)?);
@@ -463,6 +481,12 @@ fn render_plan_check(output: &PlanCheckOutput) -> Result<String, PgsError> {
         lines.push(render_marker(
             "plan.check.unknown",
             &serde_json::json!({ "path": unknown }),
+        )?);
+    }
+    for unknown_hunk in &output.unknown_hunk_ids {
+        lines.push(render_marker(
+            "plan.check.unknown_hunk",
+            &UnknownHunkIdRecord::from(unknown_hunk),
         )?);
     }
     lines.push(render_marker("plan.check.end", &boundary)?);
