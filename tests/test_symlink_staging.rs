@@ -30,13 +30,14 @@ fn stage_command_e2e_on_symlink_produces_correct_blob() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    // The CLI envelope must report lines_affected == 10 (len("target.bin")).
+    // `stage_file` now returns the line count of the content, not the byte count.
+    // A symlink target string "target.bin" is one logical line → lines_affected == 1.
     let items = json["items"].as_array().expect("items array");
     assert_eq!(items.len(), 1, "expected one staged item");
     assert_eq!(
         items[0]["lines_affected"].as_u64().unwrap(),
-        10,
-        "lines_affected must equal the length of the link-target string"
+        1,
+        "lines_affected must be 1 (line count of symlink target string, not byte count)"
     );
 
     // Read the blob from the index via git2 — no subprocess calls.

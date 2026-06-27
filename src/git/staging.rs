@@ -57,7 +57,19 @@ pub fn stage_file(
     index.add_frombuffer(&entry, &content)?;
     index.write()?;
 
-    Ok(saturating_u32(content.len()))
+    Ok(count_lines(&content))
+}
+
+/// Count logical lines in a byte slice — mirrors `unstaging::count_lines`.
+///
+/// Uses `str::lines()` so trailing-newline and no-trailing-newline files
+/// report the same count as their logical line count (not the byte count).
+fn count_lines(content: &[u8]) -> u32 {
+    if content.is_empty() {
+        return 0;
+    }
+    let text = String::from_utf8_lossy(content);
+    saturating_u32(text.lines().count())
 }
 
 /// Stage specific lines from the working directory into the index.
@@ -641,15 +653,16 @@ mod tests {
     fn stage_file_stages_entire_workdir_content() {
         let (dir, repo) = setup_repo_with_commit(&[("file.txt", "original\n")]);
 
-        // Modify in workdir
+        // Modify in workdir — 2 lines
         let modified = "original\nappended line\n";
         fs::write(dir.path().join("file.txt"), modified).expect("write");
 
-        let bytes = stage_file(&repo, "file.txt", None).expect("stage_file");
+        let lines = stage_file(&repo, "file.txt", None).expect("stage_file");
 
+        // Returns logical line count (2), not byte count (23).
         assert_eq!(
-            bytes,
-            u32::try_from(modified.len()).expect("content fits u32")
+            lines, 2,
+            "stage_file must return line count, not byte count"
         );
         let staged = read_index_content(&repo, "file.txt");
         assert_eq!(staged, modified.as_bytes());
@@ -659,15 +672,16 @@ mod tests {
     fn stage_file_new_file_adds_to_index() {
         let (dir, repo) = setup_repo_with_commit(&[("existing.txt", "hi\n")]);
 
-        // Create a brand new file
+        // Create a brand new file — 1 line
         let new_content = "brand new file\n";
         fs::write(dir.path().join("new_file.txt"), new_content).expect("write");
 
-        let bytes = stage_file(&repo, "new_file.txt", None).expect("stage_file");
+        let lines = stage_file(&repo, "new_file.txt", None).expect("stage_file");
 
+        // Returns logical line count (1), not byte count (15).
         assert_eq!(
-            bytes,
-            u32::try_from(new_content.len()).expect("content fits u32")
+            lines, 1,
+            "stage_file must return line count, not byte count"
         );
         let staged = read_index_content(&repo, "new_file.txt");
         assert_eq!(staged, new_content.as_bytes());
@@ -1679,6 +1693,46 @@ mod tests {
         assert!(
             staged.is_empty(),
             "staged blob for empty file must be zero bytes, got: {staged:?}"
+        );
+    }
+
+    /// `stage_file` must report line count, not byte count.
+    /// "new content\n" is 12 bytes but 1 line — `lines_affected` must be 1.
+    #[test]
+    fn stage_file_single_line_new_file_lines_affected_is_line_count_not_bytes() {
+        let (dir, repo) = setup_repo_with_commit(&[("existing.txt", "hi\n")]);
+        let content = "new content\n"; // 12 bytes, 1 line
+        fs::write(dir.path().join("new.txt"), content).expect("write");
+        let count = stage_file(&repo, "new.txt", None).expect("stage_file");
+        assert_eq!(
+            count, 1,
+            "stage_file must return line count (1), not byte count (12)"
+        );
+    }
+
+    /// `stage_file` on a 3-line script must return 3, not the byte count (28).
+    #[test]
+    fn stage_file_multiline_new_file_lines_affected_equals_line_count() {
+        let (dir, repo) = setup_repo_with_commit(&[("existing.txt", "hi\n")]);
+        let content = "#!/bin/sh\necho hi\necho more\n"; // 28 bytes, 3 lines
+        fs::write(dir.path().join("script.sh"), content).expect("write");
+        let count = stage_file(&repo, "script.sh", None).expect("stage_file");
+        assert_eq!(
+            count, 3,
+            "stage_file must return 3 for a 3-line file, not byte count"
+        );
+    }
+
+    /// `stage_file` on a file without a trailing newline must count logical lines.
+    #[test]
+    fn stage_file_no_trailing_newline_lines_affected_equals_line_count() {
+        let (dir, repo) = setup_repo_with_commit(&[("existing.txt", "hi\n")]);
+        let content = "line1\nline2"; // 11 bytes, 2 logical lines (no trailing newline)
+        fs::write(dir.path().join("no_nl.txt"), content).expect("write");
+        let count = stage_file(&repo, "no_nl.txt", None).expect("stage_file");
+        assert_eq!(
+            count, 2,
+            "stage_file must return 2 for a 2-line file without trailing newline"
         );
     }
 

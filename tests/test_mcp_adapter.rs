@@ -100,9 +100,11 @@ fn stage_via_mcp_adapter_on_symlink_produces_correct_blob() {
     match output {
         McpTypedOutput::Operation(op) => {
             assert_eq!(op.items.len(), 1, "expected one staged item");
+            // A symlink target string "target.bin" is 1 logical line.
+            // `stage_file` now returns line count, not byte count.
             assert_eq!(
-                op.items[0].lines_affected, 10,
-                "lines_affected must equal len(\"target.bin\")"
+                op.items[0].lines_affected, 1,
+                "lines_affected must be 1 (line count of symlink target string)"
             );
         }
         other => panic!("expected Operation output, got: {other:?}"),
