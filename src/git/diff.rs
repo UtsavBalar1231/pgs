@@ -5,7 +5,7 @@ use git2::{Delta, Diff, DiffOptions, Patch, Repository};
 
 use crate::error::PgsError;
 use crate::models::{
-    DiffLineInfo, FileInfo, FileStatus, HunkInfo, LineOrigin, ScanResult, ScanSummary,
+    DiffLineInfo, FileInfo, FileStatus, HunkInfo, LineOrigin, OriginMix, ScanResult, ScanSummary,
     StagedFileInfo, StatusReport, StatusSummary,
 };
 
@@ -203,7 +203,7 @@ pub struct HunkSplit {
     /// Last 1-indexed line number of the run (inclusive).
     pub end: u32,
     /// Category of the lines in the run.
-    pub origin_mix: LineOrigin,
+    pub origin_mix: OriginMix,
 }
 
 /// Classify a hunk into contiguous runs of changed lines (descriptive, not prescriptive). Returns an empty vector for a hunk with no additions or deletions.
@@ -231,7 +231,7 @@ pub fn suggest_splits(hunk: &HunkInfo) -> Vec<HunkSplit> {
                 run_end = line.line_number;
                 run_has_del = true;
             }
-            LineOrigin::Context | LineOrigin::Mixed => {
+            LineOrigin::Context => {
                 if let Some(start) = run_start.take() {
                     splits.push(HunkSplit {
                         start,
@@ -256,13 +256,13 @@ pub fn suggest_splits(hunk: &HunkInfo) -> Vec<HunkSplit> {
     splits
 }
 
-const fn classify_run(has_add: bool, has_del: bool) -> LineOrigin {
+const fn classify_run(has_add: bool, has_del: bool) -> OriginMix {
     // `(false, false)` is unreachable in practice (a run is pushed only after an add or del);
     // folded into `Mixed` to satisfy exhaustiveness without a panic.
     match (has_add, has_del) {
-        (true, false) => LineOrigin::Addition,
-        (false, true) => LineOrigin::Deletion,
-        (true, true) | (false, false) => LineOrigin::Mixed,
+        (true, false) => OriginMix::Addition,
+        (false, true) => OriginMix::Deletion,
+        (true, true) | (false, false) => OriginMix::Mixed,
     }
 }
 
@@ -302,13 +302,9 @@ fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, Pg
                 .to_string();
 
             // Line number: new file for context/additions, old file for deletions.
-            // `Mixed` is never produced by git2; fall through to new_lineno as a
-            // defensive default for the borrow checker.
             let line_number = match origin {
                 LineOrigin::Deletion => line.old_lineno().unwrap_or(0),
-                LineOrigin::Context | LineOrigin::Addition | LineOrigin::Mixed => {
-                    line.new_lineno().unwrap_or(0)
-                }
+                LineOrigin::Context | LineOrigin::Addition => line.new_lineno().unwrap_or(0),
             };
 
             hunk_content.push_str(&content);
@@ -374,8 +370,10 @@ fn patch_line_counts(patch: &Patch<'_>) -> (u32, u32) {
     (added, deleted)
 }
 
-/// Compute a content-based hunk ID: first 12 hex chars of SHA-256 of
-/// `"path:old_start:new_start:content"`.
+/// Compute a position-dependent hunk ID: first 12 hex chars of SHA-256 of
+/// `"path:old_start:new_start:content"`. Embeds both start positions, so the
+/// ID shifts when earlier hunks change the line count. For a position-stable
+/// fingerprint use `HunkInfo::checksum` (`sha256(content)` without positions).
 fn compute_hunk_id(path: &str, old_start: u32, new_start: u32, content: &str) -> String {
     let input = format!("{path}:{old_start}:{new_start}:{content}");
     hex_sha256(input.as_bytes())[..12].to_string()
@@ -1076,6 +1074,71 @@ mod tests {
         assert!(
             lines_deleted <= 2,
             "at most 2 deleted lines for target string diff"
+        );
+    }
+
+    #[test]
+    fn hunk_checksum_stable_when_earlier_hunk_changes_but_id_shifts() {
+        // Growing hunk 1 (inserting EXTRA) shifts hunk 2's new_start, so its
+        // hunk_id (position-dependent) changes while checksum (content-only) does not.
+        let (dir, repo) = setup_repo();
+
+        let initial = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n\
+                       line11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\n";
+        commit_file(&repo, dir.path(), "target.rs", initial, "initial");
+
+        // V1: line2 → CHANGE_A, line15 → CHANGE_B (two hunks, content known).
+        let v1 = "line1\nCHANGE_A\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n\
+                  line11\nline12\nline13\nline14\nCHANGE_B\nline16\nline17\nline18\nline19\nline20\n";
+        write_file(dir.path(), "target.rs", v1);
+
+        let diff1 = diff_index_to_workdir(&repo, 3).expect("diff v1");
+        let scan1 = build_scan_result(&repo, &diff1, None).expect("scan v1");
+        let file1 = scan1
+            .files
+            .iter()
+            .find(|f| f.path == "target.rs")
+            .expect("target.rs in v1 scan");
+        assert_eq!(file1.hunks.len(), 2, "v1 must have two hunks");
+        // Hunk 2 opens at old line 12: git prepends 3 context lines before the
+        // change at line 15, so old_start = 15 - 3 = 12.  Both hunks are 1-for-1
+        // replacements so new_start matches old_start.
+        assert_eq!(file1.hunks[1].old_start, 12);
+        assert_eq!(file1.hunks[1].new_start, 12);
+
+        let checksum_before = file1.hunks[1].checksum.clone();
+        let id_before = file1.hunks[1].hunk_id.clone();
+
+        // V2: insert EXTRA after CHANGE_A — hunk 1 grows, shifting hunk 2's new_start.
+        let v2 = "line1\nCHANGE_A\nEXTRA\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n\
+                  line11\nline12\nline13\nline14\nCHANGE_B\nline16\nline17\nline18\nline19\nline20\n";
+        write_file(dir.path(), "target.rs", v2);
+
+        let diff2 = diff_index_to_workdir(&repo, 3).expect("diff v2");
+        let scan2 = build_scan_result(&repo, &diff2, None).expect("scan v2");
+        let file2 = scan2
+            .files
+            .iter()
+            .find(|f| f.path == "target.rs")
+            .expect("target.rs in v2 scan");
+        assert_eq!(file2.hunks.len(), 2, "v2 must still have two hunks");
+
+        // old_start stays 12; new_start shifts to 13 (one EXTRA line above).
+        assert_eq!(file2.hunks[1].old_start, 12, "old_start unchanged");
+        assert_eq!(
+            file2.hunks[1].new_start, 13,
+            "new_start shifted by EXTRA line"
+        );
+
+        // Regression: checksum is position-stable.
+        assert_eq!(
+            file2.hunks[1].checksum, checksum_before,
+            "checksum must be unchanged — diff text is identical, only position shifted"
+        );
+        // Regression: hunk_id is position-dependent.
+        assert_ne!(
+            file2.hunks[1].hunk_id, id_before,
+            "hunk_id must differ — new_start changed from 15 to 16"
         );
     }
 }

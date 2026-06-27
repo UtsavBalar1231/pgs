@@ -442,7 +442,12 @@ fn text_default_scan_has_v1_markers() {
     assert_eq!(file_payload["binary"], false);
     assert_eq!(file_payload["hunks_count"], 1);
     assert!(file_payload["lines_added"].as_u64().unwrap() > 0);
-    assert!(file_payload.get("checksum").is_none());
+    // Compact scan now includes file checksum so agents can use --expect without --full.
+    assert!(
+        file_payload["checksum"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 
     let (hunk_kind, hunk_payload) = parse_marker(lines[2]);
     assert_eq!(hunk_kind, "hunk");
@@ -572,7 +577,8 @@ fn json_mode_scan_uses_new_contract() {
     assert_eq!(file["path"], "hello.txt");
     assert_eq!(file["binary"], false);
     assert!(file.get("is_binary").is_none());
-    assert!(file.get("checksum").is_none());
+    // Compact scan now includes file checksum so agents can use --expect without --full.
+    assert!(file["checksum"].as_str().is_some_and(|s| !s.is_empty()));
 
     let hunk = &file["hunks"][0];
     assert!(hunk["id"].is_string());

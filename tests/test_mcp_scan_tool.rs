@@ -136,7 +136,8 @@ fn mcp_scan_tool_compact_matches_cli_contract() {
     let files = pgs["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["path"], "hello.txt");
-    assert!(files[0].get("checksum").is_none());
+    // Compact scan now includes file_checksum so agents can use --expect without --full.
+    assert!(files[0]["checksum"].as_str().is_some_and(|s| !s.is_empty()));
 
     let hunks = files[0]["hunks"].as_array().unwrap();
     assert_eq!(hunks.len(), 1);

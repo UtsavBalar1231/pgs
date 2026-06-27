@@ -39,7 +39,8 @@ fn scan_modified_file_returns_compact_contract() {
     assert_eq!(file["binary"], false);
     assert!(file.get("is_binary").is_none());
     assert_eq!(file["hunks_count"], 1);
-    assert!(file.get("checksum").is_none());
+    // Compact scan now includes file checksum so agents can use --expect without --full.
+    assert!(file["checksum"].as_str().is_some_and(|s| !s.is_empty()));
 
     let hunks = file["hunks"].as_array().unwrap();
     assert!(!hunks.is_empty(), "expected at least one hunk");
