@@ -1,8 +1,8 @@
-//! Anti-drift assertion for SKILL.md §0 Capability Truth Table. Extracts every
-//! `src/...:NNN` citation, asserts each cited line is non-empty, and asserts
-//! known load-bearing symbols appear within a ±5-line window of the cited line
-//! (exact-line grep is brittle under benign refactors; ±5 still catches the
-//! renames and deletions the test exists to prevent).
+//! Contract guards for the published pgs commit-staging skill. Asserts the skill
+//! docs leak no internal source citations (`src/...:NNN`) or internal symbol
+//! names, the packaged skill layout stays intact, `allowed-tools` matches the
+//! MCP tool surface, the `structuredContent` naming is correct, and the
+//! commit-message gate stays explicit.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -22,7 +22,7 @@ fn read_skill_md() -> String {
     let path = skill_root().join("SKILL.md");
     fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "failed to read {}: {e}. The skill file is required for the anti-drift test.",
+            "failed to read {}: {e}. The skill file is required for the contract test.",
             path.display()
         )
     })
@@ -41,17 +41,10 @@ fn read_skill_doc(rel: &str) -> String {
 fn read_all_skill_docs() -> String {
     [
         read_skill_md(),
-        read_skill_doc("references/capability-table.md"),
         read_skill_doc("references/tool-reference.md"),
         read_skill_doc("references/commit-message-guide.md"),
     ]
     .join("\n")
-}
-
-fn read_source(rel: &str) -> String {
-    let path = manifest_dir().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read cited source file {}: {e}", path.display()))
 }
 
 fn parse_allowed_tools(skill: &str) -> BTreeSet<String> {
@@ -72,27 +65,6 @@ fn parse_allowed_tools(skill: &str) -> BTreeSet<String> {
     }
     tools
 }
-
-/// (file, line, expected symbol) anchors kept in sync with SKILL.md §0.
-const KNOWN_ANCHORS: &[(&str, u32, &str)] = &[
-    ("src/selection/resolve.rs", 247, "validate_freshness"),
-    ("src/mcp/contract.rs", 712, "structured_tool_result"),
-    ("src/mcp/contract.rs", 320, "define_tool_output"),
-    ("src/git/diff.rs", 270, "extract_hunks"),
-    ("src/git/diff.rs", 211, "suggest_splits"),
-    ("src/git/diff.rs", 377, "compute_hunk_id"),
-    ("src/git/staging.rs", 250, "preview_stage"),
-    ("src/models/preview.rs", 14, "OperationPreview"),
-    ("src/models/plan.rs", 11, "CommitPlan"),
-    ("src/models/scan.rs", 101, "whitespace_only"),
-    ("src/cmd/overview.rs", 9, "execute"),
-    ("src/cmd/plan_check.rs", 35, "execute"),
-    ("src/cmd/plan_diff.rs", 36, "execute"),
-    ("src/cmd/commit.rs", 15, "amend"),
-    ("src/mcp/contract.rs", 162, "amend"),
-    ("src/cmd/commit.rs", 62, "args.message"),
-    ("src/cmd/commit.rs", 70, "args.message"),
-];
 
 #[test]
 fn top_level_skill_path_is_a_symlink_to_the_packaged_skill_tree() {
@@ -119,56 +91,41 @@ fn root_claude_directory_does_not_define_a_second_plugin_root() {
 }
 
 #[test]
-fn skill_capability_table_anchors_still_resolve() {
-    let skill = read_all_skill_docs();
-    let citation_re = Regex::new(r"src/[a-z_/]+\.rs:(\d+)").expect("static regex is valid");
+fn skill_docs_leak_no_internal_implementation_details() {
+    let docs = read_all_skill_docs();
 
-    let mut citations: Vec<(String, u32)> = Vec::new();
-    for cap in citation_re.captures_iter(&skill) {
+    // `src/...:NNN` source citations expose implementation internals and rot on
+    // every refactor. Line-range selector examples like `src/main.rs:10-20` are
+    // legitimate — a trailing `-` or `,` marks a range, not a citation.
+    let citation_re = Regex::new(r"src/[a-z_/]+\.rs:(\d+)").expect("static regex is valid");
+    let mut leaks: Vec<String> = Vec::new();
+    for cap in citation_re.captures_iter(&docs) {
         let m = cap.get(0).expect("group 0 always present");
-        let full = m.as_str();
-        let after = &skill[m.end()..];
+        let after = &docs[m.end()..];
         if after.starts_with('-') || after.starts_with(',') {
             continue;
         }
-        let (file, line_str) = full.rsplit_once(':').expect("regex guarantees ':'");
-        let line: u32 = line_str.parse().expect("regex guarantees digits");
-        citations.push((file.to_string(), line));
+        leaks.push(m.as_str().to_owned());
     }
     assert!(
-        !citations.is_empty(),
-        "SKILL.md contains no `src/...:NNN` citations — truth table missing or malformed"
+        leaks.is_empty(),
+        "skill docs leak internal source citations (describe the MCP contract, not file:line): {leaks:?}"
     );
-    for (file, line) in &citations {
-        let source = read_source(file);
-        let lines: Vec<&str> = source.lines().collect();
-        let idx = (*line as usize).saturating_sub(1);
-        assert!(
-            idx < lines.len(),
-            "citation {file}:{line} is out of range (file has {} lines) — stale anchor",
-            lines.len()
-        );
-        assert!(
-            !lines[idx].trim().is_empty(),
-            "citation {file}:{line} points at an empty line — probable anchor rot"
-        );
-    }
 
-    for (file, line, symbol) in KNOWN_ANCHORS {
-        let source = read_source(file);
-        let lines: Vec<&str> = source.lines().collect();
-        let center = (*line as usize).saturating_sub(1);
-        let start = center.saturating_sub(5);
-        let end = (center + 5).min(lines.len().saturating_sub(1));
-        let found = (start..=end).any(|i| lines[i].contains(symbol));
+    // Internal symbol names must never appear in agent-facing skill docs.
+    for symbol in [
+        "compute_hunk_id",
+        "extract_hunks",
+        "suggest_splits",
+        "validate_freshness",
+        "preview_stage",
+        "structured_tool_result",
+        "define_tool_output",
+        "build_index_entry",
+    ] {
         assert!(
-            found,
-            "symbol `{symbol}` not found within ±5 lines of {file}:{line} — rename or deletion? \
-             window contents:\n{}",
-            (start..=end)
-                .map(|i| format!("  {}: {}", i + 1, lines[i]))
-                .collect::<Vec<_>>()
-                .join("\n")
+            !docs.contains(symbol),
+            "skill docs leak internal symbol `{symbol}` — describe the MCP contract, not the code"
         );
     }
 }
@@ -209,10 +166,6 @@ fn skill_guidance_has_no_cli_only_or_stale_structured_content_paths() {
     assert!(
         !docs.contains("structured_content"),
         "agent-facing skill docs should use JSON-RPC structuredContent naming"
-    );
-    assert!(
-        !docs.contains("src/mcp/contract.rs:835") && !docs.contains("src/mcp/contract.rs:304"),
-        "skill docs should not contain stale structured result anchors"
     );
     assert!(
         docs.contains("structuredContent"),

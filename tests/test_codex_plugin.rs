@@ -119,7 +119,6 @@ fn marketplace_entry_points_to_codex_compatible_plugin_path() {
     assert_regular_file("plugins/pgs/.claude-plugin/plugin.json");
     assert_regular_file("plugins/pgs/.mcp.json");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/SKILL.md");
-    assert_regular_file("plugins/pgs/skills/git-commit-staging/references/capability-table.md");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/references/tool-reference.md");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/references/commit-message-guide.md");
     assert_regular_file("plugins/pgs/scripts/run-pgs-mcp.sh");
