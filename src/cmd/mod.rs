@@ -6,6 +6,7 @@ pub mod mcp_adapter;
 mod overview;
 pub mod plan_check;
 pub mod plan_diff;
+pub(crate) mod plan_io;
 mod scan;
 pub mod split;
 mod stage;
@@ -16,7 +17,9 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 
 use crate::error::PgsError;
 use crate::output;
-use crate::output::view::{CliErrorOutput, OutputCommand};
+use crate::output::view::OutputCommand;
+
+pub use crate::output::view::CliErrorOutput;
 
 /// Output format requested at the CLI boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -37,8 +40,6 @@ pub struct ParsedCli {
 
 pub struct RenderableOutput(output::view::CommandOutput);
 
-pub struct RenderableError(CliErrorOutput);
-
 impl RenderableOutput {
     const fn new(output: output::view::CommandOutput) -> Self {
         Self(output)
@@ -57,12 +58,6 @@ impl RenderableOutput {
             output::view::CommandOutput::PlanDiff(plan_diff) if plan_diff.has_drift() => Some(1),
             _ => None,
         }
-    }
-}
-
-impl RenderableError {
-    const fn new(output: CliErrorOutput) -> Self {
-        Self(output)
     }
 }
 
@@ -318,30 +313,21 @@ const fn parse_error_code(kind: ErrorKind) -> &'static str {
     }
 }
 
-pub fn parse_failure(error: &clap::Error) -> RenderableError {
+pub fn parse_failure(error: &clap::Error) -> CliErrorOutput {
     let message = error.to_string().trim_end().to_owned();
-    RenderableError::new(CliErrorOutput::parse(
-        parse_error_code(error.kind()),
-        message,
-        error.exit_code(),
-    ))
+    CliErrorOutput::parse(parse_error_code(error.kind()), message, error.exit_code())
 }
 
-pub fn runtime_failure(command: OutputCommand, error: &PgsError) -> RenderableError {
-    RenderableError::new(CliErrorOutput::runtime(
-        command,
-        error.code(),
-        error.to_string(),
-        error.exit_code(),
-    ))
+pub fn runtime_failure(command: OutputCommand, error: &PgsError) -> CliErrorOutput {
+    CliErrorOutput::runtime(command, error.code(), error.to_string(), error.exit_code())
 }
 
 pub fn render_error(
-    renderable: &RenderableError,
+    renderable: &CliErrorOutput,
     output_mode: OutputMode,
 ) -> Result<String, PgsError> {
     match output_mode {
-        OutputMode::Json => output::json::render_error(&renderable.0),
-        OutputMode::Text => output::text::render_error(&renderable.0),
+        OutputMode::Json => output::json::render_error(renderable),
+        OutputMode::Text => output::text::render_error(renderable),
     }
 }

@@ -32,7 +32,7 @@ pub fn execute(
     let (file_path, hunk) = locate_hunk(&scan, &args.hunk_id)?;
 
     // Freshness: fail retryable if workdir content drifted after scan construction.
-    resolve::validate_freshness(&repository, &scan, &file_path)?;
+    resolve::validate_freshness(&repository, &scan, &file_path, None)?;
 
     let splits = diff::suggest_splits(hunk);
     let ranges: Vec<SplitRangeView> = splits
@@ -40,7 +40,7 @@ pub fn execute(
         .map(|s| SplitRangeView {
             start: s.start,
             end: s.end,
-            origin_mix: OriginMixView::from_line_origin(s.origin_mix),
+            origin_mix: OriginMixView::from_origin_mix(s.origin_mix),
         })
         .collect();
 

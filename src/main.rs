@@ -49,7 +49,7 @@ fn run_command(parsed: cmd::ParsedCli) -> ExitCode {
     }
 }
 
-fn render_error(renderable: &cmd::RenderableError, code: i32, output_mode: OutputMode) -> ExitCode {
+fn render_error(renderable: &cmd::CliErrorOutput, code: i32, output_mode: OutputMode) -> ExitCode {
     let rendered =
         cmd::render_error(renderable, output_mode).expect("error output should always serialize");
     let exit = ExitCode::from(u8::try_from(code).expect("exit code fits in u8"));
