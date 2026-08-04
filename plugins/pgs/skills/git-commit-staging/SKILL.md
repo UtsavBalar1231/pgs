@@ -49,6 +49,11 @@ Bash, raw git, or the pgs CLI.
    - hunk ID for an independent hunk;
    - line range only when one hunk mixes intent — use `pgs_split_hunk` to see
      the addition/deletion runs first.
+
+   A line range names workdir line numbers, so a deleted line has no number to
+   name and comes along only indirectly. Prefer a hunk ID whenever the change
+   involves deletions; see `references/tool-reference.md` for the pairing rules
+   before writing a range over one.
 5. To preview exact staged content without mutating the index, call
    `pgs_stage(dry_run=true, explain=true, limit=200, ...)`.
 6. Verify the result with `pgs_status` before every `pgs_commit`.
@@ -80,7 +85,12 @@ Before every `pgs_commit`:
 5. Body is required for non-trivial commits: 2+ files, 10+ affected lines,
    behavior or public-API changes, or any non-trivial amend.
 
-Full gate and worked examples: `references/commit-message-guide.md`.
+Pass the message as `message`, or as `message_file` pointing at an absolute path
+— exactly one of the two. pgs normalizes whitespace in every message before
+storing it, so do not hand-pad the text.
+
+Full gate, normalization rules, and worked examples:
+`references/commit-message-guide.md`.
 
 ## Tool map
 
@@ -121,8 +131,18 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 ## Recovery
 
 - `outcome="no_effect"`: inspect current state; the change may already be staged,
-  unstaged, or committed.
+  unstaged, or committed. A line range that names only unchanged lines is also a
+  no-op, not a silent success — it returns `SelectionEmpty` and leaves the index
+  alone. Widen the range or select the hunk by ID.
 - `pgs_error.kind="user"`: fix the selector or request shape.
+- `empty_commit_message`: the message was empty or whitespace-only after
+  normalization. Nothing was written; a refused amend left HEAD intact. Write a
+  real message and retry.
+- `input_file_unreadable`: the `message_file` path is missing, a directory,
+  unreadable, or not valid UTF-8. Fix the path or pass `message` inline.
+- `invalid_params` on `pgs_commit`: you supplied neither or both of `message` and
+  `message_file`, or passed `message_file="-"`, which has no stdin over MCP.
+  Resend with exactly one source and an absolute path.
 - `pgs_error.retryable=true` (including `StaleScan`): re-read with `pgs_scan` or
   `pgs_overview`, then retry with fresh selectors and checksums.
 - Wrong staged content before commit: `pgs_unstage`, re-scan, re-plan, and stage

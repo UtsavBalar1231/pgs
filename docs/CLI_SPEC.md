@@ -228,6 +228,22 @@ producing a corrupted staged blob.
 Whole-file staging of a non-UTF-8 file is fully supported; pgs stages the raw
 bytes without encoding transformation.
 
+#### Unterminated interior line
+
+A line range whose result would leave an unterminated line somewhere other than
+at the end of the file returns `unterminated_interior_line` (exit 2), with the
+index unchanged. In practice this means staging a line that lands *after* the
+last line of a file that has no trailing newline: the appended line can only be
+placed there by first terminating the file's existing last line, which is a
+change the range never named.
+
+Stage the enclosing hunk id or the whole file instead. Both are byte-exact on a
+file with no trailing newline.
+
+This joins `non_utf8_partial` and `crlf_mismatch` as a partial-staging refusal:
+the same shape of guard, refusing a selection that cannot be applied without
+silently altering something outside it.
+
 ### `status`
 
 JSON envelope:
@@ -262,6 +278,40 @@ Text record kinds:
 and message; message-only amend is allowed when the index already matches
 `HEAD`.
 
+#### Message sources
+
+The message comes from exactly one of two flags:
+
+- `-m <text>` / `--message <text>` — the message as an argument.
+- `-F <path>` / `--message-file <path>` — read the message from a file.
+  `-F -` reads it from stdin.
+
+Supplying neither and supplying both are both user errors (exit 2), but they
+fail at different layers and produce different envelopes:
+
+- **Neither**, on the CLI: `{"command":"commit","phase":"runtime","code":"invalid_arguments"}`.
+- **Both**, on the CLI: clap rejects the pair before dispatch, so the envelope is
+  `{"command":"cli","phase":"parse","code":"argument_conflict"}` and `message`
+  carries clap's own conflict text.
+- **Either case, over MCP**: the `pgs_commit` tool validates its message source
+  before dispatch, so both come back as a JSON-RPC `invalid_params` error
+  (`-32602`) rather than a pgs error envelope.
+
+Both flags work with `--amend`.
+
+`-F` exists because passing a long message through `-m "$(cat file)"` is
+fragile: the shell expands `$`, backticks and history characters inside the
+substitution, very long messages hit `ARG_MAX`, and a missing file silently
+expands to the empty string. Reading the file directly avoids all of it.
+
+A file that cannot be read — missing, a directory, permission denied, or not
+valid UTF-8 — returns `input_file_unreadable` (exit 2). pgs never substitutes
+lossy replacement characters for invalid UTF-8.
+
+`-F -` is CLI-only. The `pgs_commit` MCP tool rejects `message_file: "-"`,
+because an MCP request has no stdin to read and waiting on a closed one would
+hang the call.
+
 JSON envelope:
 
 ```json
@@ -292,14 +342,32 @@ Validation runs before any index or object-database access, so a rejected
 `--amend` leaves the existing `HEAD` commit and its message untouched. This
 matters because `git commit --amend` has no undo outside the reflog.
 
-A message with real content surrounded by whitespace is valid and is stored
-verbatim; pgs applies no trimming, comment stripping, or other cleanup to an
-accepted message.
-
 The check lives in the shared command handler, so the CLI and the `pgs_commit`
 MCP tool reject the same inputs. The MCP server additionally rejects a blank
 `message` at the protocol layer with a JSON-RPC `invalid_params` error before
 dispatch.
+
+#### Message normalization
+
+Every message is normalized before it is stored, from `-m` and `-F` alike,
+matching `git`'s `--cleanup=whitespace`:
+
+1. CRLF line endings become LF.
+2. Trailing whitespace is stripped from each line.
+3. Leading blank lines are removed.
+4. A run of consecutive blank lines collapses to one.
+5. Trailing blank lines are removed and exactly one trailing newline is added.
+
+`#` comment lines are **preserved verbatim**. Stripping them is `git`'s
+`strip` mode, which applies to messages typed in an editor; a message passed
+on the command line or in a file is content, so a line like `# Heading`
+survives. Leading indentation is likewise content and survives.
+
+Normalization runs before the empty check, so a whitespace-only message still
+returns `empty_commit_message`.
+
+The `message` field of the JSON envelope and the `commit.result` marker carry
+the normalized text, so what is reported is what was stored.
 
 ### `log`
 
@@ -492,7 +560,8 @@ Exit codes:
 - `0` on a clean plan (every report array empty).
 - `1` when any issue is reported (including non-empty `unknown_hunk_ids`) —
   the plan is rejected but nothing is mutated.
-- `2` on malformed plan JSON or an unreadable `--plan` path.
+- `2` on malformed plan JSON (`invalid_selection`) or an unreadable `--plan`
+  path (`input_file_unreadable`).
 
 MCP tool: `pgs_plan_check` — read-only. Input schema
 requires `repo_path` and `plan` (inline `CommitPlan` object); optional
@@ -580,7 +649,8 @@ Text record kinds:
 Exit codes:
 - `0` when every entry is `still_valid` (`shifted` and `gone` both empty).
 - `1` when any entry shifted or went gone — the plan needs reconciliation.
-- `2` on malformed plan JSON or an unreadable `--plan` path.
+- `2` on malformed plan JSON (`invalid_selection`) or an unreadable `--plan`
+  path (`input_file_unreadable`).
 
 MCP tool: `pgs_plan_diff` — read-only. Input
 schema requires `repo_path` and `plan` (inline `CommitPlan` object);
@@ -600,9 +670,11 @@ Line ranges are expressed in workdir (new-file) coordinates, so a deleted line
 has no number to name. Deletions are therefore selected indirectly:
 
 - Inside a *replace run* (adjacent deletions immediately followed by
-  additions), the i-th deletion is paired with the i-th addition and is staged
-  only when that addition is selected. Surplus deletions in a run with fewer
-  additions pair with the run's last addition.
+  additions), each deletion is paired with one addition and is staged only when
+  that addition is selected. The partner is the first addition in the run with
+  identical content; with no content match, the addition at the same index; and
+  surplus deletions in a run with fewer additions pair with the run's last
+  addition.
 - A *pure-deletion run* (deleted lines with no additions) occupies the gap
   between two surviving lines and is staged only when the range covers a
   surviving line on **each** side of that gap. When the gap sits at the start or
@@ -611,10 +683,12 @@ has no number to name. Deletions are therefore selected indirectly:
   (the file has a single line on that side), covering the adjacent line alone is
   enough, so the deletion stays reachable.
 
-The practical consequence: naming a single unchanged line never mutates the
+The practical consequences: naming a single unchanged line never mutates the
 index. A range that resolves to no changed lines returns `SelectionEmpty`
 (exit code 1) rather than reporting a successful no-op. Staging the full range
-`1-N` always reproduces the workdir content exactly.
+`1-N` always reproduces the workdir content exactly. And a line present in both
+the index and the workdir survives any partial stage, whatever subset the range
+names.
 
 Hunk-ID and whole-file selections are unaffected by these rules — both include
 every line of their target, deletions included.

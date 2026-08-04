@@ -26,6 +26,25 @@ Body is required when any of these are true:
 Body is optional for formatting-only edits, typo fixes, or mechanical metadata
 bumps that are obvious from the subject and staged diff.
 
+## Normalization
+
+pgs reformats every message before storing it, whether it came from `message` or
+`message_file`, matching git's `--cleanup=whitespace`:
+
+1. CRLF line endings become LF.
+2. Trailing whitespace is stripped from each line.
+3. Leading blank lines are removed.
+4. A run of consecutive blank lines collapses to one.
+5. Trailing blank lines are removed and exactly one trailing newline is added.
+
+Do not hand-pad a message to control its final shape — the padding is removed.
+Leading indentation and `#` comment lines are content and survive verbatim, so a
+`# Heading` line stays in the message.
+
+A message that is empty or whitespace-only after normalization is refused with
+`empty_commit_message`. The `message` field of the commit result carries the
+normalized text, so read it back to see exactly what was stored.
+
 ## Gate Checklist
 
 Before `pgs_commit`:

@@ -167,6 +167,97 @@ the index unchanged:
   whose permission bits changed is therefore staged with the new mode even when only
   some lines are selected.
 
+### How a line range reaches a deleted line
+
+A line range is expressed in workdir (new-file) coordinates. That is the only
+coordinate system the caller can observe — the caller reads the workdir, not the
+index blob — but it has no number for a line that the edit removed. Deletions
+therefore cannot be selected directly; they have to be attached to something the
+range *can* name, and the attachment rules are what keep partial staging
+lossless.
+
+**Replace runs pair by content, then by position.** When deletions are
+immediately followed by additions, the run is a replacement, and each deletion is
+bound to one addition: the deletion is applied only when its partner addition is
+selected. The partner is the first addition in the run with identical content;
+failing that, the addition at the same index; failing that — a deletion past the
+end of the addition list — the run's last addition. Without any pairing,
+selecting one addition out of a multi-line replacement would either drop every
+original line in the run (data loss) or keep every one of them (a duplicated
+block). Pairing makes an unselected original survive in the staged blob
+unchanged.
+
+Content comes first because positional pairing alone destroys a line in a case
+that occurs routinely. `similar` tokenizes lines *with* their terminator, so a
+file whose last line had no trailing newline and regains one appears in the diff
+as a `-b` / `+b` pair, not as an unchanged line. Positionally, that deletion of
+`b` binds to whatever addition happens to sit at its index — an unrelated
+neighbouring insertion — so selecting that insertion applied the deletion of `b`
+and `b` vanished from the staged blob. Matching content first binds `-b` to `+b`,
+which is the only pairing that means anything. git models the same edit the same
+way; this is not a `similar` quirk to work around, it is the shape of the diff.
+
+**Pure-deletion runs need both survivors.** A run of deletions with no additions
+has nothing to pair with. It occupies the gap between the surviving line before
+it and the surviving line after it, and it is applied only when the range covers
+a survivor on each side of that gap. Requiring both sides is what makes the
+selection unambiguous: covering one side alone cannot distinguish "stage the
+deletion that follows this line" from "stage this line and stop". At the start
+or end of the file the gap has only one side, so the rule degrades to the
+adjacent survivor plus at least one further line on that side; when no further
+line exists the adjacent survivor alone suffices, so the deletion stays
+reachable rather than becoming unstageable.
+
+Three invariants fall out of these rules and are the cheapest way to check them:
+
+- A range naming only unchanged lines never mutates the index. It resolves to no
+  changed lines and returns `SelectionEmpty` (exit 1) rather than reporting a
+  successful no-op, so a caller cannot mistake an inert selection for applied
+  work.
+- Staging the full range `1-N` reproduces the workdir byte-for-byte. Every
+  addition is selected, so every paired deletion applies and every gap has both
+  survivors covered.
+- A partial stage never destroys content present in both the base and the
+  workdir. A line that both sides agree on survives the operation regardless of
+  which subset the range names.
+
+The third invariant is the one that catches real defects, because the first two
+describe only the extremes: staging *no* changed line and staging *every*
+changed line. Neither can reach a strict subset, which is exactly where content
+gets destroyed — three separate data-loss bugs satisfied both of the original
+invariants.
+
+**Unterminated interior lines are refused, not repaired.** Diff tokens carry
+their own terminator, so a token without a trailing newline can only be a file's
+last line. After the result blob is assembled, pgs checks that no element other
+than the final one lacks a terminator; a violation returns
+`UnterminatedInteriorLine` (code `unterminated_interior_line`, exit 2) and the
+index is untouched.
+
+The check is a post-condition on the assembled blob, not a rule about the shape
+of the input, and that is what makes it incapable of false-positives: any
+selection that assembles into a well-formed file passes it, whatever route it
+took to get there.
+
+It refuses rather than auto-fixes because the fix is a change the caller never
+named. Placing content after a base file's unterminated last line structurally
+requires terminating that line too — one extra byte on a line outside the
+selection. Silently staging a change nobody asked for is the precise failure
+mode pgs exists to prevent, so the operation stops and names the alternative.
+Whole-hunk and whole-file staging of the same file remain byte-exact.
+
+**The trailing newline is derived, not imposed.** The result's final byte comes
+from whichever token was emitted last. The index/workdir trailing-newline
+convention is applied only when that final token came from the mutating side —
+the workdir when staging, the index when unstaging. When the final token is a
+preserved base line instead, its bytes are already correct and are left alone.
+Imposing the convention unconditionally is what appended a phantom newline onto
+a preserved base last line (making a staged file read as still-modified) and
+what stripped one from a legitimately terminated result.
+
+Hunk-ID and whole-file selections bypass all of this: both include every line of
+their target, deletions included.
+
 ## Symlink staging
 
 `pgs` uses `symlink_metadata()` + `read_link()` to detect and read symlinks; it never follows

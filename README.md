@@ -36,6 +36,8 @@ pgs unstage src/main.rs                     # remove from the index
 
 # Commit
 pgs commit -m "feat: add feature"           # commit staged changes
+pgs commit -F msg.txt                       # message from a file (.txt, .md, anything)
+pgs commit -F -                             # message from stdin
 pgs commit --amend -m "feat: reword"        # rewrite HEAD with current index/message
 pgs log                                     # recent history (for message style)
 ```
