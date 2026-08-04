@@ -16,7 +16,8 @@ use crate::git::{
     read_workdir_for_blob,
 };
 use crate::models::{
-    HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine, ResolvedSelection, ScanResult,
+    DiffLineInfo, HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine,
+    ResolvedSelection, ScanResult,
 };
 use crate::saturating_u32;
 
@@ -145,26 +146,41 @@ pub(crate) fn stage_lines(
     let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_staged: u32 = 0;
 
+    // A replace-run arrives as every Delete followed by every Insert. Appending in
+    // that raw order would put preserved originals ahead of the staged lines they
+    // sit between, so the run is buffered and re-interleaved by pair index.
+    let mut run_deletes: Vec<(&str, bool)> = Vec::new();
+    let mut run_inserts: Vec<(&str, bool)> = Vec::new();
+
     for change in diff.iter_all_changes() {
         match change.tag() {
             similar::ChangeTag::Equal => {
+                flush_stage_run(
+                    &mut run_deletes,
+                    &mut run_inserts,
+                    &mut result_lines,
+                    &mut lines_staged,
+                );
                 result_lines.push(change.value());
             }
             similar::ChangeTag::Delete => {
                 let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
-                if !selection.old_lines.contains(&old_line) {
-                    result_lines.push(change.value());
-                }
+                let preserve = !selection.old_lines.contains(&old_line);
+                run_deletes.push((change.value(), preserve));
             }
             similar::ChangeTag::Insert => {
                 let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
-                if selection.new_lines.contains(&new_line) {
-                    result_lines.push(change.value());
-                    lines_staged += 1;
-                }
+                let stage = selection.new_lines.contains(&new_line);
+                run_inserts.push((change.value(), stage));
             }
         }
     }
+    flush_stage_run(
+        &mut run_deletes,
+        &mut run_inserts,
+        &mut result_lines,
+        &mut lines_staged,
+    );
 
     // Reconstruct content: join lines (each already carries its own newline from the diff).
     let mut result = result_lines.concat();
@@ -201,6 +217,30 @@ pub(crate) fn stage_lines(
     index.write()?;
 
     Ok(lines_staged)
+}
+
+/// Emit one buffered replace-run into `out`, pairing the i-th delete with the
+/// i-th insert so each preserved original lands at its replacement's position.
+///
+/// `deletes` carries `(line, preserve)`; `inserts` carries `(line, stage)`.
+/// Both buffers are drained.
+fn flush_stage_run<'a>(
+    deletes: &mut Vec<(&'a str, bool)>,
+    inserts: &mut Vec<(&'a str, bool)>,
+    out: &mut Vec<&'a str>,
+    lines_staged: &mut u32,
+) {
+    for i in 0..deletes.len().max(inserts.len()) {
+        if let Some(&(value, true)) = inserts.get(i) {
+            out.push(value);
+            *lines_staged += 1;
+        }
+        if let Some(&(value, true)) = deletes.get(i) {
+            out.push(value);
+        }
+    }
+    deletes.clear();
+    inserts.clear();
 }
 
 /// Stage a single hunk by partitioning its lines into a [`LineSelection`].
@@ -337,11 +377,10 @@ fn resolved_ranges_for(scan: &ScanResult, resolved: &ResolvedSelection) -> Vec<L
 
 /// Build a [`LineSelection`] from a resolved selection against a scan result.
 ///
-/// For line-range selections, uses a dual-cursor model: one cursor tracks the
-/// old-side (HEAD/index) line number, one tracks the new-side (workdir) line
-/// number. Each is advanced independently per origin, so range membership is
-/// tested against the correct coordinate space regardless of libgit2's emission
-/// order for substitution pairs.
+/// For line-range selections, membership is tested purely in new-side
+/// coordinates (a `path:A-B` range is expressed in workdir line numbers), and
+/// deletions are pulled in by pairing rather than by their own line number —
+/// see [`select_replace_run`].
 ///
 /// For hunk-index and whole-file selections, partitions by origin: `Addition`
 /// lines → `new_lines`, `Deletion` lines → `old_lines`. Deletions are never
@@ -360,27 +399,20 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
     if let Some(ranges) = &resolved.line_ranges {
         let in_any = |n: u32| ranges.iter().any(|r| (r.start..=r.end).contains(&n));
         for hunk in &file.hunks {
-            let mut old_cursor = hunk.old_start;
             let mut new_cursor = hunk.new_start;
-            for line in &hunk.lines {
-                match line.origin {
-                    LineOrigin::Addition => {
-                        if in_any(new_cursor) {
-                            sel.new_lines.insert(line.line_number);
-                        }
-                        new_cursor = new_cursor.saturating_add(1);
-                    }
-                    LineOrigin::Context => {
-                        old_cursor = old_cursor.saturating_add(1);
-                        new_cursor = new_cursor.saturating_add(1);
-                    }
-                    LineOrigin::Deletion => {
-                        if in_any(new_cursor) || in_any(old_cursor) {
-                            sel.old_lines.insert(line.line_number);
-                        }
-                        old_cursor = old_cursor.saturating_add(1);
-                    }
+            let mut idx = 0;
+            while idx < hunk.lines.len() {
+                if hunk.lines[idx].origin == LineOrigin::Context {
+                    new_cursor = new_cursor.saturating_add(1);
+                    idx = idx.saturating_add(1);
+                    continue;
                 }
+                let start = idx;
+                while idx < hunk.lines.len() && hunk.lines[idx].origin != LineOrigin::Context {
+                    idx = idx.saturating_add(1);
+                }
+                new_cursor =
+                    select_replace_run(&hunk.lines[start..idx], new_cursor, &in_any, &mut sel);
             }
         }
         return sel;
@@ -405,6 +437,64 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
         }
     }
     sel
+}
+
+/// Select lines from one replace-run (a maximal span of non-context lines).
+///
+/// A `path:A-B` range names new-side lines only, so a deletion can never be
+/// named directly. The i-th deletion in a run is therefore paired with the i-th
+/// addition and is selected only when that addition is selected. Without the
+/// pairing, one selected addition anywhere in the run would drag every deletion
+/// in with it and the unselected originals would vanish from the staged blob —
+/// silent data loss.
+///
+/// Ragged runs:
+/// - More deletions than additions (net removal): surplus deletions pair with
+///   the run's last addition, so selecting the replacement line applies the
+///   whole removal instead of leaving orphaned originals behind.
+/// - More additions than deletions (net insertion): surplus additions have no
+///   partner and are gated by their own line number alone.
+/// - No additions at all (pure deletion): the removed lines have no new-side
+///   number of their own, so the run is anchored at the new-side position it
+///   was removed from and selected as a unit when that position falls inside
+///   the range. There is no partial form — a range cannot name a subset of
+///   lines that no longer exist.
+///
+/// Returns the new-side cursor positioned after the run.
+fn select_replace_run(
+    run: &[DiffLineInfo],
+    new_start: u32,
+    in_any: &impl Fn(u32) -> bool,
+    sel: &mut LineSelection,
+) -> u32 {
+    let mut new_cursor = new_start;
+    let mut addition_selected: Vec<bool> = Vec::new();
+    for line in run.iter().filter(|l| l.origin == LineOrigin::Addition) {
+        let selected = in_any(new_cursor);
+        if selected {
+            sel.new_lines.insert(line.line_number);
+        }
+        addition_selected.push(selected);
+        new_cursor = new_cursor.saturating_add(1);
+    }
+
+    let anchor_selected = in_any(new_start);
+    for (i, line) in run
+        .iter()
+        .filter(|l| l.origin == LineOrigin::Deletion)
+        .enumerate()
+    {
+        let selected = addition_selected
+            .get(i)
+            .or_else(|| addition_selected.last())
+            .copied()
+            .unwrap_or(anchor_selected);
+        if selected {
+            sel.old_lines.insert(line.line_number);
+        }
+    }
+
+    new_cursor
 }
 
 /// Read the staging base blob for a file: current index, then HEAD, else empty.

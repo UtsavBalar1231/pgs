@@ -118,36 +118,45 @@ pub fn unstage_lines(
     let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_affected: u32 = 0;
 
+    // Same run-buffering rationale as `stage_lines`: a replace-run arrives as
+    // every Delete then every Insert, so restored HEAD lines must be re-interleaved
+    // with the staged lines they replace rather than appended ahead of them.
+    let mut run_deletes: Vec<(&str, bool)> = Vec::new();
+    let mut run_inserts: Vec<(&str, bool)> = Vec::new();
+
     for change in diff.iter_all_changes() {
         match change.tag() {
             similar::ChangeTag::Equal => {
+                flush_unstage_run(
+                    &mut run_deletes,
+                    &mut run_inserts,
+                    &mut result_lines,
+                    &mut lines_affected,
+                );
                 result_lines.push(change.value());
             }
             similar::ChangeTag::Delete => {
                 // Line exists in HEAD but was deleted in index (staged deletion).
                 // old_index() gives the 0-based index in the old (HEAD) text.
                 let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
-                if selection.old_lines.contains(&old_line) {
-                    // Restore from HEAD — unstage the deletion
-                    result_lines.push(change.value());
-                    lines_affected += 1;
-                }
-                // else: keep it deleted (don't unstage)
+                let restore = selection.old_lines.contains(&old_line);
+                run_deletes.push((change.value(), restore));
             }
             similar::ChangeTag::Insert => {
                 // Line was added in the index (staged addition).
                 // new_index() gives the 0-based index in the new (index) text.
                 let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
-                if selection.new_lines.contains(&new_line) {
-                    // Drop it — unstage the addition (revert to HEAD)
-                    lines_affected += 1;
-                } else {
-                    // Keep the staged addition
-                    result_lines.push(change.value());
-                }
+                let keep = !selection.new_lines.contains(&new_line);
+                run_inserts.push((change.value(), keep));
             }
         }
     }
+    flush_unstage_run(
+        &mut run_deletes,
+        &mut run_inserts,
+        &mut result_lines,
+        &mut lines_affected,
+    );
 
     let mut new_content = result_lines.join("");
 
@@ -173,6 +182,34 @@ pub fn unstage_lines(
     index.write()?;
 
     Ok(lines_affected)
+}
+
+/// Emit one buffered replace-run into `out`, pairing the i-th delete with the
+/// i-th insert so each restored HEAD line lands at its replacement's position.
+///
+/// `deletes` carries `(line, restore)`; `inserts` carries `(line, keep)`.
+/// Both buffers are drained.
+fn flush_unstage_run<'a>(
+    deletes: &mut Vec<(&'a str, bool)>,
+    inserts: &mut Vec<(&'a str, bool)>,
+    out: &mut Vec<&'a str>,
+    lines_affected: &mut u32,
+) {
+    for i in 0..deletes.len().max(inserts.len()) {
+        if let Some(&(value, keep)) = inserts.get(i) {
+            if keep {
+                out.push(value);
+            } else {
+                *lines_affected += 1;
+            }
+        }
+        if let Some(&(value, true)) = deletes.get(i) {
+            out.push(value);
+            *lines_affected += 1;
+        }
+    }
+    deletes.clear();
+    inserts.clear();
 }
 
 /// Unstage a single hunk by partitioning its lines into old/new coordinate spaces.
