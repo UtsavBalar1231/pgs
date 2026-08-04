@@ -130,12 +130,11 @@ pub(crate) fn stage_lines(
     if let (Some(base_crlf), Some(work_crlf)) = (
         crate::git::is_predominantly_crlf(base_text),
         crate::git::is_predominantly_crlf(work_text),
-    ) {
-        if base_crlf != work_crlf {
-            return Err(PgsError::CrlfMismatch {
-                path: file_path.to_owned(),
-            });
-        }
+    ) && base_crlf != work_crlf
+    {
+        return Err(PgsError::CrlfMismatch {
+            path: file_path.to_owned(),
+        });
     }
 
     let base_has_trailing_newline = base_text.ends_with('\n');
@@ -453,12 +452,11 @@ fn collect_preview_additions(
     if let (Some(base_crlf), Some(work_crlf)) = (
         crate::git::is_predominantly_crlf(base_text),
         crate::git::is_predominantly_crlf(work_text),
-    ) {
-        if base_crlf != work_crlf {
-            return Err(PgsError::CrlfMismatch {
-                path: file_path.to_owned(),
-            });
-        }
+    ) && base_crlf != work_crlf
+    {
+        return Err(PgsError::CrlfMismatch {
+            path: file_path.to_owned(),
+        });
     }
     let diff = TextDiff::from_lines(base_text, work_text);
 

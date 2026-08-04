@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -7,9 +8,8 @@ use serde_json::Value;
 use rmcp::{
     ErrorData, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ClientRequest, CreateTaskResult, GetTaskInfoParams,
-        GetTaskPayloadResult, GetTaskResult, Implementation, ListTasksResult, ListToolsResult,
-        PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, TasksCapability,
+        CacheScope, CallToolRequestParams, CallToolResponse, ClientRequest, Implementation,
+        ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo,
         Tool,
     },
     serve_server,
@@ -29,6 +29,27 @@ use crate::{
     mcp::runtime::PgsMcpRuntime,
 };
 
+/// Cache lifetime advertised for `tools/list`, in milliseconds.
+const TOOL_LIST_TTL_MS: u64 = 3_600_000;
+
+const SERVER_INSTRUCTIONS: &str = "\
+pgs stages git changes at file, hunk, and line granularity without a TTY.
+
+Every tool requires an explicit `repo_path`; nothing is inferred from a working directory.
+
+Workflow: call pgs_scan (unstaged changes) or pgs_overview (unstaged plus staged) first, then \
+pgs_stage with the narrowest selector that covers the intent, then pgs_commit. Selectors are \
+positional and auto-detected: `src/main.rs` (whole file), `abc123def456` (12-hex hunk id), \
+`src/main.rs:10-20` (line range).
+
+Hunk ids are content-addressed and go stale as soon as the file changes. Never reuse an id from \
+an earlier session or from before an edit; re-run pgs_scan and take the fresh id. Use \
+pgs_plan_diff to reconcile a saved plan against the current tree.
+
+Line-range staging is not drift-safe on its own. Pass `expected_checksums` (map of path → \
+file-level SHA-256 from a prior scan) so a workdir edit between scan and stage fails with \
+StaleScan instead of staging unintended content.";
+
 /// MCP server bootstrap for local stdio transport.
 #[derive(Debug, Clone, Default)]
 pub struct PgsMcpServer {
@@ -40,7 +61,7 @@ impl ServerHandler for PgsMcpServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         let parsed_call = match parse_call(request) {
             Ok(parsed_call) => parsed_call,
             Err(error) => {
@@ -49,7 +70,7 @@ impl ServerHandler for PgsMcpServer {
             }
         };
 
-        match parsed_call {
+        let result = match parsed_call {
             ParsedToolCall::Read { tool_name, command } => {
                 self.runtime.execute_command(tool_name, command).await
             }
@@ -62,23 +83,16 @@ impl ServerHandler for PgsMcpServer {
                     .execute_mutation(tool_name, &repo_path, command, context)
                     .await
             }
-        }
+        };
+
+        result.map(Into::into)
     }
 
-    async fn enqueue_task(
-        &self,
-        request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<CreateTaskResult, ErrorData> {
-        match parse_call(request)? {
-            ParsedToolCall::Read { tool_name, command } => {
-                self.runtime.enqueue_read_task(tool_name, command).await
-            }
-            ParsedToolCall::Mutating { .. } => Err(ErrorData::invalid_params(
-                "Tool does not support task-based invocation",
-                None,
-            )),
-        }
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        // Narrows rmcp's default, which is every revision the SDK knows
+        // (`ProtocolVersion::KNOWN_VERSIONS`). Without this override the server
+        // would silently negotiate pre-2026-07-28 clients. Do not delete it.
+        Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
     }
 
     fn list_tools(
@@ -86,85 +100,26 @@ impl ServerHandler for PgsMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(vec![
-            scan_tool(),
-            status_tool(),
-            stage_tool(),
-            unstage_tool(),
-            commit_tool(),
-            log_tool(),
-            overview_tool(),
-            split_hunk_tool(),
-            plan_check_tool(),
-            plan_diff_tool(),
-        ])))
+        // The tool set is frozen at compile time and carries no per-user data,
+        // so any client or intermediary may cache it. 2026-07-28 requires both
+        // fields on tools/list and rmcp leaves them unset by default.
+        std::future::ready(Ok(ListToolsResult::with_all_items(
+            contract::tool_definitions(),
+        )
+        .with_ttl_ms(TOOL_LIST_TTL_MS)
+        .with_cache_scope(CacheScope::Public)))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        match name {
-            PGS_SCAN_TOOL => Some(scan_tool()),
-            PGS_STATUS_TOOL => Some(status_tool()),
-            PGS_STAGE_TOOL => Some(stage_tool()),
-            PGS_UNSTAGE_TOOL => Some(unstage_tool()),
-            PGS_COMMIT_TOOL => Some(commit_tool()),
-            PGS_LOG_TOOL => Some(log_tool()),
-            PGS_OVERVIEW_TOOL => Some(overview_tool()),
-            PGS_SPLIT_HUNK_TOOL => Some(split_hunk_tool()),
-            PGS_PLAN_CHECK_TOOL => Some(plan_check_tool()),
-            PGS_PLAN_DIFF_TOOL => Some(plan_diff_tool()),
-            _ => None,
-        }
-    }
-
-    async fn list_tasks(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<ListTasksResult, ErrorData> {
-        Ok(self.runtime.list_tasks().await)
-    }
-
-    async fn get_task_info(
-        &self,
-        request: GetTaskInfoParams,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<GetTaskResult, ErrorData> {
-        self.runtime.get_task_info(&request.task_id).await
-    }
-
-    async fn get_task_result(
-        &self,
-        request: rmcp::model::GetTaskResultParams,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<GetTaskPayloadResult, ErrorData> {
-        self.runtime.get_task_result(&request.task_id).await
-    }
-
-    async fn cancel_task(
-        &self,
-        request: rmcp::model::CancelTaskParams,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::CancelTaskResult, ErrorData> {
-        self.runtime.cancel_task(&request.task_id).await
+        contract::tool_definition(name)
     }
 
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_tasks_with(TasksCapability::server_default())
-                .build(),
-        )
-        .with_protocol_version(protocol_version_baseline())
-        .with_server_info(Implementation::new("pgs-mcp", env!("CARGO_PKG_VERSION")))
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2026_07_28)
+            .with_server_info(Implementation::new("pgs-mcp", env!("CARGO_PKG_VERSION")))
+            .with_instructions(SERVER_INSTRUCTIONS)
     }
-}
-
-fn protocol_version_baseline() -> ProtocolVersion {
-    serde_json::from_value(Value::String(
-        crate::mcp::PROTOCOL_VERSION_BASELINE.to_owned(),
-    ))
-    .expect("MCP protocol baseline must be a valid protocol version")
 }
 
 enum ParsedToolCall {
@@ -278,56 +233,6 @@ where
     })
 }
 
-fn scan_tool() -> Tool {
-    contract::tool_definition(PGS_SCAN_TOOL)
-        .expect("scan tool must be present in frozen MCP contract")
-}
-
-fn status_tool() -> Tool {
-    contract::tool_definition(PGS_STATUS_TOOL)
-        .expect("status tool must be present in frozen MCP contract")
-}
-
-fn stage_tool() -> Tool {
-    contract::tool_definition(PGS_STAGE_TOOL)
-        .expect("stage tool must be present in frozen MCP contract")
-}
-
-fn unstage_tool() -> Tool {
-    contract::tool_definition(PGS_UNSTAGE_TOOL)
-        .expect("unstage tool must be present in frozen MCP contract")
-}
-
-fn commit_tool() -> Tool {
-    contract::tool_definition(PGS_COMMIT_TOOL)
-        .expect("commit tool must be present in frozen MCP contract")
-}
-
-fn log_tool() -> Tool {
-    contract::tool_definition(PGS_LOG_TOOL)
-        .expect("log tool must be present in frozen MCP contract")
-}
-
-fn overview_tool() -> Tool {
-    contract::tool_definition(PGS_OVERVIEW_TOOL)
-        .expect("overview tool must be present in frozen MCP contract")
-}
-
-fn split_hunk_tool() -> Tool {
-    contract::tool_definition(PGS_SPLIT_HUNK_TOOL)
-        .expect("split-hunk tool must be present in frozen MCP contract")
-}
-
-fn plan_check_tool() -> Tool {
-    contract::tool_definition(PGS_PLAN_CHECK_TOOL)
-        .expect("plan-check tool must be present in frozen MCP contract")
-}
-
-fn plan_diff_tool() -> Tool {
-    contract::tool_definition(PGS_PLAN_DIFF_TOOL)
-        .expect("plan-diff tool must be present in frozen MCP contract")
-}
-
 /// Start the `pgs-mcp` server over stdio and wait for shutdown.
 ///
 /// # Errors
@@ -390,10 +295,6 @@ fn preregister_mutation_if_needed(runtime: &PgsMcpRuntime, message: &RxJsonRpcMe
     let ClientRequest::CallToolRequest(call) = &request.request else {
         return;
     };
-    if call.params.task.is_some() {
-        return;
-    }
-
     if let Some(repo_path) = preregistration_repo_path(&call.params) {
         let _ = runtime.preregister_mutation(&request.id, &repo_path);
     }
@@ -401,16 +302,16 @@ fn preregister_mutation_if_needed(runtime: &PgsMcpRuntime, message: &RxJsonRpcMe
 
 fn preregistration_repo_path(params: &CallToolRequestParams) -> Option<String> {
     let arguments = params.arguments.as_ref()?;
-    let repo_path = arguments.get("repo_path")?.as_str()?.to_owned();
+    let repo_path = arguments.get("repo_path")?.as_str()?;
 
     match params.name.as_ref() {
-        PGS_STAGE_TOOL | PGS_UNSTAGE_TOOL => Some(repo_path),
+        PGS_STAGE_TOOL | PGS_UNSTAGE_TOOL => Some(repo_path.to_owned()),
         PGS_COMMIT_TOOL => {
             let message = arguments.get("message")?.as_str()?;
             if message.trim().is_empty() {
                 None
             } else {
-                Some(repo_path)
+                Some(repo_path.to_owned())
             }
         }
         _ => None,

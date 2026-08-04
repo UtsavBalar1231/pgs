@@ -840,9 +840,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rmcp"
-version = "1.8.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d1f571c72940a19d9532fe52dbea8bc9912bf1d766c2970bb824056b86f3f59"
+checksum = "ad26b216c966e987e80e86daf784a455c039c43d98575ceed57b8faa259e5695"
 dependencies = [
  "async-trait",
  "chrono",
@@ -856,6 +856,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

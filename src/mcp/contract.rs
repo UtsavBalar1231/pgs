@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use rmcp::{
-    model::{CallToolResult, Content, TaskSupport, Tool, ToolAnnotations, ToolExecution},
+    model::{CallToolResult, ContentBlock, Tool, ToolAnnotations},
     schemars::{self, JsonSchema},
 };
 use serde::{Deserialize, Serialize};
@@ -352,8 +352,9 @@ struct ToolOutcomeOnly {
     pgs_error: PgsToolError,
 }
 
-/// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
-pub fn tool_definitions() -> Vec<Tool> {
+/// The tool set is frozen and schema sanitization is pure, so it is built once
+/// and shared; `list_tools` would otherwise rebuild all ten definitions per tool.
+static TOOL_DEFINITIONS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
     vec![
         scan_tool(),
         status_tool(),
@@ -369,13 +370,19 @@ pub fn tool_definitions() -> Vec<Tool> {
     .into_iter()
     .map(sanitize_tool_schemas)
     .collect()
+});
+
+/// Return the frozen MCP tool definitions exposed by `pgs-mcp`.
+pub fn tool_definitions() -> Vec<Tool> {
+    TOOL_DEFINITIONS.clone()
 }
 
 /// Look up a frozen MCP tool definition by its MCP name.
 pub fn tool_definition(name: &str) -> Option<Tool> {
-    tool_definitions()
-        .into_iter()
+    TOOL_DEFINITIONS
+        .iter()
         .find(|tool| tool.name.as_ref() == name)
+        .cloned()
 }
 
 /// Map adapter execution output into the MCP tool result envelope.
@@ -410,7 +417,6 @@ fn scan_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn sanitize_tool_schemas(mut tool: Tool) -> Tool {
@@ -490,7 +496,6 @@ fn status_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn stage_tool() -> Tool {
@@ -509,7 +514,6 @@ fn stage_tool() -> Tool {
             .idempotent(false)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Forbidden))
 }
 
 fn unstage_tool() -> Tool {
@@ -528,7 +532,6 @@ fn unstage_tool() -> Tool {
             .idempotent(false)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Forbidden))
 }
 
 fn commit_tool() -> Tool {
@@ -547,7 +550,6 @@ fn commit_tool() -> Tool {
             .idempotent(false)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Forbidden))
 }
 
 fn log_tool() -> Tool {
@@ -566,7 +568,6 @@ fn log_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn overview_tool() -> Tool {
@@ -585,7 +586,6 @@ fn overview_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn split_hunk_tool() -> Tool {
@@ -604,7 +604,6 @@ fn split_hunk_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn plan_check_tool() -> Tool {
@@ -623,7 +622,6 @@ fn plan_check_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn plan_diff_tool() -> Tool {
@@ -642,7 +640,6 @@ fn plan_diff_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
-    .with_execution(ToolExecution::new().with_task_support(TaskSupport::Optional))
 }
 
 fn log_summary_text(log: &LogOutput) -> String {
@@ -721,7 +718,7 @@ fn structured_tool_result<T: Serialize>(
         CallToolResult::structured(structured_content)
     };
 
-    result.content = vec![Content::text(text)];
+    result.content = vec![ContentBlock::text(text)];
 
     Ok(result)
 }
@@ -1036,32 +1033,36 @@ mod tests {
     }
 
     #[test]
-    fn mcp_mutating_tools_forbid_task_support() {
-        let scan = tool_definition(PGS_SCAN_TOOL).expect("scan tool should exist");
-        let status = tool_definition(PGS_STATUS_TOOL).expect("status tool should exist");
-        let stage = tool_definition(PGS_STAGE_TOOL).expect("stage tool should exist");
-        let unstage = tool_definition(PGS_UNSTAGE_TOOL).expect("unstage tool should exist");
-        let commit = tool_definition(PGS_COMMIT_TOOL).expect("commit tool should exist");
-        let log = tool_definition(PGS_LOG_TOOL).expect("log tool should exist");
-        let overview = tool_definition(PGS_OVERVIEW_TOOL).expect("overview tool should exist");
+    fn mcp_tool_annotations_split_read_only_from_mutating() {
+        let read_only = [
+            PGS_SCAN_TOOL,
+            PGS_STATUS_TOOL,
+            PGS_LOG_TOOL,
+            PGS_OVERVIEW_TOOL,
+            PGS_SPLIT_HUNK_TOOL,
+            PGS_PLAN_CHECK_TOOL,
+            PGS_PLAN_DIFF_TOOL,
+        ];
+        let mutating = [PGS_STAGE_TOOL, PGS_UNSTAGE_TOOL, PGS_COMMIT_TOOL];
 
-        let split_hunk =
-            tool_definition(PGS_SPLIT_HUNK_TOOL).expect("split-hunk tool should exist");
+        for name in read_only {
+            let tool = tool_definition(name).expect("tool should exist");
+            let annotations = tool.annotations.expect("tool should have annotations");
+            assert_eq!(annotations.read_only_hint, Some(true), "{name}");
+            assert_eq!(annotations.destructive_hint, Some(false), "{name}");
+        }
 
-        assert_eq!(scan.task_support(), TaskSupport::Optional);
-        assert_eq!(status.task_support(), TaskSupport::Optional);
-        assert_eq!(log.task_support(), TaskSupport::Optional);
-        assert_eq!(overview.task_support(), TaskSupport::Optional);
-        assert_eq!(split_hunk.task_support(), TaskSupport::Optional);
-        assert_eq!(stage.task_support(), TaskSupport::Forbidden);
-        assert_eq!(unstage.task_support(), TaskSupport::Forbidden);
-        assert_eq!(commit.task_support(), TaskSupport::Forbidden);
+        for name in mutating {
+            let tool = tool_definition(name).expect("tool should exist");
+            let annotations = tool.annotations.expect("tool should have annotations");
+            assert_eq!(annotations.read_only_hint, Some(false), "{name}");
+            assert_eq!(annotations.destructive_hint, Some(true), "{name}");
+        }
     }
 
     #[test]
     fn mcp_overview_tool_is_read_only_and_requires_repo_path() {
         let overview = tool_definition(PGS_OVERVIEW_TOOL).expect("overview tool should exist");
-        assert_eq!(overview.task_support(), TaskSupport::Optional);
 
         let annotations = overview
             .annotations
@@ -1092,11 +1093,6 @@ mod tests {
     #[test]
     fn mcp_log_tool_is_read_only() {
         let log = tool_definition(PGS_LOG_TOOL).expect("log tool should exist");
-        assert_eq!(
-            log.task_support(),
-            TaskSupport::Optional,
-            "log is read-only so task support should be Optional"
-        );
 
         let annotations = log
             .annotations

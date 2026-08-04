@@ -1,112 +1,10 @@
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-
-use common::{commit_file, run_pgs, setup_repo, write_file};
-use serde_json::{Value, json};
-
-fn spawn_mcp_stdio() -> (Child, ChildStdin, BufReader<ChildStdout>) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("pgs-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let stdin = child.stdin.take().unwrap();
-    let stdout = BufReader::new(child.stdout.take().unwrap());
-
-    (child, stdin, stdout)
-}
-
-fn write_json_line(stdin: &mut ChildStdin, message: &Value) {
-    writeln!(stdin, "{message}").unwrap();
-    stdin.flush().unwrap();
-}
-
-fn read_stdout_line(stdout: &mut BufReader<ChildStdout>) -> String {
-    let mut line = String::new();
-    let bytes_read = stdout.read_line(&mut line).unwrap();
-    assert!(bytes_read > 0, "expected a JSON-RPC line on stdout");
-    line.trim_end_matches(['\n', '\r']).to_owned()
-}
-
-fn initialize_session(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) {
-    write_json_line(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": common::MCP_PROTOCOL_VERSION_BASELINE,
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "pgs-test-client",
-                    "version": "0.1.0"
-                }
-            }
-        }),
-    );
-
-    let initialize_response: Value = serde_json::from_str(&read_stdout_line(stdout)).unwrap();
-    assert_eq!(initialize_response["jsonrpc"], "2.0");
-    assert_eq!(initialize_response["id"], 1);
-    assert_eq!(
-        initialize_response["result"]["protocolVersion"],
-        common::MCP_PROTOCOL_VERSION_BASELINE
-    );
-
-    write_json_line(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }),
-    );
-}
-
-fn list_tools(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) -> Value {
-    write_json_line(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        }),
-    );
-
-    serde_json::from_str(&read_stdout_line(stdout)).unwrap()
-}
-
-fn call_status_tool(
-    stdin: &mut ChildStdin,
-    stdout: &mut BufReader<ChildStdout>,
-    arguments: &Value,
-) -> Value {
-    write_json_line(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "pgs_status",
-                "arguments": arguments
-            }
-        }),
-    );
-
-    serde_json::from_str(&read_stdout_line(stdout)).unwrap()
-}
-
-fn shutdown_child(mut child: Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
+use common::{
+    call_tool, commit_file, initialize_session, list_tools, run_pgs, setup_repo, shutdown_child,
+    spawn_mcp_stdio, write_file,
+};
+use serde_json::json;
 #[test]
 fn mcp_status_tool_matches_cli_contract() {
     let (dir, repo) = setup_repo();
@@ -138,9 +36,11 @@ fn mcp_status_tool_matches_cli_contract() {
         "pgs_status input schema should require repo_path"
     );
 
-    let response = call_status_tool(
+    let response = call_tool(
         &mut stdin,
         &mut stdout,
+        3,
+        "pgs_status",
         &json!({
             "repo_path": dir.path().display().to_string()
         }),
@@ -182,9 +82,11 @@ fn mcp_status_tool_empty_repo_returns_empty_success() {
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
     initialize_session(&mut stdin, &mut stdout);
 
-    let response = call_status_tool(
+    let response = call_tool(
         &mut stdin,
         &mut stdout,
+        3,
+        "pgs_status",
         &json!({
             "repo_path": dir.path().display().to_string()
         }),

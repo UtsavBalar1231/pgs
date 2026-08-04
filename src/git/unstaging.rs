@@ -104,12 +104,11 @@ pub fn unstage_lines(
     if let (Some(head_crlf), Some(idx_crlf)) = (
         crate::git::is_predominantly_crlf(head_text),
         crate::git::is_predominantly_crlf(index_text),
-    ) {
-        if head_crlf != idx_crlf {
-            return Err(PgsError::CrlfMismatch {
-                path: file_path.to_owned(),
-            });
-        }
+    ) && head_crlf != idx_crlf
+    {
+        return Err(PgsError::CrlfMismatch {
+            path: file_path.to_owned(),
+        });
     }
 
     let trailing_newline = index_text.ends_with('\n');

@@ -50,7 +50,7 @@ impl RenderableOutput {
     /// overlaps/uncovered/unsafe/unknown issues as exit code 1 while still
     /// emitting the full JSON envelope so the caller sees every finding.
     #[must_use]
-    pub fn exit_override(&self) -> Option<i32> {
+    pub const fn exit_override(&self) -> Option<i32> {
         match &self.0 {
             output::view::CommandOutput::PlanCheck(plan_check) if plan_check.has_issues() => {
                 Some(1)

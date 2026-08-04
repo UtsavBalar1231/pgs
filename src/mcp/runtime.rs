@@ -8,18 +8,12 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
 use rmcp::{
     ErrorData,
-    model::{
-        CallToolResult, CancelTaskResult, CreateTaskResult, ErrorCode, GetTaskPayloadResult,
-        GetTaskResult, ListTasksResult, RequestId, Task, TaskStatus,
-    },
+    model::{CallToolResult, ErrorCode, RequestId},
     service::{RequestContext, RoleServer},
 };
-use serde_json::Value;
-use tokio::sync::{Mutex, Notify, oneshot};
-use uuid::Uuid;
+use tokio::sync::Notify;
 
 use crate::{
     cmd::mcp_adapter::{self, McpCommandRequest},
@@ -30,25 +24,12 @@ use crate::{
     },
 };
 
-/// In-memory coordinator for MCP read tasks and per-repo mutation ordering.
+/// In-memory coordinator for per-repo mutation ordering.
 #[derive(Debug, Default)]
 pub struct PgsMcpRuntime {
-    tasks: Mutex<TaskRegistry>,
     mutation_lanes: StdMutex<HashMap<PathBuf, Arc<MutationLane>>>,
     preregistered_mutations: StdMutex<HashMap<RequestOrderKey, RegisteredMutation>>,
     next_arrival_sequence: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-struct TaskRegistry {
-    entries: HashMap<String, TaskEntry>,
-}
-
-#[derive(Debug)]
-struct TaskEntry {
-    task: Task,
-    result: Option<Value>,
-    cancel_sender: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Debug, Default)]
@@ -63,10 +44,13 @@ struct MutationLaneState {
     pending: BTreeSet<MutationOrder>,
 }
 
+/// Declaration order IS the sort order: the derived `Ord` is lexicographic by
+/// field, so `arrival_sequence` must stay first to keep lane admission FIFO by
+/// arrival rather than by client-chosen request id.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct MutationOrder {
-    request_key: RequestOrderKey,
     arrival_sequence: u64,
+    request_key: RequestOrderKey,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -85,13 +69,6 @@ struct MutationPermit {
 struct RegisteredMutation {
     lane: Arc<MutationLane>,
     order: MutationOrder,
-}
-
-#[derive(Debug)]
-enum TaskCompletion {
-    Completed(Value),
-    Failed(String),
-    Cancelled,
 }
 
 impl PgsMcpRuntime {
@@ -161,142 +138,6 @@ impl PgsMcpRuntime {
             .await
     }
 
-    /// Register and spawn a server-side task for a read-only MCP command.
-    ///
-    /// # Errors
-    ///
-    /// This method currently returns `Ok` after in-memory task registration
-    /// completes; the `Result` is retained to match the surrounding MCP server
-    /// interface.
-    pub async fn enqueue_read_task(
-        self: &Arc<Self>,
-        tool_name: &'static str,
-        command: McpCommandRequest,
-    ) -> Result<CreateTaskResult, ErrorData> {
-        let task_id = format!("task-{}", Uuid::new_v4().simple());
-        let now = Utc::now().to_rfc3339();
-        let task = Task::new(task_id.clone(), TaskStatus::Working, now.clone(), now)
-            .with_status_message(format!("Running {tool_name}"))
-            .with_poll_interval(25);
-        let (cancel_sender, cancel_receiver) = oneshot::channel();
-
-        {
-            let mut tasks = self.tasks.lock().await;
-            tasks.entries.insert(
-                task_id.clone(),
-                TaskEntry {
-                    task: task.clone(),
-                    result: None,
-                    cancel_sender: Some(cancel_sender),
-                },
-            );
-        }
-
-        let runtime = Arc::clone(self);
-        tokio::spawn(async move {
-            let completion = runtime.run_task(tool_name, command, cancel_receiver).await;
-            runtime.finish_task(&task_id, completion).await;
-        });
-
-        Ok(CreateTaskResult::new(task))
-    }
-
-    /// List every server-side task currently tracked by the runtime.
-    pub async fn list_tasks(&self) -> ListTasksResult {
-        let mut tasks: Vec<Task> = self
-            .tasks
-            .lock()
-            .await
-            .entries
-            .values()
-            .map(|entry| entry.task.clone())
-            .collect();
-        tasks.sort_by(|left, right| left.task_id.cmp(&right.task_id));
-        ListTasksResult::new(tasks)
-    }
-
-    /// Return metadata for a previously created server-side task.
-    ///
-    /// # Errors
-    ///
-    /// Returns `invalid_params` if `task_id` does not identify a known task.
-    pub async fn get_task_info(&self, task_id: &str) -> Result<GetTaskResult, ErrorData> {
-        let tasks = self.tasks.lock().await;
-        let task = {
-            let entry = tasks
-                .entries
-                .get(task_id)
-                .ok_or_else(|| unknown_task_error(task_id))?;
-            entry.task.clone()
-        };
-        drop(tasks);
-
-        Ok(GetTaskResult { meta: None, task })
-    }
-
-    /// Return the serialized payload for a completed server-side task.
-    ///
-    /// # Errors
-    ///
-    /// Returns `invalid_params` if `task_id` is unknown, `invalid_request` if
-    /// the task is not yet completed, or `internal_error` if a completed task is
-    /// missing its stored result.
-    pub async fn get_task_result(&self, task_id: &str) -> Result<GetTaskPayloadResult, ErrorData> {
-        let tasks = self.tasks.lock().await;
-        let (status, result) = {
-            let entry = tasks
-                .entries
-                .get(task_id)
-                .ok_or_else(|| unknown_task_error(task_id))?;
-            (entry.task.status.clone(), entry.result.clone())
-        };
-        drop(tasks);
-
-        match status {
-            TaskStatus::Completed => result.map(GetTaskPayloadResult::new).ok_or_else(|| {
-                ErrorData::internal_error("completed task is missing a result", None)
-            }),
-            status => Err(ErrorData::new(
-                ErrorCode::INVALID_REQUEST,
-                format!(
-                    "task result is unavailable while status is {}",
-                    task_status_label(&status)
-                ),
-                None,
-            )),
-        }
-    }
-
-    /// Cancel a server-side task and signal its worker if it is still running.
-    ///
-    /// # Errors
-    ///
-    /// Returns `invalid_params` if `task_id` does not identify a known task.
-    pub async fn cancel_task(&self, task_id: &str) -> Result<CancelTaskResult, ErrorData> {
-        let mut tasks = self.tasks.lock().await;
-        let task = {
-            let entry = tasks
-                .entries
-                .get_mut(task_id)
-                .ok_or_else(|| unknown_task_error(task_id))?;
-
-            if entry.task.status == TaskStatus::Working {
-                entry.task.status = TaskStatus::Cancelled;
-                entry.task.status_message = Some("Task cancelled".to_owned());
-                entry.task.last_updated_at = Utc::now().to_rfc3339();
-                entry.result = None;
-                if let Some(cancel_sender) = entry.cancel_sender.take() {
-                    let _ = cancel_sender.send(());
-                }
-            }
-
-            entry.task.clone()
-        };
-        drop(tasks);
-
-        Ok(CancelTaskResult { meta: None, task })
-    }
-
     async fn execute_mutation_with_permit(
         &self,
         tool_name: &'static str,
@@ -322,8 +163,14 @@ impl PgsMcpRuntime {
         let lane = self.repo_lane(repo_key);
         lane.enqueue(order.clone());
         let request_key = RequestOrderKey::from_request_id(request_id);
-        lock_std_mutex(&self.preregistered_mutations)
+        let displaced = lock_std_mutex(&self.preregistered_mutations)
             .insert(request_key, RegisteredMutation { lane, order });
+        // A client that reuses an in-flight request id violates JSON-RPC, but the
+        // displaced registration still owns a pending lane slot no handler will
+        // ever claim, and `pending.first()` would block that repo's lane forever.
+        if let Some(stale) = displaced {
+            stale.lane.cancel_pending(&stale.order);
+        }
         Ok(())
     }
 
@@ -346,8 +193,8 @@ impl PgsMcpRuntime {
 
     fn next_mutation_order(&self, request_id: &RequestId) -> MutationOrder {
         MutationOrder {
-            request_key: RequestOrderKey::from_request_id(request_id),
             arrival_sequence: self.next_arrival_sequence.fetch_add(1, Ordering::Relaxed),
+            request_key: RequestOrderKey::from_request_id(request_id),
         }
     }
 
@@ -357,64 +204,6 @@ impl PgsMcpRuntime {
     ) -> Option<RegisteredMutation> {
         let mut registrations = lock_std_mutex(&self.preregistered_mutations);
         registrations.remove(request_key)
-    }
-
-    async fn run_task(
-        &self,
-        tool_name: &'static str,
-        command: McpCommandRequest,
-        cancel_receiver: oneshot::Receiver<()>,
-    ) -> TaskCompletion {
-        let mut cancel_receiver = cancel_receiver;
-
-        tokio::select! {
-            _ = &mut cancel_receiver => TaskCompletion::Cancelled,
-            result = self.execute_command(tool_name, command) => match result {
-                Ok(payload) => match serde_json::to_value(payload) {
-                    Ok(value) => TaskCompletion::Completed(value),
-                    Err(error) => TaskCompletion::Failed(format!("failed to serialize task result: {error}")),
-                },
-                Err(error) => TaskCompletion::Failed(error.message.to_string()),
-            },
-        }
-    }
-
-    async fn finish_task(&self, task_id: &str, completion: TaskCompletion) {
-        let mut tasks = self.tasks.lock().await;
-        let should_drop = {
-            let Some(entry) = tasks.entries.get_mut(task_id) else {
-                return;
-            };
-
-            if entry.task.status != TaskStatus::Working {
-                return;
-            }
-
-            entry.cancel_sender = None;
-            entry.task.last_updated_at = Utc::now().to_rfc3339();
-
-            match completion {
-                TaskCompletion::Completed(result) => {
-                    entry.task.status = TaskStatus::Completed;
-                    entry.task.status_message = Some("Task completed".to_owned());
-                    entry.result = Some(result);
-                }
-                TaskCompletion::Failed(message) => {
-                    entry.task.status = TaskStatus::Failed;
-                    entry.task.status_message = Some(message);
-                    entry.result = None;
-                }
-                TaskCompletion::Cancelled => {
-                    entry.task.status = TaskStatus::Cancelled;
-                    entry.task.status_message = Some("Task cancelled".to_owned());
-                    entry.result = None;
-                }
-            }
-            true
-        };
-        if should_drop {
-            drop(tasks);
-        }
     }
 }
 
@@ -429,26 +218,15 @@ fn canonical_repo_path(repo_path: &str) -> Result<PathBuf, ErrorData> {
     })
 }
 
-fn unknown_task_error(task_id: &str) -> ErrorData {
-    ErrorData::invalid_params(format!("unknown task id: {task_id}"), None)
-}
-
+/// Abort value for a mutation cancelled before it touched the index. The `Err`
+/// return it feeds is what stops the mutation; the payload is never observable,
+/// since rmcp answers a cancelled request with no response at all.
 fn cancelled_mutation_error() -> ErrorData {
     ErrorData::new(
         ErrorCode::INVALID_REQUEST,
         "mutation request cancelled before execution started",
         None,
     )
-}
-
-const fn task_status_label(status: &TaskStatus) -> &'static str {
-    match status {
-        TaskStatus::Working => "working",
-        TaskStatus::InputRequired => "input_required",
-        TaskStatus::Completed => "completed",
-        TaskStatus::Failed => "failed",
-        TaskStatus::Cancelled => "cancelled",
-    }
 }
 
 fn maybe_test_delay(tool_name: &str) {
@@ -542,4 +320,47 @@ fn lock_std_mutex<T>(mutex: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BTreeSet, MutationOrder, PgsMcpRuntime, RequestOrderKey, lock_std_mutex};
+    use rmcp::model::RequestId;
+
+    #[test]
+    fn mutation_order_sorts_by_arrival_sequence_not_request_id() {
+        let first = MutationOrder {
+            arrival_sequence: 0,
+            request_key: RequestOrderKey::String("z".to_owned()),
+        };
+        let second = MutationOrder {
+            arrival_sequence: 1,
+            request_key: RequestOrderKey::Number(1),
+        };
+
+        assert!(first < second);
+    }
+
+    #[test]
+    fn preregister_mutation_with_reused_request_id_leaves_one_pending_slot() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        git2::Repository::init(dir.path()).expect("init repo");
+        let repo_path = dir.path().to_str().expect("utf-8 path");
+
+        let runtime = PgsMcpRuntime::default();
+        let request_id = RequestId::Number(7);
+        runtime
+            .preregister_mutation(&request_id, repo_path)
+            .expect("first preregistration");
+        runtime
+            .preregister_mutation(&request_id, repo_path)
+            .expect("second preregistration");
+
+        let registered = runtime
+            .take_preregistered_mutation(&RequestOrderKey::from_request_id(&request_id))
+            .expect("surviving registration");
+        let pending = lock_std_mutex(&registered.lane.state).pending.clone();
+
+        assert_eq!(pending, BTreeSet::from([registered.order]));
+    }
 }

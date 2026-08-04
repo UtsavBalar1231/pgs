@@ -180,12 +180,11 @@ pub fn validate_binary_constraints(
             .map(|f| f.path.as_str()),
     };
 
-    if let Some(p) = path {
-        if let Some(file) = scan.files.iter().find(|f| f.path == p) {
-            if file.is_binary {
-                return Err(PgsError::BinaryFileGranular { path: p.to_owned() });
-            }
-        }
+    if let Some(p) = path
+        && let Some(file) = scan.files.iter().find(|f| f.path == p)
+        && file.is_binary
+    {
+        return Err(PgsError::BinaryFileGranular { path: p.to_owned() });
     }
 
     Ok(())
@@ -218,22 +217,22 @@ pub fn validate_whole_file_constraints(
             .map(|f| f.path.as_str()),
     };
 
-    if let Some(p) = target_path {
-        if let Some(file) = scan.files.iter().find(|f| f.path == p) {
-            // Symlinks (mode 0o120_000) have no line granularity but a granular
-            // selector is treated as intent, not error — the dispatch guard in
-            // cmd/stage.rs short-circuits to whole-file staging and emits a
-            // warning. Skip the GranularOnWholeFile error so the guard can act.
-            if file.new_mode == 0o120_000 {
-                return Ok(());
-            }
-            let is_whole_file_only = matches!(
-                file.status,
-                FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
-            );
-            if is_whole_file_only {
-                return Err(PgsError::GranularOnWholeFile { path: p.to_owned() });
-            }
+    if let Some(p) = target_path
+        && let Some(file) = scan.files.iter().find(|f| f.path == p)
+    {
+        // Symlinks (mode 0o120_000) have no line granularity but a granular
+        // selector is treated as intent, not error — the dispatch guard in
+        // cmd/stage.rs short-circuits to whole-file staging and emits a
+        // warning. Skip the GranularOnWholeFile error so the guard can act.
+        if file.new_mode == 0o120_000 {
+            return Ok(());
+        }
+        let is_whole_file_only = matches!(
+            file.status,
+            FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
+        );
+        if is_whole_file_only {
+            return Err(PgsError::GranularOnWholeFile { path: p.to_owned() });
         }
     }
 

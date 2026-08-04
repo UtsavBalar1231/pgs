@@ -118,20 +118,20 @@ fn classify_entry(
     // For bare hunk-id selections, search ALL files for a checksum match before
     // narrowing to a single file. The content checksum is position- and file-
     // independent, so a hunk may have moved to a different file entirely.
-    if file_path.is_none() {
-        if let Some(expected) = commit.expected_checksum.as_deref() {
-            for scan_file in &scan.files {
-                if let Some(h) = scan_file.hunks.iter().find(|h| h.checksum == expected) {
-                    shifted.push(PlanDiffShift {
-                        commit_id: commit.id.clone(),
-                        selection: selection.to_owned(),
-                        file_path: scan_file.path.clone(),
-                        old_hunk_id: captured_hunk_id_for(commit, &spec),
-                        new_hunk_id: h.hunk_id.clone(),
-                        match_confidence: PlanDiffMatchConfidence::High,
-                    });
-                    return;
-                }
+    if file_path.is_none()
+        && let Some(expected) = commit.expected_checksum.as_deref()
+    {
+        for scan_file in &scan.files {
+            if let Some(h) = scan_file.hunks.iter().find(|h| h.checksum == expected) {
+                shifted.push(PlanDiffShift {
+                    commit_id: commit.id.clone(),
+                    selection: selection.to_owned(),
+                    file_path: scan_file.path.clone(),
+                    old_hunk_id: captured_hunk_id_for(commit, &spec),
+                    new_hunk_id: h.hunk_id.clone(),
+                    match_confidence: PlanDiffMatchConfidence::High,
+                });
+                return;
             }
         }
     }
@@ -216,7 +216,7 @@ fn find_file_for_unresolved_hunk(scan: &ScanResult) -> Option<&crate::models::Fi
     scan.files.iter().find(|f| !f.hunks.is_empty())
 }
 
-fn spec_file_path(spec: &SelectionSpec) -> Option<&str> {
+const fn spec_file_path(spec: &SelectionSpec) -> Option<&str> {
     match spec {
         SelectionSpec::File { path }
         | SelectionSpec::Lines { path, .. }
@@ -259,27 +259,24 @@ fn find_fuzzy_match<'a>(
     file: &'a crate::models::FileInfo,
 ) -> Option<(&'a HunkInfo, PlanDiffMatchConfidence)> {
     // High: `expected_checksum` matches a live hunk's content-addressed checksum.
-    if let Some(expected) = commit.expected_checksum.as_deref() {
-        if let Some(h) = file.hunks.iter().find(|h| h.checksum == expected) {
-            return Some((h, PlanDiffMatchConfidence::High));
-        }
+    if let Some(expected) = commit.expected_checksum.as_deref()
+        && let Some(h) = file.hunks.iter().find(|h| h.checksum == expected)
+    {
+        return Some((h, PlanDiffMatchConfidence::High));
     }
 
     // Medium: ≥50% of the old line range is covered by the best live hunk.
     // Ranges below the threshold have no genuine positional signal and fall
     // through to `None` so the caller can emit `gone/no_match`.
-    if let SelectionSpec::Lines { ranges, .. } = spec {
-        if let Some(range) = ranges.first() {
-            if let Some(h) = file
-                .hunks
-                .iter()
-                .max_by_key(|h| overlap_fraction(range.start, range.end, h))
-            {
-                if overlap_fraction(range.start, range.end, h) >= 50 {
-                    return Some((h, PlanDiffMatchConfidence::Medium));
-                }
-            }
-        }
+    if let SelectionSpec::Lines { ranges, .. } = spec
+        && let Some(range) = ranges.first()
+        && let Some(h) = file
+            .hunks
+            .iter()
+            .max_by_key(|h| overlap_fraction(range.start, range.end, h))
+        && overlap_fraction(range.start, range.end, h) >= 50
+    {
+        return Some((h, PlanDiffMatchConfidence::Medium));
     }
 
     // No genuine content or range relationship — caller emits `gone/no_match`.

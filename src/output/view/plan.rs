@@ -123,7 +123,7 @@ impl PlanCheckOutput {
 
     /// `true` when plan-check found any issue and the CLI should exit 1.
     #[must_use]
-    pub fn has_issues(&self) -> bool {
+    pub const fn has_issues(&self) -> bool {
         !self.overlaps.is_empty()
             || !self.uncovered.is_empty()
             || !self.unsafe_selectors.is_empty()
@@ -198,7 +198,7 @@ impl PlanDiffOutput {
 
     /// `true` when plan-diff found any shifted or gone entries (exit 1).
     #[must_use]
-    pub fn has_drift(&self) -> bool {
+    pub const fn has_drift(&self) -> bool {
         !self.shifted.is_empty() || !self.gone.is_empty()
     }
 }

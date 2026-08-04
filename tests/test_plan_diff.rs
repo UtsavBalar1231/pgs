@@ -8,10 +8,13 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::io::Write;
+use std::process::Stdio;
 
-use common::{commit_file, run_pgs, setup_repo, write_file};
+use common::{
+    call_tool, commit_file, initialize_session, list_tools, run_pgs, setup_repo, shutdown_child,
+    spawn_mcp_stdio, write_file,
+};
 use serde_json::{Value, json};
 
 // ─── CLI RED tests ────────────────────────────────────────────────────────────
@@ -459,84 +462,6 @@ fn plan_diff_lines_checksum_only_no_captured_hunk_id_classifies_shifted_high() {
 }
 
 // ─── MCP RED tests ────────────────────────────────────────────────────────────
-
-fn spawn_mcp_stdio() -> (Child, ChildStdin, BufReader<ChildStdout>) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("pgs-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let stdin = child.stdin.take().unwrap();
-    let stdout = BufReader::new(child.stdout.take().unwrap());
-    (child, stdin, stdout)
-}
-
-fn write_json_line(stdin: &mut ChildStdin, message: &Value) {
-    writeln!(stdin, "{message}").unwrap();
-    stdin.flush().unwrap();
-}
-
-fn read_stdout_line(stdout: &mut BufReader<ChildStdout>) -> String {
-    let mut line = String::new();
-    let bytes_read = stdout.read_line(&mut line).unwrap();
-    assert!(bytes_read > 0, "expected a JSON-RPC line on stdout");
-    line.trim_end_matches(['\n', '\r']).to_owned()
-}
-
-fn initialize_session(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) {
-    write_json_line(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": common::MCP_PROTOCOL_VERSION_BASELINE,
-                "capabilities": {},
-                "clientInfo": { "name": "pgs-test-client", "version": "0.1.0" }
-            }
-        }),
-    );
-    let _initialize_response: Value = serde_json::from_str(&read_stdout_line(stdout)).unwrap();
-    write_json_line(
-        stdin,
-        &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
-    );
-}
-
-fn list_tools(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) -> Value {
-    write_json_line(
-        stdin,
-        &json!({ "jsonrpc": "2.0", "id": 10, "method": "tools/list" }),
-    );
-    serde_json::from_str(&read_stdout_line(stdout)).unwrap()
-}
-
-fn call_tool(
-    stdin: &mut ChildStdin,
-    stdout: &mut BufReader<ChildStdout>,
-    name: &str,
-    arguments: &Value,
-) -> Value {
-    write_json_line(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 11,
-            "method": "tools/call",
-            "params": { "name": name, "arguments": arguments }
-        }),
-    );
-    serde_json::from_str(&read_stdout_line(stdout)).unwrap()
-}
-
-fn shutdown_child(mut child: Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
 /// The frozen MCP contract must expose a `pgs_plan_diff` tool whose input
 /// schema requires `repo_path` and `plan`, and whose annotations mark it
 /// read-only.
@@ -610,6 +535,7 @@ fn pgs_plan_diff_mcp_tool_returns_structured_content() {
     let response = call_tool(
         &mut stdin,
         &mut stdout,
+        11,
         "pgs_plan_diff",
         &json!({
             "repo_path": dir.path().display().to_string(),
