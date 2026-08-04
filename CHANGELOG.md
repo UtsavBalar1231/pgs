@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.7.0 - 2026-08-05
+
+### Added
+
+- `EmptyCommitMessage` (`empty_commit_message`, exit 2) joins the error enum.
+  Blank is Rust's `str::trim` definition — the Unicode `White_Space` property —
+  so `\r\n`, U+00A0 and U+3000 all count. The check now runs on the normalized
+  message, so a message that normalizes to nothing is refused the same way.
+- `pgs commit -F <path>` / `--message-file <path>` reads the commit message from
+  a file, mirroring `git commit -F`. Works with `--amend`. `-F -` reads stdin on
+  the CLI; the `pgs_commit` MCP tool rejects `-` because an MCP request has no
+  stdin of its own. Exactly one of `-m` / `-F` must be supplied: neither or both
+  is a user error (exit 2).
+- `pgs_commit` MCP tool gains an optional `message_file` field; `message` is now
+  optional at the schema level since either source satisfies the call.
+- `InvalidArguments` (`invalid_arguments`, exit 2) and `InputFileUnreadable`
+  (`input_file_unreadable`, exit 2) join the error enum.
+- `UnterminatedInteriorLine` (`unterminated_interior_line`, exit 2) joins the
+  error enum. Raised when a line-range selection would place content after a
+  base file's unterminated last line: applying it also requires terminating that
+  line, a change the selection never named. The guard is a post-condition on the
+  assembled blob, so it cannot fire on a selection that produces a well-formed
+  result. Whole-hunk and whole-file staging are unaffected.
+
+### Changed
+
+- Every commit message is normalized with git's `--cleanup=whitespace` rules
+  regardless of source: CRLF to LF, trailing whitespace stripped per line,
+  leading and trailing blank lines dropped, runs of blank lines collapsed to
+  one, and exactly one trailing newline. `#` comment lines are preserved —
+  stripping them is git's `strip` mode, which applies to editor input only.
+  `-m "feat: x"` therefore now stores `feat: x\n`, matching git, where it
+  previously stored `feat: x` with no trailing newline.
+
 ### Fixed
 
 - `pgs commit` and `pgs commit --amend` now reject an empty or whitespace-only
@@ -18,12 +52,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pgs_commit` MCP tool now reject the same inputs. It had lived only at the MCP
   boundary, which is why the CLI path bypassed it entirely.
 
-### Added
 
-- `EmptyCommitMessage` (`empty_commit_message`, exit 2) joins the error enum.
-  Blank is Rust's `str::trim` definition — the Unicode `White_Space` property —
-  so `\r\n`, U+00A0 and U+3000 all count. An accepted message is still stored
-  verbatim, with no trimming or comment stripping.
+- Line-range staging no longer destroys a base file's unterminated last line.
+  `similar::TextDiff::from_lines` tokenizes each line with its terminator, so
+  base `x\nb` against workdir `x\nY\nb\n` diffs as `-b` / `+Y` / `+b`, where
+  `-b` and `+b` are one line regaining its newline. Deletions were paired with
+  additions by position, binding `-b` to `+Y`, so `stage f.txt:2-2` applied the
+  deletion of `b` while leaving its replacement out and staged `x\nY\n`. A
+  deletion now prefers the addition with identical content, falling back to the
+  positional partner.
+- Line-range staging no longer fabricates content. Appending after an
+  unterminated last line (base `a\nb`, workdir `a\nb\nc\n`, `stage f.txt:3-3`)
+  emitted the preserved token `b` at a non-final position and staged `a\nbc\n` —
+  a line present in neither the base nor the workdir. Such a selection is now
+  refused with `unterminated_interior_line` (exit 2) and the index is untouched.
+- `pgs unstage` no longer appends a phantom trailing newline. With HEAD at
+  `a\nb` (no final newline), undoing a staged deletion produced `a\nb\n`, so
+  `pgs status` still reported the file modified and an "unstage everything,
+  verify clean" loop never converged. The result's trailing newline is now taken
+  from the final emitted token instead of the index side's convention, which
+  only overrides bytes when that token is a kept index line.
+- An unreadable `--plan` path on `plan-check` and `plan-diff` now exits 2 with
+  `input_file_unreadable`, as `docs/CLI_SPEC.md` already promised. It exited 4
+  with `io_error`, treating a caller's typo as an internal fault.
 
 ## 0.6.1 - 2026-08-04
 
