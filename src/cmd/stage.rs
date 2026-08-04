@@ -146,6 +146,8 @@ pub fn execute(
             .retain(|&idx| !exclusion_set.contains(&(resolved.file_path.clone(), idx)));
     }
 
+    reject_mixed_selector_kinds(&spec_resolved)?;
+
     let reportable_items: Vec<(SelectionSpec, ResolvedSelection)> = spec_resolved
         .iter()
         .filter(|(_, resolved)| is_reportable_selection(&repository, &scan, resolved))
@@ -175,12 +177,9 @@ pub fn execute(
         }
     }
 
-    let work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
-
-    let has_work = work_items
-        .iter()
-        .any(|(_, r)| is_reportable_selection(&repository, &scan, r));
-    if !has_work {
+    let mut work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
+    work_items.retain(|(_, r)| is_reportable_selection(&repository, &scan, r));
+    if work_items.is_empty() {
         return Err(PgsError::SelectionEmpty);
     }
 
@@ -232,10 +231,6 @@ pub fn execute(
     let mut warnings: Vec<String> = Vec::new();
 
     for (spec, resolved) in &work_items {
-        if !is_reportable_selection(&repository, &scan, resolved) {
-            continue;
-        }
-
         let file_path = &resolved.file_path;
         let file_info = scan
             .files
@@ -423,6 +418,38 @@ fn execute_single_stage(
             staging::stage_file(repo, file_path, mode_override)
         }
     }
+}
+
+/// Reject a same-file mix of a line-range selector with a file or hunk selector.
+///
+/// Per-file selections merge into one [`ResolvedSelection`], and that merge is lossy
+/// across kinds: resolving a line range also fills `hunk_indices` with the hunks the
+/// range incidentally intersects, so the staging layer cannot tell an explicit hunk
+/// pick from a range-incidental one and stages only the ranges. Rejecting here, where
+/// the per-spec kinds still exist, keeps a dropped selection from being reported staged.
+///
+/// # Errors
+///
+/// [`PgsError::InvalidSelection`] when one file carries both selector kinds.
+pub fn reject_mixed_selector_kinds(
+    items: &[(SelectionSpec, ResolvedSelection)],
+) -> Result<(), PgsError> {
+    let mut kind_by_path: HashMap<&str, bool> = HashMap::new();
+    for (spec, resolved) in items {
+        let is_lines = matches!(spec, SelectionSpec::Lines { .. });
+        if let Some(previous) = kind_by_path.insert(resolved.file_path.as_str(), is_lines)
+            && previous != is_lines
+        {
+            return Err(PgsError::InvalidSelection {
+                detail: format!(
+                    "file '{}' mixes a line-range selector with a file or hunk selector; \
+                     use one selector kind per file, or issue them as separate calls",
+                    resolved.file_path
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Check if a file requires whole-file handling (binary, added, deleted, renamed, mode-only).

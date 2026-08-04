@@ -2,7 +2,8 @@ mod common;
 
 use std::path::Path;
 
-use common::{commit_file, run_pgs, setup_repo, write_file};
+use common::{commit_file, read_staged_blob, run_pgs, setup_repo, write_file};
+use pgs::git::diff::{build_scan_result, diff_head_to_index};
 
 #[test]
 fn unstage_file_restores_to_head() {
@@ -299,5 +300,123 @@ fn unstage_hunk_by_id_does_not_leak_adjacent_hunk_when_head_old_line_aliases_ind
         "LEAKED: unstage_hunk(A) incorrectly removed hunk B's addition — \
          HEAD-old-line 13 aliased index-new-line 13 in the shared HashSet. \
          Index after unstage:\n{index_after}"
+    );
+}
+
+/// Stage a 40-line file with two separated modifications, then return the ids of the
+/// two hunks in the HEAD -> Index diff that `unstage` resolves against.
+fn staged_two_hunk_fixture(dir: &Path, repo: &git2::Repository) -> Vec<String> {
+    let base: Vec<String> = (1..=40).map(|i| format!("line{i}\n")).collect();
+    let base = base.concat();
+    commit_file(repo, dir, "f.txt", &base, "add f");
+    let modified: Vec<String> = (1..=40)
+        .map(|i| match i {
+            5 => "CHANGED5\n".to_owned(),
+            28 => "CHANGED28\n".to_owned(),
+            _ => format!("line{i}\n"),
+        })
+        .collect();
+    let modified = modified.concat();
+    write_file(dir, "f.txt", &modified);
+    run_pgs(dir, &["stage", "f.txt"]).success();
+
+    let reopened = git2::Repository::open(dir).unwrap();
+    let diff = diff_head_to_index(&reopened, 3).unwrap();
+    let scan = build_scan_result(&reopened, &diff, None).unwrap();
+    assert_eq!(scan.files.len(), 1, "fixture must stage exactly one file");
+    assert_eq!(
+        scan.files[0].hunks.len(),
+        2,
+        "fixture must produce exactly two staged hunks"
+    );
+    scan.files[0]
+        .hunks
+        .iter()
+        .map(|h| h.hunk_id.clone())
+        .collect()
+}
+
+fn staged_blob(dir: &Path) -> String {
+    let reopened = git2::Repository::open(dir).unwrap();
+    read_staged_blob(&reopened, "f.txt")
+}
+
+#[test]
+fn unstage_same_file_hunk_and_line_range_rejects_without_touching_index() {
+    let (dir, repo) = setup_repo();
+    let hunk_ids = staged_two_hunk_fixture(dir.path(), &repo);
+    let before = staged_blob(dir.path());
+
+    let output = run_pgs(dir.path(), &["unstage", &hunk_ids[0], "f.txt:28-28"]).code(2);
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["code"], "invalid_selection");
+    assert!(
+        json["message"].as_str().unwrap().contains("f.txt"),
+        "message must name the offending file: {json}"
+    );
+    assert_eq!(
+        staged_blob(dir.path()),
+        before,
+        "rejection must leave the index untouched"
+    );
+}
+
+#[test]
+fn unstage_same_file_whole_file_and_line_range_rejects_without_touching_index() {
+    let (dir, repo) = setup_repo();
+    staged_two_hunk_fixture(dir.path(), &repo);
+    let before = staged_blob(dir.path());
+
+    run_pgs(dir.path(), &["unstage", "f.txt", "f.txt:28-28"]).code(2);
+    assert_eq!(
+        staged_blob(dir.path()),
+        before,
+        "rejection must leave the index untouched"
+    );
+}
+
+#[test]
+fn unstage_multiple_line_ranges_on_one_file_succeeds() {
+    let (dir, repo) = setup_repo();
+    staged_two_hunk_fixture(dir.path(), &repo);
+
+    run_pgs(dir.path(), &["unstage", "f.txt:5-5", "f.txt:28-28"]).success();
+
+    let staged = staged_blob(dir.path());
+    assert!(!staged.contains("CHANGED5"), "blob:\n{staged}");
+    assert!(!staged.contains("CHANGED28"), "blob:\n{staged}");
+}
+
+#[test]
+fn unstage_multiple_hunk_ids_on_one_file_succeeds() {
+    let (dir, repo) = setup_repo();
+    let hunk_ids = staged_two_hunk_fixture(dir.path(), &repo);
+
+    run_pgs(dir.path(), &["unstage", &hunk_ids[0], &hunk_ids[1]]).success();
+
+    let staged = staged_blob(dir.path());
+    assert!(!staged.contains("CHANGED5"), "blob:\n{staged}");
+    assert!(!staged.contains("CHANGED28"), "blob:\n{staged}");
+}
+
+#[test]
+fn unstage_different_selector_kinds_on_different_files_succeeds() {
+    let (dir, repo) = setup_repo();
+    // g.txt must be committed BEFORE f.txt is staged: `commit_file` commits the whole
+    // index, which would swallow f.txt's staged changes and empty the HEAD -> Index diff.
+    commit_file(&repo, dir.path(), "g.txt", "g1\n", "add g");
+    let hunk_ids = staged_two_hunk_fixture(dir.path(), &repo);
+    write_file(dir.path(), "g.txt", "g1\ng2\n");
+    run_pgs(dir.path(), &["stage", "g.txt"]).success();
+
+    run_pgs(dir.path(), &["unstage", &hunk_ids[0], "g.txt"]).success();
+
+    let staged = staged_blob(dir.path());
+    assert!(!staged.contains("CHANGED5"), "blob:\n{staged}");
+    assert!(
+        staged.contains("CHANGED28"),
+        "only hunk 0 was unstaged; blob:\n{staged}"
     );
 }

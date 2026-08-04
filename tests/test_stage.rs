@@ -667,3 +667,122 @@ fn stage_line_range_does_not_pull_in_unselected_deletion_via_new_cursor_walk() {
          incorrectly pulled in by the new-cursor walk; blob:\n{staged}"
     );
 }
+
+/// Build a 40-line file with two separated modifications, producing two hunks.
+fn two_hunk_fixture(dir: &std::path::Path, repo: &git2::Repository) -> String {
+    let base: Vec<String> = (1..=40).map(|i| format!("line{i}\n")).collect();
+    let base = base.concat();
+    commit_file(repo, dir, "f.txt", &base, "add f");
+    let modified: Vec<String> = (1..=40)
+        .map(|i| match i {
+            5 => "CHANGED5\n".to_owned(),
+            28 => "CHANGED28\n".to_owned(),
+            _ => format!("line{i}\n"),
+        })
+        .collect();
+    let modified = modified.concat();
+    write_file(dir, "f.txt", &modified);
+
+    let scan_output = run_pgs(dir, &["scan"]).success();
+    let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
+    let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
+    let hunks = scan_json["files"][0]["hunks"].as_array().unwrap();
+    assert_eq!(hunks.len(), 2, "fixture must produce exactly two hunks");
+    hunks[0]["id"].as_str().unwrap().to_owned()
+}
+
+fn staged_paths(dir: &std::path::Path) -> Vec<String> {
+    let output = run_pgs(dir, &["status"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn stage_same_file_hunk_and_line_range_rejects_without_touching_index() {
+    let (dir, repo) = setup_repo();
+    let hunk_id = two_hunk_fixture(dir.path(), &repo);
+
+    let output = run_pgs(dir.path(), &["stage", &hunk_id, "f.txt:28-28"]).code(2);
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["code"], "invalid_selection");
+    assert!(
+        json["message"].as_str().unwrap().contains("f.txt"),
+        "message must name the offending file: {json}"
+    );
+    assert!(
+        staged_paths(dir.path()).is_empty(),
+        "rejection must leave the index untouched"
+    );
+}
+
+#[test]
+fn stage_same_file_whole_file_and_line_range_rejects_without_touching_index() {
+    let (dir, repo) = setup_repo();
+    two_hunk_fixture(dir.path(), &repo);
+
+    run_pgs(dir.path(), &["stage", "f.txt", "f.txt:28-28"]).code(2);
+    assert!(
+        staged_paths(dir.path()).is_empty(),
+        "rejection must leave the index untouched"
+    );
+}
+
+#[test]
+fn stage_multiple_line_ranges_on_one_file_succeeds() {
+    let (dir, repo) = setup_repo();
+    two_hunk_fixture(dir.path(), &repo);
+
+    run_pgs(dir.path(), &["stage", "f.txt:5-5", "f.txt:28-28"]).success();
+
+    let reopened = git2::Repository::open(dir.path()).unwrap();
+    let staged = read_staged_blob(&reopened, "f.txt");
+    assert!(staged.contains("CHANGED5"), "blob:\n{staged}");
+    assert!(staged.contains("CHANGED28"), "blob:\n{staged}");
+}
+
+#[test]
+fn stage_multiple_hunk_ids_on_one_file_succeeds() {
+    let (dir, repo) = setup_repo();
+    two_hunk_fixture(dir.path(), &repo);
+
+    let scan_output = run_pgs(dir.path(), &["scan"]).success();
+    let scan_stdout = String::from_utf8(scan_output.get_output().stdout.clone()).unwrap();
+    let scan_json: serde_json::Value = serde_json::from_str(&scan_stdout).unwrap();
+    let hunks = scan_json["files"][0]["hunks"].as_array().unwrap();
+    let h0 = hunks[0]["id"].as_str().unwrap().to_owned();
+    let h1 = hunks[1]["id"].as_str().unwrap().to_owned();
+
+    run_pgs(dir.path(), &["stage", &h0, &h1]).success();
+
+    let reopened = git2::Repository::open(dir.path()).unwrap();
+    let staged = read_staged_blob(&reopened, "f.txt");
+    assert!(staged.contains("CHANGED5"), "blob:\n{staged}");
+    assert!(staged.contains("CHANGED28"), "blob:\n{staged}");
+}
+
+#[test]
+fn stage_different_selector_kinds_on_different_files_succeeds() {
+    let (dir, repo) = setup_repo();
+    let hunk_id = two_hunk_fixture(dir.path(), &repo);
+    commit_file(&repo, dir.path(), "g.txt", "g1\n", "add g");
+    write_file(dir.path(), "g.txt", "g1\ng2\n");
+
+    run_pgs(dir.path(), &["stage", &hunk_id, "g.txt"]).success();
+
+    assert!(staged_paths(dir.path()).contains(&"g.txt".to_owned()));
+    let reopened = git2::Repository::open(dir.path()).unwrap();
+    let staged = read_staged_blob(&reopened, "f.txt");
+    assert!(staged.contains("CHANGED5"), "blob:\n{staged}");
+    assert!(
+        !staged.contains("CHANGED28"),
+        "only hunk 0 was selected; blob:\n{staged}"
+    );
+}

@@ -126,6 +126,8 @@ pub fn execute(
             .retain(|&idx| !exclusion_set.contains(&(resolved.file_path.clone(), idx)));
     }
 
+    crate::cmd::stage::reject_mixed_selector_kinds(&spec_resolved)?;
+
     let reportable_items: Vec<(SelectionSpec, ResolvedSelection)> = spec_resolved
         .iter()
         .filter(|(_, resolved)| is_reportable_selection(&repository, &scan, resolved))
@@ -153,12 +155,9 @@ pub fn execute(
         }
     }
 
-    let work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
-
-    let has_work = work_items
-        .iter()
-        .any(|(_, r)| is_reportable_selection(&repository, &scan, r));
-    if !has_work {
+    let mut work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
+    work_items.retain(|(_, r)| is_reportable_selection(&repository, &scan, r));
+    if work_items.is_empty() {
         return Err(PgsError::SelectionEmpty);
     }
 
@@ -185,10 +184,6 @@ pub fn execute(
     let mut actual_lines_by_file: HashMap<String, u32> = HashMap::new();
 
     for (spec, resolved) in &work_items {
-        if !is_reportable_selection(&repository, &scan, resolved) {
-            continue;
-        }
-
         let file_path = &resolved.file_path;
 
         let unstage_result = execute_single_unstage(&repository, &scan, spec, resolved, file_path);
