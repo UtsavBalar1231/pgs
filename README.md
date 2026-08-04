@@ -194,7 +194,7 @@ reminder. It is a nudge — the `git add` still runs.
           {
             "type": "command",
             "if": "Bash(git add *)",
-            "command": "jq -n '{hookSpecificOutput:{hookEventName:\"PreToolUse\",additionalContext:\"This repo has pgs. Prefer pgs_scan then pgs_stage with the narrowest selector (file, 12-hex hunk id, or path:10-20) over whole-file git add.\"}}'"
+            "command": "printf %s '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"This repo has pgs. Prefer pgs_scan then pgs_stage with the narrowest selector (file, 12-hex hunk id, or path:10-20) over whole-file git add.\"}}'"
           }
         ]
       }
@@ -203,8 +203,14 @@ reminder. It is a nudge — the `git add` still runs.
 }
 ```
 
-Requires `jq`. Drop the `if` line to fire on every Bash call instead of only
-`git add`.
+No dependencies — the command is a `printf` of a fixed string, so there is
+nothing to parse and nothing to install. Drop the `if` line to fire on every
+Bash call instead of only `git add`.
+
+Two caveats. `if` is a best-effort filter: it inspects command names, including
+inside `$(...)` and after `&&`, but it fails open on shell it cannot parse, so
+the hook may run on a command you did not expect. And `git add` with no
+arguments does not match `git add *`, which wants at least one argument.
 
 ## Build
 
