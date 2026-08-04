@@ -193,3 +193,190 @@ fn unstage_last_line_of_replace_run_keeps_preceding_staged_lines() {
         "keep1\nAAA_new\nBBB_new\nCCC_old\nkeep2\n"
     );
 }
+
+// Pure-deletion runs (deleted lines with no additions) have no new-side line
+// number of their own; they occupy the gap between the surviving new-side lines
+// on either side. A line range selects such a run only when it covers the
+// survivor on both sides of the gap. A gap at the start or end of the file has
+// only one side, so the range must cover the adjacent survivor plus one further
+// line on that side — unless no further line exists, which is the one case where
+// covering the single adjacent survivor suffices.
+
+/// Build a fixture and return its directory: commit `base`, then write `work`.
+fn setup_pure_deletion(base: &str, work: &str) -> tempfile::TempDir {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", base, "init");
+    write_file(dir.path(), "f.txt", work);
+    drop(repo);
+    dir
+}
+
+#[test]
+fn stage_line_range_covering_one_side_of_interior_deletion_gap_is_rejected() {
+    let dir = setup_pure_deletion("a\nD1\nD2\nb\nc\n", "a\nb\nc\n");
+
+    // The gap sits between new lines 1 (`a`) and 2 (`b`). Range 2-2 covers only
+    // the trailing survivor, so it names nothing that changed.
+    run_pgs(dir.path(), &["stage", "f.txt:2-2"]).code(1);
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nD1\nD2\nb\nc\n");
+}
+
+#[test]
+fn stage_line_range_covering_both_sides_of_interior_deletion_gap_applies_deletion() {
+    let dir = setup_pure_deletion("a\nD1\nD2\nb\nc\n", "a\nb\nc\n");
+
+    run_pgs(dir.path(), &["stage", "f.txt:1-2"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nc\n");
+}
+
+#[test]
+fn stage_line_range_covering_one_side_of_deletion_gap_before_addition_run_is_rejected() {
+    let dir = setup_pure_deletion("a\no1\no2\nb\n", "a\nb\nn1\n");
+
+    // Two independent runs: a pure deletion in the gap between new lines 1 and
+    // 2, and an addition at new line 3. Range 2-2 touches neither.
+    run_pgs(dir.path(), &["stage", "f.txt:2-2"]).code(1);
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\no1\no2\nb\n");
+}
+
+#[test]
+fn stage_full_new_line_range_applies_trailing_deletion() {
+    let dir = setup_pure_deletion("a\nb\nD1\nD2\n", "a\nb\n");
+
+    // The gap is at EOF: the range covers its neighbour (new line 2) and the
+    // further line 1 behind it.
+    run_pgs(dir.path(), &["stage", "f.txt:1-2"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\n");
+}
+
+#[test]
+fn stage_line_range_naming_only_boundary_neighbour_of_leading_deletion_gap_is_rejected() {
+    let dir = setup_pure_deletion("D1\nD2\na\nb\n", "a\nb\n");
+
+    // The gap is at BOF; new line 1 (`a`) is its only neighbour. Naming just
+    // that unchanged line must not apply the deletion above it.
+    run_pgs(dir.path(), &["stage", "f.txt:1-1"]).code(1);
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "D1\nD2\na\nb\n");
+}
+
+#[test]
+fn stage_line_range_naming_only_boundary_neighbour_of_trailing_deletion_gap_is_rejected() {
+    let dir = setup_pure_deletion("a\nb\nD1\nD2\n", "a\nb\n");
+
+    // The gap is at EOF; new line 2 (`b`) is its only neighbour.
+    run_pgs(dir.path(), &["stage", "f.txt:2-2"]).code(1);
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nD1\nD2\n");
+}
+
+#[test]
+fn stage_line_range_naming_sole_line_beside_leading_deletion_gap_applies_deletion() {
+    let dir = setup_pure_deletion("D1\na\n", "a\n");
+
+    // The BOF gap's one neighbour is also the file's only new-side line, so
+    // there is no further line to demand. Without this fallback the deletion
+    // would be unreachable and staging every new line would stop reproducing
+    // the workdir.
+    run_pgs(dir.path(), &["stage", "f.txt:1-1"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\n");
+}
+
+#[test]
+fn stage_line_range_naming_sole_line_beside_trailing_deletion_gap_applies_deletion() {
+    let dir = setup_pure_deletion("a\nD1\n", "a\n");
+
+    run_pgs(dir.path(), &["stage", "f.txt:1-1"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\n");
+}
+
+#[test]
+fn stage_line_range_with_zero_context_does_not_misread_interior_gap_as_file_boundary() {
+    let dir = setup_pure_deletion("a\nD1\nD2\nb\nc\n", "a\nb\nc\n");
+
+    // Whether a gap sits at a file boundary is read off the file's new-side line
+    // count, not off whether the hunk emitted trailing context. At `--context 0`
+    // an interior run carries no trailing context, and the older inference read
+    // that as end of file and let a single-line range apply the deletion.
+    run_pgs(dir.path(), &["--context", "0", "stage", "f.txt:1-1"]).code(1);
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nD1\nD2\nb\nc\n");
+}
+
+#[test]
+fn stage_full_new_line_range_reproduces_workdir_across_deletion_shapes() {
+    let shapes: [(&str, &str, u32); 5] = [
+        ("a\nD1\nD2\nb\nc\n", "a\nb\nc\n", 3),
+        ("D1\nD2\na\nb\n", "a\nb\n", 2),
+        ("a\nb\nD1\nD2\n", "a\nb\n", 2),
+        ("a\no1\no2\nb\n", "a\nb\nn1\n", 3),
+        ("k\no1\no2\no3\nk2\n", "k\nn1\nk2\n", 3),
+    ];
+
+    for (base, work, new_line_count) in shapes {
+        let dir = setup_pure_deletion(base, work);
+        let range = format!("f.txt:1-{new_line_count}");
+
+        run_pgs(dir.path(), &["stage", &range]).success();
+
+        assert_eq!(
+            staged_blob(dir.path(), "f.txt"),
+            work,
+            "staging every new line of {base:?} -> {work:?} must reproduce the workdir"
+        );
+    }
+}
+
+#[test]
+fn stage_unchanged_interior_lines_leaves_index_untouched_across_deletion_shapes() {
+    // Each range names only unchanged lines: no gap fully enclosed, no addition.
+    let shapes: [(&str, &str, &str); 3] = [
+        ("a\nD1\nD2\nb\nc\n", "a\nb\nc\n", "f.txt:2-3"),
+        ("a\no1\no2\nb\n", "a\nb\nn1\n", "f.txt:2-2"),
+        ("a\nb\nD1\nD2\nc\nd\n", "a\nb\nc\nd\n", "f.txt:3-4"),
+    ];
+
+    for (base, work, range) in shapes {
+        let dir = setup_pure_deletion(base, work);
+
+        run_pgs(dir.path(), &["stage", range]).code(1);
+
+        assert_eq!(
+            staged_blob(dir.path(), "f.txt"),
+            base,
+            "selecting only unchanged lines ({range}) must not mutate the index"
+        );
+    }
+}
+
+/// Commit `base`, write `work`, then stage the whole file so HEAD -> index
+/// carries the deletion that the unstage line range has to address.
+fn setup_staged_pure_deletion(base: &str, work: &str) -> tempfile::TempDir {
+    let dir = setup_pure_deletion(base, work);
+    run_pgs(dir.path(), &["stage", "f.txt"]).success();
+    dir
+}
+
+#[test]
+fn unstage_line_range_covering_one_side_of_interior_deletion_gap_is_rejected() {
+    let dir = setup_staged_pure_deletion("a\nD1\nD2\nb\nc\n", "a\nb\nc\n");
+
+    run_pgs(dir.path(), &["unstage", "f.txt:2-2"]).code(1);
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nc\n");
+}
+
+#[test]
+fn unstage_full_index_line_range_restores_trailing_deletion() {
+    let dir = setup_staged_pure_deletion("a\nb\nD1\nD2\n", "a\nb\n");
+
+    run_pgs(dir.path(), &["unstage", "f.txt:1-2"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nD1\nD2\n");
+}

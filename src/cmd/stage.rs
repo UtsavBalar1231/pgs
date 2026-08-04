@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use clap::Args;
 
 use crate::error::PgsError;
-use crate::git::staging::line_selection_for;
+use crate::git::staging::{line_selection_for, workdir_line_count};
 use crate::git::{diff, read_head_mode, repo, staging};
 use crate::models::{
     FileStatus, OperationPreview, OperationStatus, ResolvedSelection, SelectionSpec,
@@ -148,7 +148,7 @@ pub fn execute(
 
     let reportable_items: Vec<(SelectionSpec, ResolvedSelection)> = spec_resolved
         .iter()
-        .filter(|(_, resolved)| is_reportable_selection(&scan, resolved))
+        .filter(|(_, resolved)| is_reportable_selection(&repository, &scan, resolved))
         .cloned()
         .collect();
 
@@ -179,7 +179,7 @@ pub fn execute(
 
     let has_work = work_items
         .iter()
-        .any(|(_, r)| !r.hunk_indices.is_empty() || is_whole_file_operation(&scan, &r.file_path));
+        .any(|(_, r)| is_reportable_selection(&repository, &scan, r));
     if !has_work {
         return Err(PgsError::SelectionEmpty);
     }
@@ -232,9 +232,7 @@ pub fn execute(
     let mut warnings: Vec<String> = Vec::new();
 
     for (spec, resolved) in &work_items {
-        // Skip work items whose hunks were fully excluded (but not whole-file ops)
-        if resolved.hunk_indices.is_empty() && !is_whole_file_operation(&scan, &resolved.file_path)
-        {
+        if !is_reportable_selection(&repository, &scan, resolved) {
             continue;
         }
 
@@ -385,7 +383,7 @@ fn execute_single_stage(
 
         // Modified + lines selection
         (FileStatus::Modified, true, _, false) => {
-            let sel = line_selection_for(scan, resolved);
+            let sel = line_selection_for(scan, resolved, workdir_line_count(repo, file_path));
             let mode_override = scan
                 .files
                 .iter()
@@ -411,7 +409,7 @@ fn execute_single_stage(
 
             // Collect selected lines across hunks via line_selection_for, then
             // make a single stage_lines call (avoids overwriting index per-hunk).
-            let sel = line_selection_for(scan, resolved);
+            let sel = line_selection_for(scan, resolved, workdir_line_count(repo, file_path));
             let mode_override = file_info
                 .filter(|fi| fi.old_mode != fi.new_mode)
                 .map(|fi| fi.new_mode);
@@ -440,8 +438,22 @@ fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) ->
     })
 }
 
-fn is_reportable_selection(scan: &crate::models::ScanResult, resolved: &ResolvedSelection) -> bool {
-    !resolved.hunk_indices.is_empty() || is_whole_file_operation(scan, &resolved.file_path)
+/// A line range can overlap a hunk and still name nothing that changed. Calling
+/// that reportable would print `status: "ok"` for a silent no-op.
+fn is_reportable_selection(
+    repo: &git2::Repository,
+    scan: &crate::models::ScanResult,
+    resolved: &ResolvedSelection,
+) -> bool {
+    if is_whole_file_operation(scan, &resolved.file_path) {
+        return true;
+    }
+    if resolved.line_ranges.is_some() {
+        let total = workdir_line_count(repo, &resolved.file_path);
+        let sel = line_selection_for(scan, resolved, total);
+        return !sel.new_lines.is_empty() || !sel.old_lines.is_empty();
+    }
+    !resolved.hunk_indices.is_empty()
 }
 
 /// Parse `--expect PATH=SHA` pairs into a map, rejecting malformed or duplicate entries.

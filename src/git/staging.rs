@@ -65,7 +65,7 @@ pub fn stage_file(
 ///
 /// Uses `str::lines()` so trailing-newline and no-trailing-newline files
 /// report the same count as their logical line count (not the byte count).
-fn count_lines(content: &[u8]) -> u32 {
+pub(crate) fn count_lines(content: &[u8]) -> u32 {
     if content.is_empty() {
         return 0;
     }
@@ -326,7 +326,7 @@ pub fn preview_stage(
     }
 
     let is_symlink = file_info.is_some_and(|f| f.new_mode == 0o120_000);
-    let sel = line_selection_for(scan, resolved);
+    let sel = line_selection_for(scan, resolved, workdir_line_count(repo, &file_path));
     let additions = collect_preview_additions(repo, &file_path, &sel.new_lines)?;
 
     if is_symlink {
@@ -387,10 +387,19 @@ fn resolved_ranges_for(scan: &ScanResult, resolved: &ResolvedSelection) -> Vec<L
 /// omitted — the partial-multi-hunk path needs `old_lines` populated to drop
 /// HEAD content correctly.
 ///
+/// `total_new_lines` is the new-side line count of the whole file — the workdir
+/// file for `stage`, the index blob for `unstage`. `select_replace_run` needs it
+/// to tell a gap at the start or end of the file from an interior one; see
+/// [`count_lines`] for how callers produce it.
+///
 /// # Errors
 ///
 /// Returns an empty `LineSelection` if the file is not present in the scan.
-pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection) -> LineSelection {
+pub(crate) fn line_selection_for(
+    scan: &ScanResult,
+    resolved: &ResolvedSelection,
+    total_new_lines: u32,
+) -> LineSelection {
     let mut sel = LineSelection::default();
     let Some(file) = scan.files.iter().find(|f| f.path == resolved.file_path) else {
         return sel;
@@ -398,6 +407,10 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
 
     if let Some(ranges) = &resolved.line_ranges {
         let in_any = |n: u32| ranges.iter().any(|r| (r.start..=r.end).contains(&n));
+        let ctx = NewSideContext {
+            total_lines: total_new_lines,
+            in_range: &in_any,
+        };
         for hunk in &file.hunks {
             let mut new_cursor = hunk.new_start;
             let mut idx = 0;
@@ -412,7 +425,7 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
                     idx = idx.saturating_add(1);
                 }
                 new_cursor =
-                    select_replace_run(&hunk.lines[start..idx], new_cursor, &in_any, &mut sel);
+                    select_replace_run(&hunk.lines[start..idx], new_cursor, &ctx, &mut sel);
             }
         }
         return sel;
@@ -439,6 +452,25 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
     sel
 }
 
+/// New-side line count for a `stage` selection, which diffs Index -> Workdir.
+///
+/// An unreadable path counts as zero. That only happens for files with no
+/// workdir content — deleted files, which never take the line-range path.
+pub(crate) fn workdir_line_count(repo: &Repository, file_path: &str) -> u32 {
+    repo::workdir(repo)
+        .and_then(|root| read_workdir_for_blob(root, file_path))
+        .map_or(0, |blob| count_lines(&blob.bytes))
+}
+
+/// File-level new-side facts a replace run is resolved against.
+struct NewSideContext<'a, F: Fn(u32) -> bool> {
+    /// New-side line count of the whole file, used to locate file boundaries
+    /// exactly rather than inferring them from hunk-local context emission.
+    total_lines: u32,
+    /// Whether a new-side line number falls inside the caller's ranges.
+    in_range: &'a F,
+}
+
 /// Select lines from one replace-run (a maximal span of non-context lines).
 ///
 /// A `path:A-B` range names new-side lines only, so a deletion can never be
@@ -455,18 +487,36 @@ pub(crate) fn line_selection_for(scan: &ScanResult, resolved: &ResolvedSelection
 /// - More additions than deletions (net insertion): surplus additions have no
 ///   partner and are gated by their own line number alone.
 /// - No additions at all (pure deletion): the removed lines have no new-side
-///   number of their own, so the run is anchored at the new-side position it
-///   was removed from and selected as a unit when that position falls inside
-///   the range. There is no partial form — a range cannot name a subset of
-///   lines that no longer exist.
+///   number, so they occupy the gap between the surviving lines on either side.
+///   The run is selected only when the range covers the survivor on both sides
+///   of that gap. Anchoring on the single line after the gap, as an earlier
+///   rule did, let a range naming only unchanged lines mutate the index. There
+///   is no partial form: a range cannot name a subset of lines that are gone.
+///
+///   A gap at the start or end of the file has only one side. Covering the one
+///   adjacent survivor is then not enough — the range must also cover at least
+///   one further line on that side, so that naming a single unchanged line at a
+///   file boundary can never apply the deletion beside it.
+///
+///   The fallback: when no further line exists on that side, covering the
+///   single adjacent survivor is sufficient. A range names new-side lines only,
+///   so without the fallback a leading or trailing deletion in a one-line file
+///   would be unreachable and staging every new line would stop reproducing the
+///   workdir.
+///
+/// Which side exists is decided by `NewSideContext::total_lines`, not by whether
+/// the hunk happens to emit trailing context. Context emission depends on the
+/// caller's `--context` setting, so at `--context 0` an interior gap carries no
+/// trailing context and the inference would misread it as end of file.
 ///
 /// Returns the new-side cursor positioned after the run.
-fn select_replace_run(
+fn select_replace_run<F: Fn(u32) -> bool>(
     run: &[DiffLineInfo],
     new_start: u32,
-    in_any: &impl Fn(u32) -> bool,
+    ctx: &NewSideContext<'_, F>,
     sel: &mut LineSelection,
 ) -> u32 {
+    let in_any = ctx.in_range;
     let mut new_cursor = new_start;
     let mut addition_selected: Vec<bool> = Vec::new();
     for line in run.iter().filter(|l| l.origin == LineOrigin::Addition) {
@@ -478,7 +528,19 @@ fn select_replace_run(
         new_cursor = new_cursor.saturating_add(1);
     }
 
-    let anchor_selected = in_any(new_start);
+    // `new_start` numbers the survivor after the gap, `new_start - 1` the one before.
+    let next = new_start;
+    let prev = new_start.saturating_sub(1);
+    let gap_selected = match (new_start > 1, next <= ctx.total_lines) {
+        (true, true) => in_any(prev) && in_any(next),
+        (false, true) => {
+            in_any(next)
+                && (next.saturating_add(1) > ctx.total_lines || in_any(next.saturating_add(1)))
+        }
+        (true, false) => in_any(prev) && (prev < 2 || in_any(prev.saturating_sub(1))),
+        (false, false) => false,
+    };
+
     for (i, line) in run
         .iter()
         .filter(|l| l.origin == LineOrigin::Deletion)
@@ -488,7 +550,7 @@ fn select_replace_run(
             .get(i)
             .or_else(|| addition_selected.last())
             .copied()
-            .unwrap_or(anchor_selected);
+            .unwrap_or(gap_selected);
         if selected {
             sel.old_lines.insert(line.line_number);
         }
@@ -1629,7 +1691,7 @@ mod tests {
             line_ranges: None,
         };
 
-        let sel = line_selection_for(&scan, &resolved);
+        let sel = line_selection_for(&scan, &resolved, 25);
 
         // Deletion on old-line 2 → old_lines; Addition on new-line 2 → new_lines.
         assert!(
@@ -1751,7 +1813,7 @@ mod tests {
             line_ranges: Some(vec![LineRange { start: 1, end: 10 }]),
         };
 
-        let sel = line_selection_for(&scan, &resolved);
+        let sel = line_selection_for(&scan, &resolved, 25);
 
         // hunk[0] deletion at old-line 5 → in old_lines (old_cursor hits 5 which is in [1..10] via
         // the Deletion branch checking old_cursor).

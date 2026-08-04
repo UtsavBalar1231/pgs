@@ -573,6 +573,31 @@ Selections are positional and auto-detected:
 - `abc123def456` -> hunk selection (12 hex)
 - `src/main.rs:10-20,30-40` -> line-range selection
 
+### Line ranges and deletions
+
+Line ranges are expressed in workdir (new-file) coordinates, so a deleted line
+has no number to name. Deletions are therefore selected indirectly:
+
+- Inside a *replace run* (adjacent deletions immediately followed by
+  additions), the i-th deletion is paired with the i-th addition and is staged
+  only when that addition is selected. Surplus deletions in a run with fewer
+  additions pair with the run's last addition.
+- A *pure-deletion run* (deleted lines with no additions) occupies the gap
+  between two surviving lines and is staged only when the range covers a
+  surviving line on **each** side of that gap. When the gap sits at the start or
+  end of the file it has only one side, and the range must cover the adjacent
+  line plus at least one further line on that side. If no further line exists
+  (the file has a single line on that side), covering the adjacent line alone is
+  enough, so the deletion stays reachable.
+
+The practical consequence: naming a single unchanged line never mutates the
+index. A range that resolves to no changed lines returns `SelectionEmpty`
+(exit code 1) rather than reporting a successful no-op. Staging the full range
+`1-N` always reproduces the workdir content exactly.
+
+Hunk-ID and whole-file selections are unaffected by these rules — both include
+every line of their target, deletions included.
+
 ## Exit Codes
 
 - `0`: success

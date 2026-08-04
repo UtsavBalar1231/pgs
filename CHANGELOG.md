@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Line-range staging no longer applies a deletion the caller did not name. A
+  pure-deletion run (deleted lines with no additions) was anchored to the
+  surviving line that follows it, so `pgs stage f.txt:2-2` naming a single
+  unchanged line could delete adjacent lines from the index. A pure-deletion run
+  is now staged only when the range covers a surviving line on each side of the
+  gap it occupies; at the start or end of the file, where the gap has one side,
+  the range must cover the adjacent line plus one further line on that side.
+- A deletion at the end of a file is reachable by a line range again. It
+  anchored past the last line of the new file, so no range could select it and
+  `pgs stage f.txt:1-N` silently failed to reproduce the workdir.
+- `pgs unstage` shares the same selection path and is fixed with it.
+- Whether a gap sits at the end of the file is now determined from the file's
+  new-side line count instead of inferred from trailing context inside the hunk.
+  The old inference was sound only because `--context` is clamped to a minimum
+  of 1 in the CLI; a library caller passing zero context could misclassify an
+  interior gap as trailing.
+
+### Changed
+
+- A line-range selection that resolves to no changed lines now returns
+  `SelectionEmpty` (exit code 1) instead of reporting `status: "ok"` with
+  `lines_affected: 0`. Callers treating exit 0 with a zero line count as success
+  will now see exit 1.
+
 ## 0.6.0 - 2026-08-04
 
 ### Added

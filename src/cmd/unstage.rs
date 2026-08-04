@@ -3,7 +3,11 @@ use std::collections::{HashMap, HashSet};
 use clap::Args;
 
 use crate::error::PgsError;
-use crate::git::{diff, repo, staging::line_selection_for, unstaging};
+use crate::git::{
+    diff, read_index_blob, repo,
+    staging::{count_lines, line_selection_for},
+    unstaging,
+};
 use crate::models::{
     FileStatus, OperationStatus, ResolvedSelection, SelectionSpec, format_selection,
 };
@@ -124,7 +128,7 @@ pub fn execute(
 
     let reportable_items: Vec<(SelectionSpec, ResolvedSelection)> = spec_resolved
         .iter()
-        .filter(|(_, resolved)| is_reportable_selection(&scan, resolved))
+        .filter(|(_, resolved)| is_reportable_selection(&repository, &scan, resolved))
         .cloned()
         .collect();
 
@@ -153,7 +157,7 @@ pub fn execute(
 
     let has_work = work_items
         .iter()
-        .any(|(_, r)| !r.hunk_indices.is_empty() || is_whole_file_operation(&scan, &r.file_path));
+        .any(|(_, r)| is_reportable_selection(&repository, &scan, r));
     if !has_work {
         return Err(PgsError::SelectionEmpty);
     }
@@ -181,9 +185,7 @@ pub fn execute(
     let mut actual_lines_by_file: HashMap<String, u32> = HashMap::new();
 
     for (spec, resolved) in &work_items {
-        // Skip work items whose hunks were fully excluded (but not whole-file ops)
-        if resolved.hunk_indices.is_empty() && !is_whole_file_operation(&scan, &resolved.file_path)
-        {
+        if !is_reportable_selection(&repository, &scan, resolved) {
             continue;
         }
 
@@ -271,7 +273,7 @@ fn execute_single_unstage(
         }
     }
 
-    let sel = line_selection_for(scan, resolved);
+    let sel = line_selection_for(scan, resolved, index_line_count(repo, file_path));
     unstaging::unstage_lines(repo, file_path, &sel)
 }
 
@@ -288,8 +290,31 @@ fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) ->
     })
 }
 
-fn is_reportable_selection(scan: &crate::models::ScanResult, resolved: &ResolvedSelection) -> bool {
-    !resolved.hunk_indices.is_empty() || is_whole_file_operation(scan, &resolved.file_path)
+/// New-side line count for an `unstage` selection, which diffs HEAD -> Index,
+/// so the new side is the index blob rather than the workdir file.
+///
+/// A path absent from the index counts as zero; it has no staged content and so
+/// never reaches the line-range path.
+fn index_line_count(repo: &git2::Repository, file_path: &str) -> u32 {
+    read_index_blob(repo, file_path).map_or(0, |bytes| count_lines(&bytes))
+}
+
+/// A line range can overlap a hunk and still name nothing that changed. Calling
+/// that reportable would print `status: "ok"` for a silent no-op.
+fn is_reportable_selection(
+    repo: &git2::Repository,
+    scan: &crate::models::ScanResult,
+    resolved: &ResolvedSelection,
+) -> bool {
+    if is_whole_file_operation(scan, &resolved.file_path) {
+        return true;
+    }
+    if resolved.line_ranges.is_some() {
+        let total = index_line_count(repo, &resolved.file_path);
+        let sel = line_selection_for(scan, resolved, total);
+        return !sel.new_lines.is_empty() || !sel.old_lines.is_empty();
+    }
+    !resolved.hunk_indices.is_empty()
 }
 
 /// Estimate lines for dry-run reporting.
