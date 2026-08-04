@@ -169,8 +169,42 @@ claude mcp add --transport stdio pgs -- /path/to/pgs-mcp
 codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
-MCP tool calls require an explicit `repo_path`. For full MCP usage, task support,
-and safety notes, see `docs/MCP_SERVER.md`.
+MCP tool calls require an explicit `repo_path`. The server speaks MCP
+`2026-07-28` and nothing else; clients on an older revision are not supported.
+Advertised capabilities are exactly `{"tools":{}}` — no prompts,
+resources, logging, or tasks. For the full protocol contract and safety notes,
+see `docs/MCP_SERVER.md`.
+
+### Opt-in hook: nudge toward pgs instead of `git add`
+
+`pgs` ships **no hooks by default**. That is deliberate: a plugin should not
+impose policy on your session or add latency to every tool call.
+
+If you want one, add this to your own `.claude/settings.json`. It fires when
+Claude is about to run `git add` through the Bash tool and injects a one-line
+reminder. It is a nudge — the `git add` still runs.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git add *)",
+            "command": "jq -n '{hookSpecificOutput:{hookEventName:\"PreToolUse\",additionalContext:\"This repo has pgs. Prefer pgs_scan then pgs_stage with the narrowest selector (file, 12-hex hunk id, or path:10-20) over whole-file git add.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Requires `jq`. Drop the `if` line to fire on every Bash call instead of only
+`git add`.
 
 ## Build
 
@@ -181,7 +215,7 @@ cargo clippy -- -D warnings        # lint (zero warnings)
 cargo fmt --check                  # format check
 ```
 
-Requires Rust 1.85+ and a C compiler (for libgit2).
+Requires Rust 1.88+ and a C compiler (for libgit2).
 
 See `docs/CLI_SPEC.md` for the complete output contract and
 `docs/ARCHITECTURE.md` for system design.

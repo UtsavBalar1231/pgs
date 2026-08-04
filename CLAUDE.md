@@ -8,7 +8,7 @@ Non-interactive git staging at file, hunk, and line granularity.
 
 ## Build & Test
 
-Requires Rust 1.85+ (edition 2024) and a C compiler (for libgit2).
+Requires Rust 1.88+ (edition 2024) and a C compiler (for libgit2).
 
 ```
 cargo build                        # compile

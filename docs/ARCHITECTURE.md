@@ -220,6 +220,14 @@ index at a time (the agent issues one pgs call, waits for completion, then issue
 Under that assumption the TOCTOU window is never exercised. Do not run concurrent pgs
 invocations or pair pgs with another tool that mutates the index without coordination.
 
+**MCP mutation lanes**: `pgs-mcp` enforces that serial assumption for its own requests.
+`PgsMcpRuntime` (`src/mcp/runtime.rs`) keys a `MutationLane` by canonicalized worktree path
+and admits one `pgs_stage`/`pgs_unstage`/`pgs_commit` at a time per repository, in arrival
+order. Lane slots are reserved at the transport layer before handler scheduling, so ordering
+follows request arrival rather than task-scheduler nondeterminism. Read-only tools bypass the
+lane entirely. This does not close the cross-process window above: a concurrent `git` process
+outside pgs is still unserialized.
+
 ## Freshness invariant
 
 `pgs stage` computes a diff/scan at call time and performs a workdir freshness

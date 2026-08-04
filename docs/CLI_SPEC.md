@@ -317,7 +317,7 @@ Exit codes:
 - `1`: `NoChanges` — not applicable; `log` always returns `0` on success.
 - `2`: user error (invalid arguments).
 
-MCP tool: `pgs_log` — read-only, `task_support: Optional`. Input schema
+MCP tool: `pgs_log` — read-only. Input schema
 requires `repo_path`; optional `max_count` (default 20) and `paths` (array
 of file paths to filter by). The full `LogOutput` envelope is returned inside
 `structuredContent.pgs`.
@@ -390,7 +390,7 @@ Binary files expose no granular hunks, so any hunk id probe against a
 binary file also returns `unknown_hunk_id` with guidance to re-run `pgs
 scan`.
 
-MCP tool: `pgs_split_hunk` — read-only, `task_support: Optional`. Input
+MCP tool: `pgs_split_hunk` — read-only. Input
 schema requires `repo_path` and `hunk_id`; optional `context` defaults to 3.
 
 ### `plan-check`
@@ -473,7 +473,7 @@ Exit codes:
   the plan is rejected but nothing is mutated.
 - `2` on malformed plan JSON or an unreadable `--plan` path.
 
-MCP tool: `pgs_plan_check` — read-only, `task_support: Optional`. Input schema
+MCP tool: `pgs_plan_check` — read-only. Input schema
 requires `repo_path` and `plan` (inline `CommitPlan` object); optional
 `context` defaults to 3. The full `PlanCheckOutput` envelope is returned
 inside `structuredContent.pgs`.
@@ -561,7 +561,7 @@ Exit codes:
 - `1` when any entry shifted or went gone — the plan needs reconciliation.
 - `2` on malformed plan JSON or an unreadable `--plan` path.
 
-MCP tool: `pgs_plan_diff` — read-only, `task_support: Optional`. Input
+MCP tool: `pgs_plan_diff` — read-only. Input
 schema requires `repo_path` and `plan` (inline `CommitPlan` object);
 optional `context` defaults to 3. The full `PlanDiffOutput` envelope is
 returned inside `structuredContent.pgs`.
