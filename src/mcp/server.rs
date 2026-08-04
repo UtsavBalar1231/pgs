@@ -2,7 +2,8 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::sync::Arc;
 
-use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use serde::de::{DeserializeOwned, IntoDeserializer};
 use serde_json::Value;
 
 use rmcp::{
@@ -170,12 +171,8 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
         }
         PGS_COMMIT_TOOL => {
             let input: CommitToolInput = parse_tool_input(request.arguments)?;
-            if input.message.trim().is_empty() {
-                return Err(ErrorData::invalid_params(
-                    "message must be a non-empty string",
-                    None,
-                ));
-            }
+            check_commit_message_source(&input)
+                .map_err(|reason| ErrorData::invalid_params(reason, None))?;
 
             let repo_path = input.repo_path.clone();
             Ok(ParsedToolCall::Mutating {
@@ -220,6 +217,24 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
             })
         }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
+    }
+}
+
+/// Decide whether a `pgs_commit` request names exactly one usable message source.
+///
+/// Shared by the protocol-layer parameter check in [`parse_call`] and the
+/// transport-layer preregistration hook so the two cannot drift apart.
+fn check_commit_message_source(input: &CommitToolInput) -> Result<(), &'static str> {
+    if input.message.as_ref().is_some_and(|m| m.trim().is_empty()) {
+        return Err("message must be a non-empty string");
+    }
+    match (input.message.as_deref(), input.message_file.as_deref()) {
+        (Some(_), Some(_)) => Err("message and message_file are mutually exclusive"),
+        (None, None) => Err("supply exactly one of message or message_file"),
+        // An MCP request has no stdin of its own; reading `-` would block
+        // the server on a stream that never produces data.
+        (None, Some("-")) => Err("message_file `-` (stdin) is not available over MCP"),
+        _ => Ok(()),
     }
 }
 
@@ -296,24 +311,96 @@ fn preregister_mutation_if_needed(runtime: &PgsMcpRuntime, message: &RxJsonRpcMe
         return;
     };
     if let Some(repo_path) = preregistration_repo_path(&call.params) {
-        let _ = runtime.preregister_mutation(&request.id, &repo_path);
+        let _ = runtime.preregister_mutation(&request.id, repo_path);
     }
 }
 
-fn preregistration_repo_path(params: &CallToolRequestParams) -> Option<String> {
+fn preregistration_repo_path(params: &CallToolRequestParams) -> Option<&str> {
     let arguments = params.arguments.as_ref()?;
     let repo_path = arguments.get("repo_path")?.as_str()?;
 
     match params.name.as_ref() {
-        PGS_STAGE_TOOL | PGS_UNSTAGE_TOOL => Some(repo_path.to_owned()),
+        PGS_STAGE_TOOL | PGS_UNSTAGE_TOOL => Some(repo_path),
+        // Only reserve a mutation lane for a request that can actually reach the
+        // commit handler, judged by the same predicate the dispatch path uses.
         PGS_COMMIT_TOOL => {
-            let message = arguments.get("message")?.as_str()?;
-            if message.trim().is_empty() {
-                None
-            } else {
-                Some(repo_path.to_owned())
-            }
+            let input = CommitToolInput::deserialize(arguments.into_deserializer()).ok()?;
+            check_commit_message_source(&input).ok().map(|()| repo_path)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PGS_COMMIT_TOOL, ParsedToolCall, parse_call, preregistration_repo_path};
+    use rmcp::model::CallToolRequestParams;
+    use serde_json::{Value, json};
+
+    fn commit_params(arguments: &Value) -> CallToolRequestParams {
+        let object = arguments.as_object().expect("object arguments").clone();
+        CallToolRequestParams::new(PGS_COMMIT_TOOL).with_arguments(object)
+    }
+
+    /// The transport hook reserves a mutation lane only for a request the
+    /// dispatch path will accept. If these two disagree, a rejected request
+    /// either strands a lane slot or skips ordered admission.
+    #[test]
+    fn preregistration_and_dispatch_agree_on_commit_message_source() {
+        let cases = [
+            (
+                "message only",
+                json!({"repo_path": "/r", "message": "m"}),
+                true,
+            ),
+            (
+                "message_file only",
+                json!({"repo_path": "/r", "message_file": "/m.txt"}),
+                true,
+            ),
+            (
+                "both sources",
+                json!({"repo_path": "/r", "message": "m", "message_file": "/m.txt"}),
+                false,
+            ),
+            ("neither source", json!({"repo_path": "/r"}), false),
+            (
+                "blank message",
+                json!({"repo_path": "/r", "message": ""}),
+                false,
+            ),
+            (
+                "whitespace-only message",
+                json!({"repo_path": "/r", "message": "  \n\t"}),
+                false,
+            ),
+            (
+                "message_file stdin sentinel",
+                json!({"repo_path": "/r", "message_file": "-"}),
+                false,
+            ),
+            (
+                "non-string message",
+                json!({"repo_path": "/r", "message": 7}),
+                false,
+            ),
+            (
+                "non-string message_file",
+                json!({"repo_path": "/r", "message_file": ["/m.txt"]}),
+                false,
+            ),
+        ];
+
+        for (label, arguments, expected) in cases {
+            let params = commit_params(&arguments);
+            let preregisters = preregistration_repo_path(&params).is_some();
+            let dispatches = matches!(
+                parse_call(commit_params(&arguments)),
+                Ok(ParsedToolCall::Mutating { .. })
+            );
+
+            assert_eq!(preregisters, expected, "preregistration for {label}");
+            assert_eq!(dispatches, expected, "dispatch for {label}");
+        }
     }
 }

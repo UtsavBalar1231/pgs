@@ -25,7 +25,7 @@ fn commit_staged_changes() {
     let hash = json["commit_hash"].as_str().unwrap();
     assert_eq!(hash.len(), 40, "commit hash should be 40 hex characters");
 
-    assert_eq!(json["message"], "feat: add line2");
+    assert_eq!(json["message"], "feat: add line2\n");
     assert!(json["author"].as_str().unwrap().contains("Test"));
     assert_eq!(json["files_changed"], 1);
     assert_eq!(json["insertions"], 1);
@@ -51,18 +51,19 @@ fn commit_amend_message_only_rewrites_head_message_without_staged_changes() {
     let old_parent_id = old_head.parent_id(0).unwrap();
 
     let message = "new subject\n\nAdd an explanatory body.";
+    let normalized = "new subject\n\nAdd an explanatory body.\n";
     let output = run_pgs(dir.path(), &["commit", "--amend", "-m", message]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    assert_eq!(json["message"], message);
+    assert_eq!(json["message"], normalized);
     assert_eq!(json["files_changed"], 1);
     assert_eq!(json["insertions"], 1);
     assert_eq!(json["deletions"], 0);
 
     let amended = repo.head().unwrap().peel_to_commit().unwrap();
     assert_ne!(amended.id(), old_head_id);
-    assert_eq!(amended.message().unwrap(), message);
+    assert_eq!(amended.message_raw().unwrap(), normalized);
     assert_eq!(amended.tree_id(), old_tree_id);
     assert_eq!(amended.parent_id(0).unwrap(), old_parent_id);
 }
@@ -79,17 +80,18 @@ fn commit_amend_with_staged_changes_replaces_head_tree() {
     run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
     let message = "new subject\n\nInclude staged line2.";
+    let normalized = "new subject\n\nInclude staged line2.\n";
     let output = run_pgs(dir.path(), &["commit", "--amend", "-m", message]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    assert_eq!(json["message"], message);
+    assert_eq!(json["message"], normalized);
     assert_eq!(json["files_changed"], 1);
     assert_eq!(json["insertions"], 2);
     assert_eq!(json["deletions"], 0);
 
     let amended = repo.head().unwrap().peel_to_commit().unwrap();
-    assert_eq!(amended.message().unwrap(), message);
+    assert_eq!(amended.message_raw().unwrap(), normalized);
     assert_eq!(amended.parent_id(0).unwrap(), old_parent_id);
 
     let tree = amended.tree().unwrap();
@@ -161,19 +163,20 @@ fn commit_amend_root_commit_blank_message_returns_exit_code_2() {
     assert_eq!(head.message().unwrap(), root_message);
 }
 
+/// `--cleanup=whitespace` strips trailing whitespace per line and appends exactly
+/// one newline, but leading indentation on a line is content and survives.
 #[test]
-fn commit_message_with_surrounding_whitespace_is_accepted_verbatim() {
+fn commit_message_with_surrounding_whitespace_keeps_indent_and_gains_newline() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "hello.txt", "line1\n", "add hello");
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
     run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
-    let message = "  feat: padded  ";
-    let output = run_pgs(dir.path(), &["commit", "-m", message]).success();
+    let output = run_pgs(dir.path(), &["commit", "-m", "  feat: padded  "]).success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    assert_eq!(json["message"], message);
+    assert_eq!(json["message"], "  feat: padded\n");
     let head = repo.head().unwrap().peel_to_commit().unwrap();
-    assert_eq!(head.message().unwrap(), message);
+    assert_eq!(head.message_raw().unwrap(), "  feat: padded\n");
 }

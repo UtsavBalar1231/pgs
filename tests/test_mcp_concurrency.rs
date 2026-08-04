@@ -48,7 +48,7 @@ fn mcp_mutating_requests_serialize_per_repo() {
         "pgs_commit",
         &json!({
             "repo_path": repo.path().display().to_string(),
-            "message": "feat: serialized commit"
+            "message": "feat: serialized commit\n"
         }),
     );
 
@@ -65,7 +65,7 @@ fn mcp_mutating_requests_serialize_per_repo() {
     );
     assert_eq!(
         responses[&3]["result"]["structuredContent"]["pgs"]["message"],
-        "feat: serialized commit"
+        "feat: serialized commit\n"
     );
 
     // The commit succeeds with content only if it ran after the stage released

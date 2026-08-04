@@ -271,6 +271,7 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
         Command::Commit(args) => Ok(Some(RenderableOutput::new(commit::execute(
             repo.as_deref(),
             args,
+            true,
         )?))),
         Command::Log(args) => Ok(Some(RenderableOutput::new(log::execute(
             repo.as_deref(),

@@ -229,7 +229,7 @@ fn text_default_commit_uses_single_result_marker() {
     assert_eq!(kind, "commit.result");
     assert_eq!(payload["version"], "v1");
     assert_eq!(payload["command"], "commit");
-    assert_eq!(payload["message"], "feat: add line2");
+    assert_eq!(payload["message"], "feat: add line2\n");
     assert!(payload["author"].as_str().unwrap().contains("Test"));
     assert_eq!(payload["files_changed"], 1);
     assert_eq!(payload["insertions"], 1);
@@ -257,7 +257,7 @@ fn json_mode_commit_uses_new_contract() {
 
     assert_eq!(json["version"], "v1");
     assert_eq!(json["command"], "commit");
-    assert_eq!(json["message"], "feat: add line2");
+    assert_eq!(json["message"], "feat: add line2\n");
     assert!(json["author"].as_str().unwrap().contains("Test"));
     assert_eq!(json["files_changed"], 1);
     assert_eq!(json["insertions"], 1);

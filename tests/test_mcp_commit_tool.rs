@@ -36,8 +36,8 @@ fn mcp_commit_tool_matches_cli_contract() {
         "pgs_commit input schema should require repo_path"
     );
     assert!(
-        required.iter().any(|field| field == "message"),
-        "pgs_commit input schema should require message"
+        !required.iter().any(|field| field == "message"),
+        "message is now one of two alternative sources, so it cannot be schema-required"
     );
     let schema_properties = commit_tool["inputSchema"]["properties"]
         .as_object()
@@ -45,6 +45,14 @@ fn mcp_commit_tool_matches_cli_contract() {
     assert!(
         schema_properties.contains_key("amend"),
         "pgs_commit input schema should expose optional amend flag"
+    );
+    assert!(
+        schema_properties.contains_key("message"),
+        "pgs_commit input schema should expose message"
+    );
+    assert!(
+        schema_properties.contains_key("message_file"),
+        "pgs_commit input schema should expose message_file"
     );
 
     let response = call_tool(
@@ -73,7 +81,7 @@ fn mcp_commit_tool_matches_cli_contract() {
     assert_eq!(pgs["command"], "commit");
     let commit_hash = pgs["commit_hash"].as_str().unwrap();
     assert_eq!(commit_hash.len(), 40, "commit hash should be 40 hex chars");
-    assert_eq!(pgs["message"], "feat: add line3");
+    assert_eq!(pgs["message"], "feat: add line3\n");
     assert!(pgs["author"].as_str().unwrap().contains("Test"));
     assert_eq!(pgs["files_changed"], 1);
     assert_eq!(pgs["insertions"], 1);
@@ -113,11 +121,14 @@ fn mcp_commit_tool_amends_head_when_requested() {
     assert_eq!(response["id"], 3);
     assert_eq!(response["result"]["isError"], false);
     let pgs = &response["result"]["structuredContent"]["pgs"];
-    assert_eq!(pgs["message"], "new subject\n\nBody from MCP.");
+    assert_eq!(pgs["message"], "new subject\n\nBody from MCP.\n");
     assert_eq!(pgs["files_changed"], 1);
 
     let amended = repo.head().unwrap().peel_to_commit().unwrap();
-    assert_eq!(amended.message().unwrap(), "new subject\n\nBody from MCP.");
+    assert_eq!(
+        amended.message_raw().unwrap(),
+        "new subject\n\nBody from MCP.\n"
+    );
     assert_eq!(amended.parent_id(0).unwrap(), old_parent_id);
 }
 
@@ -255,6 +266,123 @@ fn mcp_and_cli_blank_commit_message_agree_on_rejection() {
     let mcp_head_after = mcp_repo.head().unwrap().peel_to_commit().unwrap().id();
 
     assert!(response.get("result").is_none(), "MCP should refuse");
+    assert_eq!(cli_head_before, cli_head_after, "CLI created a commit");
+    assert_eq!(mcp_head_before, mcp_head_after, "MCP created a commit");
+}
+
+// --- message_file ---
+
+/// Spawn a server, issue one `pgs_commit` call, and shut down.
+fn call_commit_tool(arguments: &serde_json::Value) -> serde_json::Value {
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    initialize_session(&mut stdin, &mut stdout);
+    let response = call_tool(&mut stdin, &mut stdout, 3, "pgs_commit", arguments);
+    shutdown_child(child);
+    response
+}
+
+#[test]
+fn mcp_commit_tool_message_file_commits_message_from_file() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "a.txt", "one\n", "seed");
+    write_file(dir.path(), "a.txt", "two\n");
+    run_pgs(dir.path(), &["stage", "a.txt"]).success();
+
+    let msg_path = dir.path().join("msg.txt");
+    std::fs::write(&msg_path, "feat: from mcp file\r\n\n\nBody.  \n\n").unwrap();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": dir.path().display().to_string(),
+        "message_file": msg_path.display().to_string()
+    }));
+
+    assert_eq!(response["result"]["isError"], false);
+    let pgs = &response["result"]["structuredContent"]["pgs"];
+    assert_eq!(pgs["message"], "feat: from mcp file\n\nBody.\n");
+    assert_eq!(
+        repo.head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .message_raw()
+            .unwrap(),
+        "feat: from mcp file\n\nBody.\n"
+    );
+}
+
+/// An MCP request has no stdin to read from, so `-` must be refused outright
+/// rather than blocking the server on a stream that will never produce data.
+#[test]
+fn mcp_commit_tool_message_file_dash_rejected() {
+    let (dir, _repo) = setup_repo();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": dir.path().display().to_string(),
+        "message_file": "-"
+    }));
+
+    assert!(response.get("result").is_none(), "`-` must be rejected");
+}
+
+#[test]
+fn mcp_commit_tool_message_and_message_file_together_rejected() {
+    let (dir, _repo) = setup_repo();
+    let msg_path = dir.path().join("msg.txt");
+    std::fs::write(&msg_path, "feat: from file\n").unwrap();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": dir.path().display().to_string(),
+        "message": "feat: inline",
+        "message_file": msg_path.display().to_string()
+    }));
+
+    assert!(response.get("result").is_none(), "both sources must fail");
+}
+
+#[test]
+fn mcp_commit_tool_without_message_or_message_file_rejected() {
+    let (dir, _repo) = setup_repo();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": dir.path().display().to_string()
+    }));
+
+    assert!(response.get("result").is_none(), "no source must fail");
+}
+
+/// CLI and MCP must agree: an unreadable message file is a user error on both
+/// front ends, and neither may leave a commit behind.
+#[test]
+fn mcp_and_cli_missing_message_file_agree_on_user_error() {
+    let (cli_dir, cli_repo) = setup_repo();
+    commit_file(&cli_repo, cli_dir.path(), "a.txt", "one\n", "seed");
+    write_file(cli_dir.path(), "a.txt", "two\n");
+    run_pgs(cli_dir.path(), &["stage", "a.txt"]).success();
+    let cli_head_before = cli_repo.head().unwrap().peel_to_commit().unwrap().id();
+    let cli_missing = cli_dir.path().join("nope.txt");
+    run_pgs(
+        cli_dir.path(),
+        &["commit", "-F", cli_missing.to_str().unwrap()],
+    )
+    .code(2);
+    let cli_head_after = cli_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let (mcp_dir, mcp_repo) = setup_repo();
+    commit_file(&mcp_repo, mcp_dir.path(), "a.txt", "one\n", "seed");
+    write_file(mcp_dir.path(), "a.txt", "two\n");
+    run_pgs(mcp_dir.path(), &["stage", "a.txt"]).success();
+    let mcp_head_before = mcp_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": mcp_dir.path().display().to_string(),
+        "message_file": mcp_dir.path().join("nope.txt").display().to_string()
+    }));
+    let mcp_head_after = mcp_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let pgs_error = &response["result"]["structuredContent"]["pgs_error"];
+    assert_eq!(pgs_error["kind"], "user");
+    assert_eq!(pgs_error["code"], "input_file_unreadable");
+    assert_eq!(pgs_error["exit_code"], 2);
     assert_eq!(cli_head_before, cli_head_after, "CLI created a commit");
     assert_eq!(mcp_head_before, mcp_head_after, "MCP created a commit");
 }

@@ -12,14 +12,12 @@ use crate::models::CommitPlan;
 /// Load a [`CommitPlan`] from `plan_path` when `Some`, or from stdin when `None`.
 ///
 /// # Errors
-/// Returns [`PgsError::Io`] when the file cannot be read (including stdin
-/// failures), or [`PgsError::InvalidSelection`] when the JSON is malformed.
+/// Returns [`PgsError::InputFileUnreadable`] when the caller-supplied `--plan`
+/// path cannot be read, [`PgsError::Io`] when reading stdin fails, or
+/// [`PgsError::InvalidSelection`] when the JSON is malformed.
 pub fn load_commit_plan(plan_path: Option<&str>) -> Result<CommitPlan, PgsError> {
     let raw = if let Some(path) = plan_path {
-        std::fs::read_to_string(path).map_err(|e| PgsError::Io {
-            path: path.into(),
-            source: e,
-        })?
+        std::fs::read_to_string(path).map_err(|e| PgsError::input_file_unreadable(path, e))?
     } else {
         let mut buf = String::new();
         io::stdin()
@@ -73,12 +71,13 @@ mod tests {
     }
 
     #[test]
-    fn load_commit_plan_missing_path_returns_io_error() {
+    fn load_commit_plan_missing_path_returns_user_error() {
         let err = load_commit_plan(Some("/tmp/does-not-exist-pgs-plan-io-test.json"))
             .expect_err("missing file must fail");
         assert!(
-            matches!(err, PgsError::Io { .. }),
-            "expected Io error, got: {err:?}"
+            matches!(err, PgsError::InputFileUnreadable { .. }),
+            "expected InputFileUnreadable, got: {err:?}"
         );
+        assert_eq!(err.exit_code(), 2);
     }
 }

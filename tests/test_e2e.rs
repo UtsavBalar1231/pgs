@@ -56,7 +56,7 @@ fn scan_stage_status_commit_workflow() {
     let commit_stdout = String::from_utf8(commit_output.get_output().stdout.clone()).unwrap();
     let commit_json: serde_json::Value = serde_json::from_str(&commit_stdout).unwrap();
     assert!(commit_json["commit_hash"].is_string());
-    assert_eq!(commit_json["message"], "feat: add println");
+    assert_eq!(commit_json["message"], "feat: add println\n");
 
     // 5. After commit, status should show nothing staged
     let final_status = run_pgs(dir.path(), &["status"]).success();
@@ -127,7 +127,7 @@ fn text_mode_scan_stage_status_commit_workflow() {
     let (commit_kind, commit_payload) = parse_marker(commit_lines[0]);
     assert_eq!(commit_kind, "commit.result");
     assert_eq!(commit_payload["command"], "commit");
-    assert_eq!(commit_payload["message"], "feat: add println");
+    assert_eq!(commit_payload["message"], "feat: add println\n");
 
     let final_status = run_pgs_raw(dir.path(), &["status"]).success();
     let final_stdout = String::from_utf8(final_status.get_output().stdout.clone()).unwrap();
@@ -236,7 +236,7 @@ fn scan_stage_commit_untracked_file_workflow() {
     let commit_stdout = String::from_utf8(commit_output.get_output().stdout.clone()).unwrap();
     let commit_json: serde_json::Value = serde_json::from_str(&commit_stdout).unwrap();
     assert!(commit_json["commit_hash"].is_string());
-    assert_eq!(commit_json["message"], "feat: add new_feature");
+    assert_eq!(commit_json["message"], "feat: add new_feature\n");
 
     // 5. Scan — should show no changes (exit code 1)
     run_pgs(dir.path(), &["scan"]).code(1);

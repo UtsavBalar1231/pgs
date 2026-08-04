@@ -75,9 +75,28 @@ pub enum PgsError {
     /// otherwise overwrite the existing message, recoverable only through the reflog.
     #[error(
         "empty commit message: a message consisting only of whitespace is not a valid \
-         commit message; pass -m with descriptive text"
+         commit message; supply non-whitespace content via -m/message or -F/message_file"
     )]
     EmptyCommitMessage,
+
+    /// Command arguments were mutually exclusive, or a required one was missing.
+    #[error("invalid arguments: {detail}")]
+    InvalidArguments {
+        /// Detailed description of the argument problem.
+        detail: String,
+    },
+
+    /// A user-supplied input file (commit message file, plan file) could not be read.
+    ///
+    /// Distinct from [`PgsError::Io`] (exit 4): the path came from the caller, so a
+    /// missing, unreadable, or non-UTF-8 file is a user error, not an internal fault.
+    #[error("cannot read input file {path}: {source}")]
+    InputFileUnreadable {
+        /// The caller-supplied path that could not be read.
+        path: PathBuf,
+        /// The underlying IO error (including invalid UTF-8).
+        source: std::io::Error,
+    },
 
     /// `--explain` was passed without `--dry-run`.
     #[error("--explain requires --dry-run")]
@@ -106,6 +125,23 @@ pub enum PgsError {
     )]
     CrlfMismatch {
         /// Path to the file with mismatched line endings.
+        path: String,
+    },
+
+    /// The assembled blob would carry an unterminated line somewhere other than
+    /// at the end of the file.
+    ///
+    /// Diff tokens carry their own terminator, so a line without a trailing
+    /// newline can only be a file's last line. A selection that places content
+    /// after the base file's unterminated last line therefore also has to
+    /// terminate that line — a change the selection never named.
+    #[error(
+        "selection in {path} cannot be staged on its own: it places content after the \
+         file's unterminated last line, which would also have to terminate that line; \
+         stage the whole hunk or the whole file instead"
+    )]
+    UnterminatedInteriorLine {
+        /// Path to the file whose last line carries no terminator.
         path: String,
     },
 
@@ -192,9 +228,12 @@ impl PgsError {
             Self::BinaryFileGranular { .. } => "binary_file_granular",
             Self::GranularOnWholeFile { .. } => "granular_on_whole_file",
             Self::EmptyCommitMessage => "empty_commit_message",
+            Self::InvalidArguments { .. } => "invalid_arguments",
+            Self::InputFileUnreadable { .. } => "input_file_unreadable",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
             Self::NonUtf8Partial { .. } => "non_utf8_partial",
             Self::CrlfMismatch { .. } => "crlf_mismatch",
+            Self::UnterminatedInteriorLine { .. } => "unterminated_interior_line",
             Self::StaleScan { .. } => "stale_scan",
             Self::IndexLocked => "index_locked",
             Self::StagingFailed { .. } => "staging_failed",
@@ -219,9 +258,12 @@ impl PgsError {
             | Self::BinaryFileGranular { .. }
             | Self::GranularOnWholeFile { .. }
             | Self::EmptyCommitMessage
+            | Self::InvalidArguments { .. }
+            | Self::InputFileUnreadable { .. }
             | Self::ExplainWithoutDryRun
             | Self::NonUtf8Partial { .. }
-            | Self::CrlfMismatch { .. } => 2,
+            | Self::CrlfMismatch { .. }
+            | Self::UnterminatedInteriorLine { .. } => 2,
 
             Self::StaleScan { .. } | Self::IndexLocked | Self::StagingFailed { .. } => 3,
 
@@ -237,6 +279,14 @@ impl PgsError {
     /// Create an IO error with path context.
     pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         Self::Io {
+            path: path.into(),
+            source,
+        }
+    }
+
+    /// Create an unreadable-input-file error with path context.
+    pub fn input_file_unreadable(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::InputFileUnreadable {
             path: path.into(),
             source,
         }
@@ -288,6 +338,29 @@ mod tests {
         assert_eq!(err.exit_code(), 2);
         assert_eq!(err.code(), "empty_commit_message");
         assert!(err.to_string().contains("whitespace"), "{err}");
+    }
+
+    #[test]
+    fn input_file_unreadable_maps_to_exit_code_2_with_path_context() {
+        let err = PgsError::input_file_unreadable(
+            "/some/msg.txt",
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"),
+        );
+        assert_eq!(err.exit_code(), 2);
+        assert_eq!(err.code(), "input_file_unreadable");
+        let msg = err.to_string();
+        assert!(msg.contains("/some/msg.txt"), "message was: {msg}");
+        assert!(msg.contains("no such file"), "message was: {msg}");
+    }
+
+    #[test]
+    fn invalid_arguments_maps_to_exit_code_2() {
+        let err = PgsError::InvalidArguments {
+            detail: "-m and -F are mutually exclusive".into(),
+        };
+        assert_eq!(err.exit_code(), 2);
+        assert_eq!(err.code(), "invalid_arguments");
+        assert!(err.to_string().contains("mutually exclusive"), "{err}");
     }
 
     #[test]

@@ -84,6 +84,17 @@ pub fn read_staged_blob(repo: &Repository, path: &str) -> String {
     String::from_utf8(blob.content().to_vec()).expect("blob is valid UTF-8")
 }
 
+/// Run pgs with `--repo`/`--json` and the given bytes piped on stdin.
+pub fn run_pgs_stdin(dir: &Path, args: &[&str], stdin: &str) -> assert_cmd::assert::Assert {
+    Command::new(assert_cmd::cargo::cargo_bin!("pgs"))
+        .arg("--json")
+        .arg("--repo")
+        .arg(dir.to_str().unwrap())
+        .args(args)
+        .write_stdin(stdin)
+        .assert()
+}
+
 pub fn run_pgs_raw(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     Command::new(assert_cmd::cargo::cargo_bin!("pgs"))
         .arg("--repo")

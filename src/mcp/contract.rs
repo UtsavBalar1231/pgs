@@ -155,9 +155,11 @@ impl From<UnstageToolInput> for McpUnstageRequest {
 pub struct CommitToolInput {
     /// Explicit repository path to mutate.
     pub repo_path: String,
-    #[schemars(length(min = 1))]
-    /// Non-empty commit message.
-    pub message: String,
+    /// Inline commit message. Supply exactly one of `message` or `message_file`.
+    pub message: Option<String>,
+    /// Path to a file holding the commit message. Supply exactly one of `message`
+    /// or `message_file`. `-` is rejected: an MCP request has no stdin to read.
+    pub message_file: Option<String>,
     /// Replace the current HEAD commit instead of creating a new child commit.
     pub amend: Option<bool>,
 }
@@ -167,6 +169,7 @@ impl From<CommitToolInput> for McpCommitRequest {
         Self {
             repo_path: value.repo_path,
             message: value.message,
+            message_file: value.message_file,
             amend: value.amend.unwrap_or(false),
         }
     }
@@ -733,9 +736,12 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::BinaryFileGranular { .. }
         | PgsError::GranularOnWholeFile { .. }
         | PgsError::EmptyCommitMessage
+        | PgsError::InvalidArguments { .. }
+        | PgsError::InputFileUnreadable { .. }
         | PgsError::ExplainWithoutDryRun
         | PgsError::NonUtf8Partial { .. }
-        | PgsError::CrlfMismatch { .. } => PgsToolErrorKind::User,
+        | PgsError::CrlfMismatch { .. }
+        | PgsError::UnterminatedInteriorLine { .. } => PgsToolErrorKind::User,
         PgsError::StaleScan { .. } | PgsError::IndexLocked | PgsError::StagingFailed { .. } => {
             PgsToolErrorKind::Retryable
         }
@@ -870,11 +876,20 @@ fn error_guidance(error: &PgsError) -> String {
         | PgsError::CrlfMismatch { .. } => {
             "Retry with a file-level selection instead of hunk or line granularity.".to_owned()
         }
+        PgsError::UnterminatedInteriorLine { .. } => {
+            "Stage the whole hunk or the whole file: the selection cannot be applied without \
+             also terminating the file's last line."
+                .to_owned()
+        }
         PgsError::EmptyCommitMessage => {
             "Supply a commit message with at least one non-whitespace character.".to_owned()
         }
         PgsError::ExplainWithoutDryRun => {
             "Pass --dry-run alongside --explain, or drop --explain.".to_owned()
+        }
+        PgsError::InvalidArguments { detail } => detail.clone(),
+        PgsError::InputFileUnreadable { .. } => {
+            "Check that the path exists, is a readable UTF-8 file, and is not `-`.".to_owned()
         }
         PgsError::StaleScan { .. } => {
             "Re-run pgs_scan to refresh checksums and hunk IDs, then retry.".to_owned()

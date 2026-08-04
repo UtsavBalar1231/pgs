@@ -83,8 +83,10 @@ pub struct McpLogRequest {
 pub struct McpCommitRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
-    /// Commit message to pass through to the commit command.
-    pub message: String,
+    /// Inline commit message, mutually exclusive with `message_file`.
+    pub message: Option<String>,
+    /// Path to a file holding the commit message, mutually exclusive with `message`.
+    pub message_file: Option<String>,
     /// Whether to replace the current HEAD commit instead of creating a child commit.
     pub amend: bool,
 }
@@ -279,8 +281,10 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
             Some(request.repo_path.as_str()),
             commit::CommitArgs {
                 message: request.message,
+                message_file: request.message_file,
                 amend: request.amend,
             },
+            false,
         )
         .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Commit, source)),
