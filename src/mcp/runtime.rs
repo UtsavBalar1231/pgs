@@ -56,7 +56,9 @@ struct MutationOrder {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum RequestOrderKey {
     Number(i64),
-    String(String),
+    /// Shares rmcp's own `Arc<str>` allocation; `Ord`/`Hash` still delegate to
+    /// `str`, so ordering and lookup semantics match an owned `String`.
+    String(Arc<str>),
 }
 
 #[derive(Debug)]
@@ -311,7 +313,7 @@ impl RequestOrderKey {
     fn from_request_id(request_id: &RequestId) -> Self {
         match request_id {
             RequestId::Number(value) => Self::Number(*value),
-            RequestId::String(value) => Self::String(value.to_string()),
+            RequestId::String(value) => Self::String(Arc::clone(value)),
         }
     }
 }
@@ -331,7 +333,7 @@ mod tests {
     fn mutation_order_sorts_by_arrival_sequence_not_request_id() {
         let first = MutationOrder {
             arrival_sequence: 0,
-            request_key: RequestOrderKey::String("z".to_owned()),
+            request_key: RequestOrderKey::String("z".into()),
         };
         let second = MutationOrder {
             arrival_sequence: 1,

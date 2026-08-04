@@ -57,7 +57,8 @@ pub fn build_scan_result(
         if let Some(filter) = file_filter
             && !filter.iter().any(|f| {
                 let f_normalized = f.strip_suffix('/').unwrap_or(f);
-                path == *f_normalized || path.starts_with(&format!("{f_normalized}/"))
+                path.strip_prefix(f_normalized)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
             })
         {
             continue;

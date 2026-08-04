@@ -46,7 +46,11 @@ pub fn resolve_directory(
     let matches: Vec<ResolvedSelection> = scan
         .files
         .iter()
-        .filter(|f| f.path == normalized || f.path.starts_with(&format!("{normalized}/")))
+        .filter(|f| {
+            f.path
+                .strip_prefix(normalized)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
         .map(|f| ResolvedSelection {
             file_path: f.path.clone(),
             hunk_indices: (0..f.hunks.len()).collect(),
