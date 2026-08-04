@@ -17,6 +17,11 @@ pub struct CommitArgs {
 
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
 pub fn execute(repo_path: Option<&str>, args: CommitArgs) -> Result<CommandOutput, PgsError> {
+    // Checked first so `--amend` cannot destroy the existing message before failing.
+    if args.message.trim().is_empty() {
+        return Err(PgsError::EmptyCommitMessage);
+    }
+
     let repository = repo::open(repo_path)?;
     let sig = repository.signature()?;
 

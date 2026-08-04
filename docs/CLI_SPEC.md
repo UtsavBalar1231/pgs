@@ -280,6 +280,27 @@ JSON envelope:
 Text record kinds:
 - `commit.result`
 
+#### Message validation
+
+The message must contain at least one non-whitespace character. A message that
+is empty or whitespace-only returns `EmptyCommitMessage` (code
+`empty_commit_message`, exit 2). Whitespace here is Rust's `str::trim`
+definition — the Unicode `White_Space` property — so spaces, tabs, `\n`, `\r\n`,
+U+00A0, and U+3000 all count as blank.
+
+Validation runs before any index or object-database access, so a rejected
+`--amend` leaves the existing `HEAD` commit and its message untouched. This
+matters because `git commit --amend` has no undo outside the reflog.
+
+A message with real content surrounded by whitespace is valid and is stored
+verbatim; pgs applies no trimming, comment stripping, or other cleanup to an
+accepted message.
+
+The check lives in the shared command handler, so the CLI and the `pgs_commit`
+MCP tool reject the same inputs. The MCP server additionally rejects a blank
+`message` at the protocol layer with a JSON-RPC `invalid_params` error before
+dispatch.
+
 ### `log`
 
 Read commit history. Returns up to `--max-count` commits (default 20) walking

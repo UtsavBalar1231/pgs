@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- `pgs commit` and `pgs commit --amend` now reject an empty or whitespace-only
+  `-m` message with `empty_commit_message` (exit 2). Previously the CLI created
+  a commit with no message, and `--amend` silently destroyed the existing one
+  with no recovery outside the reflog. Validation runs before any index or
+  object-database access, so a rejected `--amend` leaves `HEAD` untouched.
+- The check moved into the shared command handler, so the CLI and the
+  `pgs_commit` MCP tool now reject the same inputs. It had lived only at the MCP
+  boundary, which is why the CLI path bypassed it entirely.
+
+### Added
+
+- `EmptyCommitMessage` (`empty_commit_message`, exit 2) joins the error enum.
+  Blank is Rust's `str::trim` definition — the Unicode `White_Space` property —
+  so `\r\n`, U+00A0 and U+3000 all count. An accepted message is still stored
+  verbatim, with no trimming or comment stripping.
+
 ## 0.6.1 - 2026-08-04
 
 ### Fixed

@@ -732,6 +732,7 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::FileNotInDiff { .. }
         | PgsError::BinaryFileGranular { .. }
         | PgsError::GranularOnWholeFile { .. }
+        | PgsError::EmptyCommitMessage
         | PgsError::ExplainWithoutDryRun
         | PgsError::NonUtf8Partial { .. }
         | PgsError::CrlfMismatch { .. } => PgsToolErrorKind::User,
@@ -868,6 +869,9 @@ fn error_guidance(error: &PgsError) -> String {
         | PgsError::NonUtf8Partial { .. }
         | PgsError::CrlfMismatch { .. } => {
             "Retry with a file-level selection instead of hunk or line granularity.".to_owned()
+        }
+        PgsError::EmptyCommitMessage => {
+            "Supply a commit message with at least one non-whitespace character.".to_owned()
         }
         PgsError::ExplainWithoutDryRun => {
             "Pass --dry-run alongside --explain, or drop --explain.".to_owned()

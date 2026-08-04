@@ -69,6 +69,16 @@ pub enum PgsError {
         path: String,
     },
 
+    /// The commit message was empty or contained only whitespace.
+    ///
+    /// Refused before any index or object-database mutation: on `--amend` this would
+    /// otherwise overwrite the existing message, recoverable only through the reflog.
+    #[error(
+        "empty commit message: a message consisting only of whitespace is not a valid \
+         commit message; pass -m with descriptive text"
+    )]
+    EmptyCommitMessage,
+
     /// `--explain` was passed without `--dry-run`.
     #[error("--explain requires --dry-run")]
     ExplainWithoutDryRun,
@@ -181,6 +191,7 @@ impl PgsError {
             Self::FileNotInDiff { .. } => "file_not_in_diff",
             Self::BinaryFileGranular { .. } => "binary_file_granular",
             Self::GranularOnWholeFile { .. } => "granular_on_whole_file",
+            Self::EmptyCommitMessage => "empty_commit_message",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
             Self::NonUtf8Partial { .. } => "non_utf8_partial",
             Self::CrlfMismatch { .. } => "crlf_mismatch",
@@ -207,6 +218,7 @@ impl PgsError {
             | Self::FileNotInDiff { .. }
             | Self::BinaryFileGranular { .. }
             | Self::GranularOnWholeFile { .. }
+            | Self::EmptyCommitMessage
             | Self::ExplainWithoutDryRun
             | Self::NonUtf8Partial { .. }
             | Self::CrlfMismatch { .. } => 2,
@@ -268,6 +280,14 @@ mod tests {
         for v in variants {
             assert_eq!(v.exit_code(), 2, "wrong exit code for: {v}");
         }
+    }
+
+    #[test]
+    fn empty_commit_message_maps_to_exit_code_2_and_stable_code() {
+        let err = PgsError::EmptyCommitMessage;
+        assert_eq!(err.exit_code(), 2);
+        assert_eq!(err.code(), "empty_commit_message");
+        assert!(err.to_string().contains("whitespace"), "{err}");
     }
 
     #[test]

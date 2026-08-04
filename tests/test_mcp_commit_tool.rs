@@ -189,3 +189,72 @@ fn mcp_commit_tool_requires_non_empty_message() {
             .contains("message must be a non-empty string")
     );
 }
+
+#[test]
+fn mcp_commit_tool_amend_blank_message_rejected_preserving_head_message() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "hello.txt", "line1\n", "old subject");
+    let head_before = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    initialize_session(&mut stdin, &mut stdout);
+
+    let response = call_tool(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "pgs_commit",
+        &json!({
+            "repo_path": dir.path().display().to_string(),
+            "message": "   ",
+            "amend": true
+        }),
+    );
+
+    shutdown_child(child);
+
+    assert!(response.get("result").is_none(), "amend should be rejected");
+
+    let head_after = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head_before, head_after.id());
+    assert_eq!(head_after.message().unwrap(), "old subject");
+}
+
+/// The CLI and MCP front ends must agree: a blank message is refused on both,
+/// and neither may leave a new commit behind.
+#[test]
+fn mcp_and_cli_blank_commit_message_agree_on_rejection() {
+    let (cli_dir, cli_repo) = setup_repo();
+    commit_file(&cli_repo, cli_dir.path(), "a.txt", "one\n", "seed");
+    write_file(cli_dir.path(), "a.txt", "two\n");
+    run_pgs(cli_dir.path(), &["stage", "a.txt"]).success();
+    let cli_head_before = cli_repo.head().unwrap().peel_to_commit().unwrap().id();
+    run_pgs(cli_dir.path(), &["commit", "-m", "  "]).code(2);
+    let cli_head_after = cli_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let (mcp_dir, mcp_repo) = setup_repo();
+    commit_file(&mcp_repo, mcp_dir.path(), "a.txt", "one\n", "seed");
+    write_file(mcp_dir.path(), "a.txt", "two\n");
+    run_pgs(mcp_dir.path(), &["stage", "a.txt"]).success();
+    let mcp_head_before = mcp_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    initialize_session(&mut stdin, &mut stdout);
+    let response = call_tool(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "pgs_commit",
+        &json!({
+            "repo_path": mcp_dir.path().display().to_string(),
+            "message": "  "
+        }),
+    );
+    shutdown_child(child);
+
+    let mcp_head_after = mcp_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+    assert!(response.get("result").is_none(), "MCP should refuse");
+    assert_eq!(cli_head_before, cli_head_after, "CLI created a commit");
+    assert_eq!(mcp_head_before, mcp_head_after, "MCP created a commit");
+}
