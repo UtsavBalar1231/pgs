@@ -168,6 +168,34 @@ pub(crate) fn is_predominantly_crlf(text: &str) -> Option<bool> {
     Some(crlf_count * 2 > lf_count)
 }
 
+/// Post-condition on an assembled blob: no interior element may be unterminated.
+///
+/// `elements` are diff tokens in emission order, each still carrying its own
+/// terminator, so a token without a trailing newline can only be a file's last
+/// line. One sitting anywhere else means the selection would silently merge two
+/// lines, and making it representable would require terminating a line the
+/// selection never named.
+///
+/// Checking the assembled result rather than the input shape means the guard
+/// cannot false-positive: any selection that reproduces a well-formed blob
+/// passes it.
+///
+/// # Errors
+///
+/// `PgsError::UnterminatedInteriorLine` when an interior element lacks a
+/// trailing newline.
+pub(crate) fn reject_interior_unterminated<'a>(
+    file_path: &str,
+    elements: impl DoubleEndedIterator<Item = &'a str>,
+) -> Result<(), PgsError> {
+    if elements.rev().skip(1).any(|value| !value.ends_with('\n')) {
+        return Err(PgsError::UnterminatedInteriorLine {
+            path: file_path.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// Coordinate-space–safe line selection for partial staging and unstaging.
 ///
 /// Git diffs operate in two distinct coordinate spaces: the HEAD/index side

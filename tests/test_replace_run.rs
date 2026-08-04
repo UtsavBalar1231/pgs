@@ -380,3 +380,132 @@ fn unstage_full_index_line_range_restores_trailing_deletion() {
 
     assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nD1\nD2\n");
 }
+
+// --- Unterminated last line (no trailing newline in the base) ---
+//
+// `similar::TextDiff::from_lines` tokenizes each line together with its
+// terminator, so a file whose last line carries no `\n` yields a token that is
+// unequal to the same text terminated. git models this identically: for base
+// `x\nb` against work `x\nY\nb\n` the diff is `-b` / `+Y` / `+b`, where `-b` and
+// `+b` are one line regaining its newline and `+Y` is the only real insertion.
+
+/// Commit `base`, then write `work` — neither is newline-normalized.
+fn setup_raw(base: &str, work: &str) -> tempfile::TempDir {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", base, "init");
+    write_file(dir.path(), "f.txt", work);
+    drop(repo);
+    dir
+}
+
+#[test]
+fn stage_inserted_line_before_unterminated_last_line_keeps_that_line() {
+    // `-b` pairs with `+b`, not with `+Y`, so selecting `Y` alone must not drag
+    // the deletion of `b` in behind it.
+    let dir = setup_raw("x\nb", "x\nY\nb\n");
+
+    run_pgs(dir.path(), &["stage", "f.txt:2-2"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "x\nY\nb");
+}
+
+#[test]
+fn stage_inserted_line_before_terminated_last_line_is_unchanged() {
+    let dir = setup_raw("x\nb\n", "x\nY\nb\n");
+
+    run_pgs(dir.path(), &["stage", "f.txt:2-2"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "x\nY\nb\n");
+}
+
+#[test]
+fn stage_line_appended_after_unterminated_last_line_is_refused() {
+    // Placing `c` after the unterminated `b` requires terminating `b` too — a
+    // change the range never names — so the selection is not representable.
+    let dir = setup_raw("a\nb", "a\nb\nc\n");
+
+    let assert = run_pgs(dir.path(), &["stage", "f.txt:3-3"]).code(2);
+    let output = assert.get_output();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("unterminated_interior_line"),
+        "expected `unterminated_interior_line` error code, got: {combined}"
+    );
+
+    assert_eq!(
+        staged_blob(dir.path(), "f.txt"),
+        "a\nb",
+        "a refused selection must leave the index untouched"
+    );
+}
+
+#[test]
+fn stage_line_appended_after_terminated_last_line_is_unchanged() {
+    let dir = setup_raw("a\nb\n", "a\nb\nc\n");
+
+    run_pgs(dir.path(), &["stage", "f.txt:3-3"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nc\n");
+}
+
+#[test]
+fn stage_whole_hunk_of_unterminated_file_is_byte_exact() {
+    let dir = setup_raw("a\nb", "a\nb\nc\n");
+
+    let scan = run_pgs(dir.path(), &["scan", "--full"]).success();
+    let scan_json: serde_json::Value =
+        serde_json::from_slice(&scan.get_output().stdout).expect("scan json");
+    let hunk_id = scan_json["files"][0]["hunks"][0]["id"]
+        .as_str()
+        .expect("hunk id")
+        .to_owned();
+
+    run_pgs(dir.path(), &["stage", &hunk_id]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nc\n");
+}
+
+#[test]
+fn stage_whole_file_of_unterminated_file_is_byte_exact() {
+    let dir = setup_raw("a\nb", "a\nb\nc");
+
+    run_pgs(dir.path(), &["stage", "f.txt"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nc");
+}
+
+#[test]
+fn unstage_line_range_on_unterminated_head_restores_exact_head_bytes() {
+    // HEAD is `a\nb` with no final newline; the index holds `a\n` after the
+    // deletion of `b` was staged. Undoing that deletion must land on HEAD's
+    // exact bytes — a phantom trailing newline leaves the file Modified and an
+    // "unstage everything, verify clean" loop never converges.
+    let dir = setup_raw("a\nb", "a\n");
+    run_pgs(dir.path(), &["stage", "f.txt"]).success();
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\n");
+
+    run_pgs(dir.path(), &["unstage", "f.txt:1-1"]).success();
+
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb");
+}
+
+#[test]
+fn stage_line_range_on_emptied_file_reports_selection_empty() {
+    let dir = setup_raw("a\nb\n", "");
+
+    let assert = run_pgs(dir.path(), &["stage", "f.txt:1-1"]).code(1);
+    let output = assert.get_output();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("selection_empty"),
+        "expected `selection_empty` on an emptied file, got: {combined}"
+    );
+}

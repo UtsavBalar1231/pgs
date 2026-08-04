@@ -115,7 +115,11 @@ pub fn unstage_lines(
 
     let diff = TextDiff::from_lines(head_text, index_text);
 
-    let mut result_lines: Vec<&str> = Vec::new();
+    // Each element is `(token, from_index)`. The flag records which side the
+    // token's exact bytes came from: a restored HEAD line is already correct, so
+    // imposing the index side's trailing-newline convention on it would append a
+    // phantom byte and leave the file reported as still modified.
+    let mut result_lines: Vec<(&str, bool)> = Vec::new();
     let mut lines_affected: u32 = 0;
 
     // Same run-buffering rationale as `stage_lines`: a replace-run arrives as
@@ -133,7 +137,7 @@ pub fn unstage_lines(
                     &mut result_lines,
                     &mut lines_affected,
                 );
-                result_lines.push(change.value());
+                result_lines.push((change.value(), false));
             }
             similar::ChangeTag::Delete => {
                 // Line exists in HEAD but was deleted in index (staged deletion).
@@ -158,14 +162,25 @@ pub fn unstage_lines(
         &mut lines_affected,
     );
 
-    let mut new_content = result_lines.join("");
+    crate::git::reject_interior_unterminated(
+        file_path,
+        result_lines.iter().map(|&(value, _)| value),
+    )?;
 
-    // Preserve trailing newline semantics from the original index content:
-    // if the original had a trailing newline, ensure we do too; if not, strip it.
-    if trailing_newline && !new_content.ends_with('\n') {
-        new_content.push('\n');
-    } else if !trailing_newline && new_content.ends_with('\n') {
-        new_content.pop();
+    let last_from_index = result_lines
+        .last()
+        .is_some_and(|&(_, from_index)| from_index);
+    let mut new_content: String = result_lines.iter().map(|&(value, _)| value).collect();
+
+    // Preserve trailing newline semantics from the original index content, but only
+    // when the final element is a kept index line. A restored HEAD line carries
+    // HEAD's exact bytes, which is precisely what unstaging is meant to land on.
+    if last_from_index {
+        if trailing_newline && !new_content.ends_with('\n') {
+            new_content.push('\n');
+        } else if !trailing_newline && new_content.ends_with('\n') {
+            new_content.pop();
+        }
     }
 
     // Write the new blob and update the index
@@ -192,19 +207,19 @@ pub fn unstage_lines(
 fn flush_unstage_run<'a>(
     deletes: &mut Vec<(&'a str, bool)>,
     inserts: &mut Vec<(&'a str, bool)>,
-    out: &mut Vec<&'a str>,
+    out: &mut Vec<(&'a str, bool)>,
     lines_affected: &mut u32,
 ) {
     for i in 0..deletes.len().max(inserts.len()) {
         if let Some(&(value, keep)) = inserts.get(i) {
             if keep {
-                out.push(value);
+                out.push((value, true));
             } else {
                 *lines_affected += 1;
             }
         }
         if let Some(&(value, true)) = deletes.get(i) {
-            out.push(value);
+            out.push((value, false));
             *lines_affected += 1;
         }
     }

@@ -138,12 +138,15 @@ pub(crate) fn stage_lines(
         });
     }
 
-    let base_has_trailing_newline = base_text.ends_with('\n');
     let work_has_trailing_newline = work_text.ends_with('\n');
 
     let diff = TextDiff::from_lines(base_text, work_text);
 
-    let mut result_lines: Vec<&str> = Vec::new();
+    // Each element is `(token, from_workdir)`. The flag records which side the
+    // token's exact bytes came from, so the trailing-newline fixup can leave a
+    // preserved base token alone instead of imposing the workdir's convention on
+    // bytes that are already correct.
+    let mut result_lines: Vec<(&str, bool)> = Vec::new();
     let mut lines_staged: u32 = 0;
 
     // A replace-run arrives as every Delete followed by every Insert. Appending in
@@ -161,7 +164,7 @@ pub(crate) fn stage_lines(
                     &mut result_lines,
                     &mut lines_staged,
                 );
-                result_lines.push(change.value());
+                result_lines.push((change.value(), false));
             }
             similar::ChangeTag::Delete => {
                 let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
@@ -182,22 +185,23 @@ pub(crate) fn stage_lines(
         &mut lines_staged,
     );
 
+    crate::git::reject_interior_unterminated(
+        file_path,
+        result_lines.iter().map(|&(value, _)| value),
+    )?;
+
     // Reconstruct content: join lines (each already carries its own newline from the diff).
-    let mut result = result_lines.concat();
+    let last_from_workdir = result_lines.last().is_some_and(|&(_, workdir)| workdir);
+    let mut result: String = result_lines.iter().map(|&(value, _)| value).collect();
 
-    // Trailing-newline fixup: only adjust non-empty results.
-    // An empty result (all lines deleted) must stay empty — adding '\n' would produce a
-    // one-byte blob that differs from the workdir and breaks the round-trip invariant.
-    if !result.is_empty() {
-        let should_have_trailing_newline = if lines_staged > 0 {
-            work_has_trailing_newline
-        } else {
-            base_has_trailing_newline
-        };
-
-        if should_have_trailing_newline && !result.ends_with('\n') {
+    // Trailing-newline fixup, applied only when the last element is a staged workdir
+    // token — which also means the result is non-empty and at least one line was
+    // staged. A preserved base token is byte-exact already, and overriding it destroys
+    // a base last line that merely regained its newline.
+    if last_from_workdir {
+        if work_has_trailing_newline && !result.ends_with('\n') {
             result.push('\n');
-        } else if !should_have_trailing_newline && result.ends_with('\n') {
+        } else if !work_has_trailing_newline && result.ends_with('\n') {
             result.pop();
         }
     }
@@ -227,16 +231,16 @@ pub(crate) fn stage_lines(
 fn flush_stage_run<'a>(
     deletes: &mut Vec<(&'a str, bool)>,
     inserts: &mut Vec<(&'a str, bool)>,
-    out: &mut Vec<&'a str>,
+    out: &mut Vec<(&'a str, bool)>,
     lines_staged: &mut u32,
 ) {
     for i in 0..deletes.len().max(inserts.len()) {
         if let Some(&(value, true)) = inserts.get(i) {
-            out.push(value);
+            out.push((value, true));
             *lines_staged += 1;
         }
         if let Some(&(value, true)) = deletes.get(i) {
-            out.push(value);
+            out.push((value, false));
         }
     }
     deletes.clear();
@@ -474,11 +478,16 @@ struct NewSideContext<'a, F: Fn(u32) -> bool> {
 /// Select lines from one replace-run (a maximal span of non-context lines).
 ///
 /// A `path:A-B` range names new-side lines only, so a deletion can never be
-/// named directly. The i-th deletion in a run is therefore paired with the i-th
-/// addition and is selected only when that addition is selected. Without the
-/// pairing, one selected addition anywhere in the run would drag every deletion
-/// in with it and the unselected originals would vanish from the staged blob —
-/// silent data loss.
+/// named directly. Each deletion in a run is therefore paired with an addition
+/// and is selected only when that addition is selected. Without the pairing, one
+/// selected addition anywhere in the run would drag every deletion in with it
+/// and the unselected originals would vanish from the staged blob — silent data
+/// loss.
+///
+/// The partner is the first addition with identical content, falling back to the
+/// i-th addition. Content is stored newline-trimmed, so a base last line that
+/// merely regained its terminator (`-b` / `+b` around an inserted `+Y`) pairs
+/// with its own replacement rather than with the genuine insertion beside it.
 ///
 /// Ragged runs:
 /// - More deletions than additions (net removal): surplus deletions pair with
@@ -519,12 +528,14 @@ fn select_replace_run<F: Fn(u32) -> bool>(
     let in_any = ctx.in_range;
     let mut new_cursor = new_start;
     let mut addition_selected: Vec<bool> = Vec::new();
+    let mut addition_content: Vec<&str> = Vec::new();
     for line in run.iter().filter(|l| l.origin == LineOrigin::Addition) {
         let selected = in_any(new_cursor);
         if selected {
             sel.new_lines.insert(line.line_number);
         }
         addition_selected.push(selected);
+        addition_content.push(line.content.as_str());
         new_cursor = new_cursor.saturating_add(1);
     }
 
@@ -546,8 +557,12 @@ fn select_replace_run<F: Fn(u32) -> bool>(
         .filter(|l| l.origin == LineOrigin::Deletion)
         .enumerate()
     {
+        let partner = addition_content
+            .iter()
+            .position(|content| *content == line.content)
+            .unwrap_or(i);
         let selected = addition_selected
-            .get(i)
+            .get(partner)
             .or_else(|| addition_selected.last())
             .copied()
             .unwrap_or(gap_selected);
@@ -1815,8 +1830,9 @@ mod tests {
 
         let sel = line_selection_for(&scan, &resolved, 25);
 
-        // hunk[0] deletion at old-line 5 → in old_lines (old_cursor hits 5 which is in [1..10] via
-        // the Deletion branch checking old_cursor).
+        // hunk[0] deletion at old-line 5 → in old_lines: the run has no addition with matching
+        // content, so it pairs positionally with the run's single addition, which the range
+        // selected at new-line 5.
         assert!(
             sel.old_lines.contains(&5),
             "old-line 5 must be gated for deletion"
