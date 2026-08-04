@@ -23,7 +23,7 @@ pub fn create_backup(repo: &Repository) -> Result<BackupInfo, PgsError> {
 
     let mut hasher = Sha256::new();
     hasher.update(&index_content);
-    let index_checksum = format!("{:x}", hasher.finalize());
+    let index_checksum = crate::hex_lower(&hasher.finalize());
 
     let timestamp = Utc::now().format("%Y%m%dT%H%M%S");
     let uuid = Uuid::new_v4();

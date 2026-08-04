@@ -293,7 +293,7 @@ mod tests {
     fn build_index_entry_new_file_uses_default_mode() {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
-        let oid = git2::Oid::zero();
+        let oid = git2::Oid::ZERO_SHA1;
         let entry = build_index_entry(&index, "new_file.rs", oid, 42, None);
         assert_eq!(entry.mode, 0o100_644);
         assert_eq!(entry.flags, 0);
@@ -305,7 +305,7 @@ mod tests {
     fn build_index_entry_existing_file_preserves_mode() {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
-        let oid = git2::Oid::zero();
+        let oid = git2::Oid::ZERO_SHA1;
         let entry = build_index_entry(&index, "file.txt", oid, 10, None);
         assert_eq!(entry.mode, 0o100_644);
     }
@@ -314,7 +314,7 @@ mod tests {
     fn build_index_entry_mode_override_applies() {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
-        let oid = git2::Oid::zero();
+        let oid = git2::Oid::ZERO_SHA1;
         let entry = build_index_entry(&index, "file.txt", oid, 10, Some(0o100_755));
         assert_eq!(entry.mode, 0o100_755);
     }
@@ -323,7 +323,7 @@ mod tests {
     fn build_index_entry_mode_override_new_file() {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
-        let oid = git2::Oid::zero();
+        let oid = git2::Oid::ZERO_SHA1;
         let entry = build_index_entry(&index, "new_file.rs", oid, 42, Some(0o100_755));
         assert_eq!(entry.mode, 0o100_755);
     }

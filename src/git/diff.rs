@@ -403,8 +403,7 @@ fn compute_file_checksum(repo: &Repository, path: &str) -> String {
 
 /// Return the full 64-char lowercase hex SHA-256 of `data`.
 fn hex_sha256(data: &[u8]) -> String {
-    let digest = Sha256::digest(data);
-    format!("{digest:x}")
+    crate::hex_lower(&Sha256::digest(data))
 }
 
 #[cfg(test)]
@@ -954,7 +953,7 @@ mod tests {
         // Checksum must be SHA-256 of the link-target string bytes, not the target file content.
         let mut hasher = Sha256::new();
         hasher.update(b"target.bin");
-        let expected = format!("{:x}", hasher.finalize());
+        let expected = crate::hex_lower(&hasher.finalize());
         assert_eq!(
             file.file_checksum, expected,
             "checksum should be SHA-256 of link-target bytes"

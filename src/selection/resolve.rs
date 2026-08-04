@@ -296,7 +296,7 @@ pub fn validate_freshness(
 
     let mut hasher = Sha256::new();
     hasher.update(&content);
-    let digest = format!("{:x}", hasher.finalize());
+    let digest = crate::hex_lower(&hasher.finalize());
 
     if digest != file_info.file_checksum {
         return Err(PgsError::StaleScan {
@@ -615,7 +615,7 @@ mod tests {
 
         let mut hasher = sha2::Sha256::new();
         hasher.update(content);
-        let checksum = format!("{:x}", hasher.finalize());
+        let checksum = crate::hex_lower(&hasher.finalize());
 
         let scan = ScanResult {
             files: vec![FileInfo {
@@ -877,7 +877,7 @@ mod tests {
         // Compute the expected checksum: SHA-256 of the link-target string bytes.
         let mut hasher = Sha256::new();
         hasher.update(link_target.as_bytes());
-        let checksum = format!("{:x}", hasher.finalize());
+        let checksum = crate::hex_lower(&hasher.finalize());
 
         let scan = ScanResult {
             files: vec![FileInfo {
