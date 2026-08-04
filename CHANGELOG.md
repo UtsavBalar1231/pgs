@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-04
+
+### Added
+
+- `pgs-mcp` answers `server/discover`, the MCP `2026-07-28` replacement for
+  `initialize`. It reports `supportedVersions`, capabilities, instructions,
+  `ttlMs`, and `cacheScope`.
+- `tools/list` now carries `ttlMs: 3600000` and `cacheScope: "public"`; every
+  result carries `resultType: "complete"`. Both are required by `2026-07-28`.
+- The server now sends `instructions` describing the scan → stage → commit
+  workflow, hunk-id staleness, and the `expected_checksums` drift guard. It
+  previously sent none.
+
+### Changed
+
+- Upgraded `rmcp` from 1.2 to 3.1 and moved the MCP protocol version from
+  `2025-11-25` to `2026-07-28`. The server is modern-only: it advertises
+  `["2026-07-28"]` and clients on an older revision are not supported. A
+  request declaring an older version in `_meta` is rejected with `-32022`, and
+  an `initialize` asking for one is answered with `2026-07-28` rather than the
+  requested revision.
+- Under `2026-07-28`, `protocolVersion` and `clientCapabilities` move into
+  per-request `_meta`; a request that omits them is rejected with `-32602`.
+- MSRV raised from 1.85 to 1.88, required by `rmcp` 3.1.
+- Upgraded `git2` 0.20 to 0.21, `sha2` 0.10 to 0.11, `similar` 2 to 3, and
+  `clap` 4.5 to 4.6. Hunk IDs, hunk checksums, and file checksums are
+  byte-identical across the upgrade; the content-addressed output contract is
+  unchanged.
+
+### Removed
+
+- MCP task support. `tasks/list`, `tasks/get`, `tasks/result`, and
+  `tasks/cancel` now return `-32601`, and the per-tool `task_support` annotation
+  is gone. `2026-07-28` moved tasks out of the core spec into a separate draft
+  extension. Read every tool result from the `tools/call` response directly.
+- Advertised capabilities are now exactly `{"tools":{}}`.
+
+### Fixed
+
+- Line-range staging no longer drops content. Staging a subset of a contiguous
+  replace-run (adjacent modified lines) deleted the unselected lines' original
+  content instead of preserving it, so `pgs stage f.txt:2-3` over a three-line
+  replacement silently lost the third line. Within a replace-run the i-th
+  deletion now pairs with the i-th addition and is staged only when that
+  addition is selected. `pgs unstage` shared the same selection path and is
+  fixed with it.
+- MCP mutation lanes now order by arrival sequence rather than request id. The
+  derived ordering compared the request id first, so FIFO held only because
+  clients happen to send monotonically increasing ids, and a numeric id always
+  sorted ahead of a string one.
+- A reused in-flight request id no longer orphans a pending mutation slot. The
+  displaced registration is now cancelled; previously it left an unreachable
+  entry in the lane queue and stalled every later mutation on that repository.
+
+Unchanged: all 10 tools, their input schemas, their `ToolAnnotations`, and the
+per-repo serialization of `pgs_stage`/`pgs_unstage`/`pgs_commit`.
+
 ## 0.5.0 - 2026-06-27
 
 ### Added
