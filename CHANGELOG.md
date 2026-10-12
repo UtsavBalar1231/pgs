@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.9.0 - 2026-10-13
+
+### Breaking
+
+- `pgs commit` refuses with `commit_hooks_present` (exit 2) when the
+  repository has an active pre-commit, prepare-commit-msg or commit-msg hook
+  (in `core.hooksPath` or the common git dir; executable on Unix; samples never
+  count). libgit2 runs no hooks, so pgs used to skip them silently. Pass
+  `--no-verify` (MCP: `no_verify`) to commit anyway, as `git commit
+  --no-verify` would.
+- `items[*].lines_affected` on `stage` and `unstage` now counts changed lines,
+  the additions plus the deletions a selection carries, and a dry run reports
+  the same number as the real run. It used to be the file's total line count
+  for a whole-file stage, 0 for a deletion-only hunk, and a range's width for a
+  line range.
+- `split-hunk` ranges are now always workdir (new-side) selector ranges that
+  stage exactly their run. Deletion and mixed runs used to mix old-side and
+  new-side line numbers, so feeding a range back to `stage` could select lines
+  the run never touched. A deletion that empties the file is reported as `0-0`.
+- A path that changed between a regular file and a symlink is one `TypeChanged`
+  entry, staged and unstaged whole, instead of a `Deleted` and an `Added` entry
+  for the same path; staging the old pair left the path both deleted and
+  untracked. Hunk and line selectors on it return `granular_on_whole_file`.
+- Index backup ids are `backup-<UTC second>-<micros>-<pid>-<seq>`, and the
+  `.json` sidecar is no longer written. Older ids still restore.
+
+### Added
+
+- `pgs plan-apply` / MCP `pgs_plan_apply`: commit a `CommitPlan` end to end,
+  one planned commit at a time, each staged and committed atomically. It
+  refuses before writing anything when the plan cannot finish, follows hunk ids
+  across the earlier commits of the same run, and when a later commit fails it
+  keeps the earlier ones and reports exactly which were created.
+- `pgs commit <selections>` (MCP `pgs_commit` `selections`, `exclude`,
+  `expected_checksums`) stages and commits in one call, and restores the index
+  if the commit then fails.
+- `pgs status --full` (MCP `pgs_status` `full`) lists staged hunks with the ids
+  `unstage` accepts. Unstaging by hunk id was documented but no command
+  reported those ids.
+- Releases ship a `.tar.gz` or `.zip` archive and an MCP Bundle (`.mcpb`) per
+  target, `cargo binstall` metadata, and build-provenance attestations.
+- `docs/INTEGRATIONS.md` documents a Claude Code status line showing staged
+  and unstaged counts.
+
+### Fixed
+
+- `plan-check` honours each commit's `exclude`, so a file selection that
+  excludes the hunk an earlier commit takes no longer reports an overlap.
+- `pgs-mcp` runs same-repository mutations in arrival order: a `pgs_commit`
+  pipelined right behind a `pgs_stage` could run first on the multi-threaded
+  runtime. Mutations are serialized by a per-repository lock, which also fixes
+  a slot leak that blocked every later mutation after an early-rejected
+  request.
+- The text summary of a dry-run `pgs_stage` or `pgs_unstage` says the index is
+  unchanged instead of reading like a real mutation.
+- `.git/pgs/backups/` keeps the newest 50 backups instead of growing without
+  bound.
+
+### Removed
+
+- The unused library functions `stage_hunk` and `unstage_hunk`; hunk-id
+  selections go through the same path as every other selector.
+
 ## 0.8.0 - 2026-10-13
 
 ### Breaking
