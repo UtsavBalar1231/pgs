@@ -92,7 +92,7 @@ exit code is fixed per code.
 | `unsupported_entry` | 2 | The path is a submodule (gitlink), which pgs cannot stage. |
 | `stale_scan` | 3 | The file changed on disk since the scan, or its checksum differs from `--expect`. Re-run `scan` and retry. |
 | `index_locked` | 3 | Another process holds `index.lock`. Retry. |
-| `restore_failed` | 4 | The operation failed and restoring the backup also failed. The index may be inconsistent; the error carries a `backup_id` for manual recovery from `.git/pgs/backups/`. |
+| `restore_failed` | 4 | The operation failed and restoring the backup also failed. The index may be inconsistent; the error carries a `backup_id` for manual recovery from `.git/pgs/backups/`, which keeps the newest 50 backups. |
 | `workdir_mismatch` | 4 | libgit2 resolved a different working directory than expected (non-standard `.git` layout). |
 | `git_error` | 4 | libgit2 returned an error not covered by a more specific code. |
 | `io_error` | 4 | A filesystem operation failed on a path pgs chose. |

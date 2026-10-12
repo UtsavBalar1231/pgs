@@ -407,17 +407,28 @@ workdir, so a workdir checksum is meaningless there.
 Implementation: `src/selection/resolve.rs::validate_freshness`; call site:
 `src/cmd/stage.rs`.
 
+## Index backups
+
+`backup::create_backup` (`src/safety/backup.rs`) copies the index to
+`.git/pgs/backups/<id>.index` before every stage and unstage, and returns the id. There is no
+metadata file: restore keys on the file name alone, and `cp .git/pgs/backups/<id>.index
+.git/index` is the manual recovery path reported by `restore_failed`.
+
+Ids have the form `backup-<UTC YYYYmmddTHHMMSS>-<micros>-<pid>-<seq>` and sort in creation
+order. The per-process sequence number keeps backups taken in the same microsecond distinct
+and ordered; the pid keeps concurrent pgs processes apart.
+
+**Retention.** After a backup is written, `prune_backups` keeps the newest
+`BACKUPS_RETAINED` (50) `backup-*.index` files and deletes the rest, along with any
+`backup-*.json` sidecars written by older pgs versions. The backup just taken is never
+pruned. Pruning is best-effort: a failure to delete an old file is ignored and does not fail
+the staging operation.
+
 ## Deferred / future work
 
 The following are known gaps that are **not** addressed in the current codebase. They are
 recorded here so they are not forgotten and so maintainers can make informed decisions before
 enabling concurrent or long-running use cases.
-
-**Backup GC** — `backup::create_backup` (`src/safety/backup.rs`) writes two files per
-operation under `.git/pgs/backups/` (a `.index` snapshot and a `.json` metadata file). There
-is no TTL, count cap, or cleanup path anywhere in `src/safety/backup.rs`. In a long-lived
-repository with heavy usage the backup directory grows without bound. A future implementation
-should prune backups older than a configurable TTL or beyond a rolling count limit.
 
 **Index lock during restore** — `backup::restore_backup` (`src/safety/backup.rs`) writes
 the restored index via a plain `fs::write` with no lock file. A concurrent git process could
