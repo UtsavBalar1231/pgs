@@ -16,8 +16,8 @@ use crate::git::{
     read_index_blob, read_workdir_for_blob, read_workdir_for_index, replace_run_partners,
 };
 use crate::models::{
-    DiffLineInfo, HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine,
-    ResolvedSelection, ScanResult,
+    DiffLineInfo, LineOrigin, LineRange, OperationPreview, PreviewLine, ResolvedSelection,
+    ScanResult,
 };
 use crate::saturating_u32;
 
@@ -168,38 +168,6 @@ pub(crate) fn stage_lines(
     index.write()?;
 
     Ok(lines_staged)
-}
-
-/// Stage a single hunk by partitioning its lines into a [`LineSelection`].
-///
-/// `Addition` lines → `sel.new_lines` (workdir-side line numbers, gate Insert ops).
-/// `Deletion` lines → `sel.old_lines` (HEAD/index-side line numbers, gate Delete ops).
-/// `Context` lines are skipped — they never need gating.
-///
-/// Delegates to [`stage_lines`].
-///
-/// # Errors
-///
-/// Propagates all errors from [`stage_lines`].
-pub fn stage_hunk(
-    repo: &Repository,
-    file_path: &str,
-    hunk: &HunkInfo,
-    mode_override: Option<u32>,
-) -> Result<u32, PgsError> {
-    let mut sel = LineSelection::default();
-    for line in &hunk.lines {
-        match line.origin {
-            LineOrigin::Addition => {
-                sel.new_lines.insert(line.line_number);
-            }
-            LineOrigin::Deletion => {
-                sel.old_lines.insert(line.line_number);
-            }
-            LineOrigin::Context => {}
-        }
-    }
-    stage_lines(repo, file_path, &sel, mode_override)
 }
 
 /// Inputs for [`preview_stage`] — bundled to keep the function under four params.
@@ -923,63 +891,6 @@ mod tests {
     }
 
     #[test]
-    fn stage_hunk_with_pure_deletion_removes_line() {
-        // stage_hunk ignores Deletion-origin lines when building selected_lines.
-        // Deleting the last line exposes this: old_lineno=5 is never in the context
-        // new_linenos {2,3,4}, so stage_lines keeps the HEAD line unchanged.
-        let head = "line1\nline2\nline3\nline4\nline5\n";
-        let workdir = "line1\nline2\nline3\nline4\n"; // line5 (last) deleted
-        let (dir, repo) = setup_repo_with_commit(&[("file.txt", head)]);
-
-        fs::write(dir.path().join("file.txt"), workdir).expect("write");
-
-        // Scan the actual diff to get real hunk metadata from the diff engine
-        let diff = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff");
-        let scan = crate::git::diff::build_scan_result(&repo, &diff, None).expect("scan");
-
-        assert_eq!(scan.files.len(), 1, "expected 1 changed file");
-        assert!(!scan.files[0].hunks.is_empty(), "expected at least 1 hunk");
-
-        let hunk = &scan.files[0].hunks[0];
-        stage_hunk(&repo, "file.txt", hunk, None).expect("stage_hunk");
-
-        let staged = read_index_content(&repo, "file.txt");
-        let staged_text = String::from_utf8(staged).expect("utf8");
-        // line5 should be gone from the index
-        assert_eq!(
-            staged_text, workdir,
-            "index should match workdir after staging deletion hunk, got: {staged_text:?}"
-        );
-    }
-
-    #[test]
-    fn stage_hunk_with_deletion_in_substitution_applies_both() {
-        // bbb replaced with BBB — this is a delete+insert in one hunk.
-        // Checks that stage_hunk correctly handles the substitution.
-        let head = "aaa\nbbb\nccc\n";
-        let workdir = "aaa\nBBB\nccc\n";
-        let (dir, repo) = setup_repo_with_commit(&[("file.txt", head)]);
-
-        fs::write(dir.path().join("file.txt"), workdir).expect("write");
-
-        let diff = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff");
-        let scan = crate::git::diff::build_scan_result(&repo, &diff, None).expect("scan");
-
-        assert_eq!(scan.files.len(), 1, "expected 1 changed file");
-        assert!(!scan.files[0].hunks.is_empty(), "expected at least 1 hunk");
-
-        let hunk = &scan.files[0].hunks[0];
-        stage_hunk(&repo, "file.txt", hunk, None).expect("stage_hunk");
-
-        let staged = read_index_content(&repo, "file.txt");
-        let staged_text = String::from_utf8(staged).expect("utf8");
-        assert_eq!(
-            staged_text, workdir,
-            "index should match workdir after staging substitution hunk, got: {staged_text:?}"
-        );
-    }
-
-    #[test]
     fn stage_lines_sequential_without_commit_preserves_both() {
         // Reproduce bug: second stage_lines reads HEAD (not updated index),
         // so it overwrites the first call's result.
@@ -1047,148 +958,6 @@ mod tests {
             staged_text.contains("CHANGED 30"),
             "second hunk change should be staged; got: {staged_text:?}"
         );
-    }
-
-    #[test]
-    fn stage_hunk_multi_hunk_sequential_with_commits_no_phantom() {
-        // Bug: stage_hunk ignores Deletion-origin lines. When one of the two hunks is
-        // a pure end-of-file deletion (old_lineno not in context new_linenos), staging
-        // it leaves the index unchanged. The commit captures nothing for that hunk,
-        // and the final scan still reports a file — a phantom hunk.
-        let head: String = (1..=30).fold(String::new(), |mut s, i| {
-            use std::fmt::Write;
-            let _ = writeln!(s, "line {i}");
-            s
-        });
-        let workdir = {
-            let mut s = head.clone();
-            // Hunk 0: substitution at line 1 (works fine — Addition covers it)
-            s = s.replacen("line 1\n", "CHANGED 1\n", 1);
-            // Hunk 1: pure deletion of line 30 (last) — exposes the bug
-            s = s.replacen("line 30\n", "", 1);
-            s
-        };
-        let (dir, repo) = setup_repo_with_commit(&[("multi.txt", &head)]);
-        fs::write(dir.path().join("multi.txt"), &workdir).expect("write");
-
-        // First scan → 2 hunks
-        let diff = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff");
-        let scan = crate::git::diff::build_scan_result(&repo, &diff, None).expect("scan");
-        assert!(
-            scan.files[0].hunks.len() >= 2,
-            "expected 2 hunks initially, got {}",
-            scan.files[0].hunks.len()
-        );
-
-        // Stage hunk[0] (substitution) and commit
-        stage_hunk(&repo, "multi.txt", &scan.files[0].hunks[0], None).expect("stage hunk0");
-        {
-            let tree_oid = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_oid).unwrap();
-            let sig = repo.signature().unwrap();
-            let parent = repo.head().unwrap().peel_to_commit().unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "stage hunk0", &tree, &[&parent])
-                .unwrap();
-        }
-
-        // Re-scan — should have exactly 1 hunk remaining (the deletion)
-        let diff2 = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff2");
-        let scan2 = crate::git::diff::build_scan_result(&repo, &diff2, None).expect("scan2");
-        assert_eq!(
-            scan2.files.len(),
-            1,
-            "expected 1 file with remaining deletion hunk after first commit"
-        );
-
-        // Stage the remaining pure-deletion hunk and commit
-        stage_hunk(&repo, "multi.txt", &scan2.files[0].hunks[0], None)
-            .expect("stage deletion hunk");
-        {
-            let tree_oid = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_oid).unwrap();
-            let sig = repo.signature().unwrap();
-            let parent = repo.head().unwrap().peel_to_commit().unwrap();
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "stage deletion hunk",
-                &tree,
-                &[&parent],
-            )
-            .unwrap();
-        }
-
-        // Final scan — should be empty; bug causes phantom hunk to remain
-        let diff3 = crate::git::diff::diff_index_to_workdir(&repo, 3).expect("diff3");
-        let scan3 = crate::git::diff::build_scan_result(&repo, &diff3, None).expect("scan3");
-        assert_eq!(
-            scan3.files.len(),
-            0,
-            "expected 0 files after staging all hunks and committing, got {:?}",
-            scan3.files.iter().map(|f| &f.path).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn stage_hunk_delegates_to_stage_lines() {
-        let original = "aaa\nbbb\nccc\nddd\n";
-        let modified = "aaa\nBBB\nccc\nDDD\n";
-        let (dir, repo) = setup_repo_with_commit(&[("file.txt", original)]);
-
-        fs::write(dir.path().join("file.txt"), modified).expect("write");
-
-        // Create a hunk that covers only lines 1-3 (aaa, BBB, ccc) in the new file.
-        // Line 2 is the only Addition; lines 1 and 3 are Context.
-        let hunk = HunkInfo {
-            hunk_id: "test_hunk".into(),
-            old_start: 1,
-            old_lines: 3,
-            new_start: 1,
-            new_lines: 3,
-            header: "@@ -1,3 +1,3 @@".into(),
-            lines: vec![
-                crate::models::DiffLineInfo {
-                    line_number: 1,
-                    origin: LineOrigin::Context,
-                    content: "aaa".into(),
-                },
-                crate::models::DiffLineInfo {
-                    line_number: 2,
-                    origin: LineOrigin::Deletion,
-                    content: "bbb".into(),
-                },
-                crate::models::DiffLineInfo {
-                    line_number: 2,
-                    origin: LineOrigin::Addition,
-                    content: "BBB".into(),
-                },
-                crate::models::DiffLineInfo {
-                    line_number: 3,
-                    origin: LineOrigin::Context,
-                    content: "ccc".into(),
-                },
-            ],
-            checksum: "test".into(),
-            whitespace_only: false,
-        };
-
-        let count = stage_hunk(&repo, "file.txt", &hunk, None).expect("stage_hunk");
-
-        // Should stage line 2 (BBB) but NOT line 4 (DDD) since it's outside the hunk
-        assert!(count > 0, "should have staged at least one line");
-        let staged = read_index_content(&repo, "file.txt");
-        let staged_text = String::from_utf8(staged).expect("utf8");
-        // BBB should be staged, DDD should not (stays as ddd from HEAD)
-        assert!(
-            staged_text.contains("BBB"),
-            "BBB should be staged, got: {staged_text:?}"
-        );
-        assert!(
-            staged_text.contains("ddd"),
-            "ddd should remain (DDD not selected), got: {staged_text:?}"
-        );
-        assert_eq!(staged_text, "aaa\nBBB\nccc\nddd\n");
     }
 
     #[cfg(unix)]

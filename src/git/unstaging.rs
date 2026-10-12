@@ -12,7 +12,6 @@ use crate::git::{
     LineSelection, build_index_entry, flush_replace_run, read_head_blob, read_head_mode,
     read_index_blob,
 };
-use crate::models::{HunkInfo, LineOrigin};
 use crate::saturating_u32;
 
 /// Unstage an entire file — restore the index entry to match HEAD.
@@ -154,34 +153,6 @@ pub fn unstage_lines(
     index.write()?;
 
     Ok(lines_affected)
-}
-
-/// Unstage a single hunk by partitioning its lines into old/new coordinate spaces.
-///
-/// For a HEAD→index diff: `Addition` lines carry index-side (new) line numbers;
-/// `Deletion` lines carry HEAD-side (old) line numbers. Partitioning into
-/// `LineSelection` prevents the coordinate-conflation bug where a HEAD-old line
-/// number accidentally aliases an index-new line number in a shared set.
-///
-/// Returns the number of lines affected.
-///
-/// # Errors
-///
-/// Returns any error from `unstage_lines`.
-pub fn unstage_hunk(repo: &Repository, file_path: &str, hunk: &HunkInfo) -> Result<u32, PgsError> {
-    let mut sel = LineSelection::default();
-    for line in &hunk.lines {
-        match line.origin {
-            LineOrigin::Addition => {
-                sel.new_lines.insert(line.line_number);
-            }
-            LineOrigin::Deletion => {
-                sel.old_lines.insert(line.line_number);
-            }
-            LineOrigin::Context => {}
-        }
-    }
-    unstage_lines(repo, file_path, &sel)
 }
 
 /// Count the number of lines in a byte slice (for reporting).
@@ -395,133 +366,6 @@ mod tests {
         };
         unstage_lines(&repo, "f.txt", &terminator_change).expect("unstage line 1");
         assert_eq!(read_index_content(&repo, "f.txt").expect("in index"), "aaa");
-    }
-
-    #[test]
-    fn unstage_hunk_with_pure_deletion_restores_line() {
-        // Reproduce bug: unstage_hunk collects Addition+Deletion line numbers.
-        // For a pure deletion staged hunk, only Deletion lines exist.
-        // The line_number for a Deletion in a HEAD→index diff uses old_lineno (HEAD side),
-        // but unstage_lines looks for old_line numbers in selected_lines to restore them.
-        // Verify the full round-trip: stage deletion → unstage hunk → index restored.
-        let (dir, repo) = setup_repo_with_commit(&[("f.txt", "line1\nline2\nline3\n")]);
-
-        // Stage the deletion of line2 into the index
-        stage_content(&repo, dir.path(), "f.txt", "line1\nline3\n");
-
-        // Verify the deletion is staged
-        let staged_before = read_index_content(&repo, "f.txt").expect("in index");
-        assert_eq!(staged_before, "line1\nline3\n", "deletion should be staged");
-
-        // Build the HEAD→index diff to get the actual hunk metadata
-        let diff = crate::git::diff::diff_head_to_index(&repo, 3).expect("diff");
-        let count = diff.deltas().count();
-        assert_eq!(count, 1, "expected 1 staged delta");
-
-        let patch = git2::Patch::from_diff(&diff, 0)
-            .expect("patch from diff")
-            .expect("patch is Some");
-        assert!(patch.num_hunks() >= 1, "expected at least 1 hunk");
-
-        // Extract hunk info manually (same logic as build_scan_result)
-        let (hunk_header, _) = patch.hunk(0).expect("hunk 0");
-        let line_count = patch.num_lines_in_hunk(0).expect("line count");
-        let mut lines = Vec::new();
-        for l in 0..line_count {
-            let line = patch.line_in_hunk(0, l).expect("line");
-            let origin = match line.origin_value() {
-                git2::DiffLineType::Context => crate::models::LineOrigin::Context,
-                git2::DiffLineType::Addition => crate::models::LineOrigin::Addition,
-                git2::DiffLineType::Deletion => crate::models::LineOrigin::Deletion,
-                _ => continue,
-            };
-            let line_number = match origin {
-                crate::models::LineOrigin::Deletion => line.old_lineno().unwrap_or(0),
-                crate::models::LineOrigin::Context | crate::models::LineOrigin::Addition => {
-                    line.new_lineno().unwrap_or(0)
-                }
-            };
-            lines.push(crate::models::DiffLineInfo {
-                line_number,
-                origin,
-                content: std::str::from_utf8(line.content())
-                    .unwrap_or("")
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r')
-                    .to_string(),
-            });
-        }
-
-        let hunk = crate::models::HunkInfo {
-            hunk_id: "test_deletion_hunk".into(),
-            old_start: hunk_header.old_start(),
-            old_lines: hunk_header.old_lines(),
-            new_start: hunk_header.new_start(),
-            new_lines: hunk_header.new_lines(),
-            header: String::from_utf8_lossy(hunk_header.header())
-                .trim_end()
-                .to_string(),
-            lines,
-            checksum: "test".into(),
-            whitespace_only: false,
-        };
-
-        // Verify the hunk contains a deletion line (line2 was deleted from index)
-        let has_deletion = hunk
-            .lines
-            .iter()
-            .any(|l| l.origin == crate::models::LineOrigin::Deletion);
-        assert!(has_deletion, "hunk should contain a deletion line");
-
-        // Unstage the deletion hunk — should restore line2 in the index
-        let affected = unstage_hunk(&repo, "f.txt", &hunk).expect("unstage_hunk");
-        assert!(affected > 0, "should have affected at least one line");
-
-        // Index should now match HEAD content
-        let after = read_index_content(&repo, "f.txt").expect("in index after unstage");
-        assert_eq!(
-            after, "line1\nline2\nline3\n",
-            "index should be restored to HEAD after unstaging deletion hunk"
-        );
-    }
-
-    #[test]
-    fn unstage_hunk_delegates_to_unstage_lines() {
-        // HEAD: "alpha\nbeta\ngamma\n"
-        // Index: "alpha\nBETA\ngamma\n"
-        // Hunk describes the change from beta->BETA.
-        let (dir, repo) = setup_repo_with_commit(&[("h.txt", "alpha\nbeta\ngamma\n")]);
-        stage_content(&repo, dir.path(), "h.txt", "alpha\nBETA\ngamma\n");
-
-        let hunk = HunkInfo {
-            hunk_id: "test_hunk".into(),
-            old_start: 2,
-            old_lines: 1,
-            new_start: 2,
-            new_lines: 1,
-            header: "@@ -2,1 +2,1 @@".into(),
-            lines: vec![
-                crate::models::DiffLineInfo {
-                    line_number: 2,
-                    origin: LineOrigin::Deletion,
-                    content: "beta".into(),
-                },
-                crate::models::DiffLineInfo {
-                    line_number: 2,
-                    origin: LineOrigin::Addition,
-                    content: "BETA".into(),
-                },
-            ],
-            checksum: "test_checksum".into(),
-            whitespace_only: false,
-        };
-
-        let lines = unstage_hunk(&repo, "h.txt", &hunk).expect("unstage_hunk");
-        assert!(lines > 0, "should have affected lines");
-
-        // Verify index is restored to HEAD content
-        let result = read_index_content(&repo, "h.txt").expect("in index");
-        assert_eq!(result, "alpha\nbeta\ngamma\n");
     }
 
     #[test]

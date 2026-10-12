@@ -176,7 +176,7 @@ the index unchanged:
 - **Non-file entries** (`UnsupportedEntry`, exit 2): a submodule records a commit,
   not content, so there is no blob to build. Sockets and fifos take the same path.
 
-- **Mode changes propagate through partial staging**: `stage_lines` and `stage_hunk`
+- **Mode changes propagate through partial staging**: `stage_lines` and `stage_file`
   accept `mode_override: Option<u32>`, which flows into `build_index_entry`. A file
   whose permission bits changed is therefore staged with the new mode even when only
   some lines are selected.

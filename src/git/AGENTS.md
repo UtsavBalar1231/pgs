@@ -38,11 +38,12 @@ This strategy handles file, hunk, and line-level staging uniformly.
 |----------|-------------|-------|
 | `stage_file(repo, path, mode_override)` | Whole file | Reads workdir, creates blob, updates index |
 | `stage_lines(repo, path, selected_lines, mode_override)` | Line ranges | Diffs index/HEAD vs workdir, applies only selected lines |
-| `stage_hunk(repo, path, hunk, mode_override)` | Single hunk | No production caller (`cmd/` stages hunks via `line_selection_for` + `stage_lines`); kept for its regression tests |
 | `stage_deletion(repo, path)` | Whole file | Removes entry from index |
 | `stage_rename(repo, old, new, mode_override)` | File pair | Unreachable: scan never emits renames (see ARCHITECTURE.md) |
 
-`mode_override: Option<u32>` on `stage_file`, `stage_lines`, `stage_hunk`, and `stage_rename` enables staging file permission changes (e.g. `chmod +x`).
+`mode_override: Option<u32>` on `stage_file`, `stage_lines`, and `stage_rename` enables staging file permission changes (e.g. `chmod +x`).
+
+There is no per-hunk entry point: `cmd/` turns a hunk id or line range into a `LineSelection` with `line_selection_for` and calls `stage_lines` (or `unstage_lines`).
 
 ### `unstaging.rs` — Unstage Operations
 
@@ -50,7 +51,6 @@ This strategy handles file, hunk, and line-level staging uniformly.
 |----------|-------------|-------|
 | `unstage_file(repo, path)` | Whole file | Restores index entry from HEAD blob |
 | `unstage_lines(repo, path, selected_lines)` | Line ranges | Reverse-diffs: HEAD vs index, selectively reverts |
-| `unstage_hunk(repo, path, hunk)` | Single hunk | Reverts a single hunk from the staged diff |
 
 ### `diff.rs` — Diff Engine
 
