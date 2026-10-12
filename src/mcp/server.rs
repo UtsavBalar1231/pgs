@@ -10,7 +10,7 @@ use rmcp::{
     ErrorData, ServerHandler,
     model::{
         CacheScope, CallToolRequestParams, CallToolResponse, ClientRequest, Implementation,
-        ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo,
+        ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerConfig,
         Tool,
     },
     serve_server,
@@ -27,7 +27,7 @@ use crate::{
         PlanDiffToolInput, ScanToolInput, SplitHunkToolInput, StageToolInput, StatusToolInput,
         UnstageToolInput,
     },
-    mcp::runtime::PgsMcpRuntime,
+    mcp::{SUPPORTED_PROTOCOL_VERSIONS, runtime::PgsMcpRuntime},
 };
 
 /// Cache lifetime advertised for `tools/list`, in milliseconds.
@@ -90,10 +90,9 @@ impl ServerHandler for PgsMcpServer {
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        // Narrows rmcp's default, which is every revision the SDK knows
-        // (`ProtocolVersion::KNOWN_VERSIONS`). Without this override the server
-        // would silently negotiate pre-2026-07-28 clients. Do not delete it.
-        Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+        // rmcp's default admits every revision it knows, including ones older
+        // than the structured tool output every pgs result depends on.
+        Cow::Borrowed(SUPPORTED_PROTOCOL_VERSIONS)
     }
 
     fn list_tools(
@@ -102,8 +101,8 @@ impl ServerHandler for PgsMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
         // The tool set is frozen at compile time and carries no per-user data,
-        // so any client or intermediary may cache it. 2026-07-28 requires both
-        // fields on tools/list and rmcp leaves them unset by default.
+        // so any client or intermediary may cache it. rmcp's fallback for a
+        // missing hint is `ttlMs: 0` and `cacheScope: "private"`.
         std::future::ready(Ok(ListToolsResult::with_all_items(
             contract::tool_definitions(),
         )
@@ -115,9 +114,8 @@ impl ServerHandler for PgsMcpServer {
         contract::tool_definition(name)
     }
 
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_protocol_version(ProtocolVersion::V_2026_07_28)
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("pgs-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(SERVER_INSTRUCTIONS)
     }

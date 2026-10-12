@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    call_tool, commit_file, initialize_session, list_tools, run_pgs, setup_repo, shutdown_child,
+    call_tool, commit_file, list_tools, open_session, run_pgs, setup_repo, shutdown_child,
     spawn_mcp_stdio, write_file,
 };
 use serde_json::json;
@@ -19,7 +19,7 @@ fn mcp_status_tool_matches_cli_contract() {
     run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let list_response = list_tools(&mut stdin, &mut stdout);
     assert_eq!(list_response["jsonrpc"], "2.0");
@@ -80,7 +80,7 @@ fn mcp_status_tool_empty_repo_returns_empty_success() {
     let (dir, _repo) = setup_repo();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,

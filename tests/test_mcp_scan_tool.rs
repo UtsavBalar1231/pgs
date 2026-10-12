@@ -1,8 +1,7 @@
 mod common;
 
 use common::{
-    call_tool, commit_file, initialize_session, setup_repo, shutdown_child, spawn_mcp_stdio,
-    write_file,
+    call_tool, commit_file, open_session, setup_repo, shutdown_child, spawn_mcp_stdio, write_file,
 };
 use serde_json::json;
 #[test]
@@ -18,7 +17,7 @@ fn mcp_scan_tool_compact_matches_cli_contract() {
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -76,7 +75,7 @@ fn mcp_scan_tool_full_matches_cli_contract() {
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -127,7 +126,7 @@ fn mcp_scan_tool_returns_no_effect_for_empty_repo() {
     let (dir, _repo) = setup_repo();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,

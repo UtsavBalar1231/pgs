@@ -172,8 +172,8 @@ codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
 MCP tool calls require an explicit `repo_path`. The server speaks MCP
-`2026-07-28` and nothing else; clients on an older revision are not supported.
-Advertised capabilities are exactly `{"tools":{}}` — no prompts,
+`2026-07-28` and also serves `initialize`-era clients at `2025-11-25` and
+`2025-06-18`. Advertised capabilities are exactly `{"tools":{}}` — no prompts,
 resources, logging, or tasks. For the full protocol contract and safety notes,
 see `docs/MCP_SERVER.md`.
 

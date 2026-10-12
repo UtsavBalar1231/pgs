@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    call_tool, commit_file, initialize_session, list_tools, run_pgs, setup_repo, shutdown_child,
+    call_tool, commit_file, list_tools, open_session, run_pgs, setup_repo, shutdown_child,
     spawn_mcp_stdio, write_file,
 };
 use serde_json::json;
@@ -19,7 +19,7 @@ fn mcp_commit_tool_matches_cli_contract() {
     run_pgs(dir.path(), &["stage", "hello.txt"]).success();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let list_response = list_tools(&mut stdin, &mut stdout);
     assert_eq!(list_response["jsonrpc"], "2.0");
@@ -101,7 +101,7 @@ fn mcp_commit_tool_amends_head_when_requested() {
     let old_parent_id = old_head.parent_id(0).unwrap();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -137,7 +137,7 @@ fn mcp_commit_tool_returns_no_effect_when_nothing_staged() {
     let (dir, _repo) = setup_repo();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -175,7 +175,7 @@ fn mcp_commit_tool_requires_non_empty_message() {
     let (dir, _repo) = setup_repo();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -208,7 +208,7 @@ fn mcp_commit_tool_amend_blank_message_rejected_preserving_head_message() {
     let head_before = repo.head().unwrap().peel_to_commit().unwrap().id();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -250,7 +250,7 @@ fn mcp_and_cli_blank_commit_message_agree_on_rejection() {
     let mcp_head_before = mcp_repo.head().unwrap().peel_to_commit().unwrap().id();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
     let response = call_tool(
         &mut stdin,
         &mut stdout,
@@ -275,7 +275,7 @@ fn mcp_and_cli_blank_commit_message_agree_on_rejection() {
 /// Spawn a server, issue one `pgs_commit` call, and shut down.
 fn call_commit_tool(arguments: &serde_json::Value) -> serde_json::Value {
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
     let response = call_tool(&mut stdin, &mut stdout, 3, "pgs_commit", arguments);
     shutdown_child(child);
     response

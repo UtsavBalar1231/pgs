@@ -6,7 +6,7 @@
 mod common;
 
 use common::{
-    call_tool, commit_file, initialize_session, list_tools, run_pgs, run_pgs_raw, setup_repo,
+    call_tool, commit_file, list_tools, open_session, run_pgs, run_pgs_raw, setup_repo,
     shutdown_child, spawn_mcp_stdio, write_file,
 };
 use serde_json::{Value, json};
@@ -279,7 +279,7 @@ fn split_hunk_text_markers_wrap_range_records() {
 #[test]
 fn pgs_split_hunk_mcp_tool_exposes_correct_schema() {
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = list_tools(&mut stdin, &mut stdout);
     shutdown_child(child);
@@ -340,7 +340,7 @@ fn pgs_split_hunk_mcp_tool_returns_structured_content() {
         .to_owned();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
     let response = call_tool(
         &mut stdin,
         &mut stdout,

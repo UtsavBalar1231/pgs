@@ -10,7 +10,7 @@ use std::io::Write;
 use std::process::Stdio;
 
 use common::{
-    call_tool, commit_file, initialize_session, list_tools, run_pgs, setup_repo, shutdown_child,
+    call_tool, commit_file, list_tools, open_session, run_pgs, setup_repo, shutdown_child,
     spawn_mcp_stdio, write_file,
 };
 use serde_json::{Value, json};
@@ -457,7 +457,7 @@ fn plan_check_ignores_commits_covering_untracked_files() {
 #[test]
 fn pgs_plan_check_mcp_tool_exposes_correct_schema() {
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = list_tools(&mut stdin, &mut stdout);
     shutdown_child(child);
@@ -517,7 +517,7 @@ fn pgs_plan_check_mcp_tool_returns_structured_content() {
     });
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
     let response = call_tool(
         &mut stdin,
         &mut stdout,

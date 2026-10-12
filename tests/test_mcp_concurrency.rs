@@ -12,7 +12,7 @@
 mod common;
 
 use common::{
-    collect_responses, commit_file, initialize_session, run_pgs, send_tool_call, setup_repo,
+    collect_responses, commit_file, open_session, run_pgs, send_tool_call, setup_repo,
     shutdown_child, spawn_mcp_stdio_with_env, write_file, write_json_line,
 };
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ fn mcp_mutating_requests_serialize_per_repo() {
 
     let (child, mut stdin, mut stdout) =
         spawn_mcp_stdio_with_env(&[("PGS_MCP_TEST_STAGE_DELAY_MS", "200")]);
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     send_tool_call(
         &mut stdin,
@@ -84,7 +84,7 @@ fn mcp_cancelled_mutation_leaves_index_untouched() {
 
     let (child, mut stdin, mut stdout) =
         spawn_mcp_stdio_with_env(&[("PGS_MCP_TEST_STAGE_DELAY_MS", "200")]);
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let repo_path = dir.path().display().to_string();
 

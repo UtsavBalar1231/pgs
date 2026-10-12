@@ -16,38 +16,48 @@
 
 ## Protocol Version
 
-The server speaks MCP `2026-07-28` and nothing else. Clients on an older
-revision are not supported. `server/discover` advertises exactly one version:
+`pgs-mcp` serves three MCP revisions and picks one from how the client opens
+the session:
+
+| Revision | How a client reaches it |
+|----------|-------------------------|
+| `2026-07-28` | per-request `_meta`, optionally starting with `server/discover` |
+| `2025-11-25` | `initialize` handshake |
+| `2025-06-18` | `initialize` handshake |
+
+`server/discover` advertises all three:
 
 ```json
-"supportedVersions": ["2026-07-28"]
+"supportedVersions": ["2025-06-18", "2025-11-25", "2026-07-28"]
 ```
 
-Two refusal paths, both observable on the wire:
+`2026-07-28` removed `initialize`, but as of October 2026 most clients still
+open with it: Codex CLI defaults to `2025-06-18`, VS Code Copilot to
+`2025-11-25`, and Gemini CLI ships an SDK capped at `2025-06-18`. Claude Code
+probes `server/discover` first and uses `2026-07-28`. Serving both shapes is
+what keeps one binary usable from all of them.
 
-- A request that declares a pre-`2026-07-28` version in its own `_meta` is
-  rejected with `-32022` (`Unsupported protocol version`); `error.data.supported`
-  lists the one version the server serves.
-- An `initialize` that asks for an older revision is answered with
-  `protocolVersion: "2026-07-28"`, not the requested one. Per the MCP lifecycle
-  the client must then disconnect; it is never served the older contract.
+`2025-06-18` is the floor because it introduced `outputSchema` and
+`structuredContent`, which every pgs tool result depends on.
 
-What this means in practice:
+Negotiation, as observable on the wire:
 
-- `initialize` still works. It is the legacy handshake, removed from the
-  `2026-07-28` spec but retained here because it is what the stdio session
-  negotiates on. It only ever negotiates `2026-07-28`.
-- `server/discover` is the modern replacement and is answered once the session
-  is live. It returns `supportedVersions`, `capabilities`, `instructions`,
-  `ttlMs`, and `cacheScope`.
-- Under `2026-07-28`, `protocolVersion` and `clientCapabilities` move into
-  per-request `_meta` under the keys
-  `io.modelcontextprotocol/protocolVersion` and
-  `io.modelcontextprotocol/clientCapabilities`. A `server/discover` call that
-  omits them is rejected with `-32602`.
-- The server sends `instructions` describing the scan → stage → commit workflow,
-  hunk-id staleness, and the drift guard. Clients that surface server
-  instructions get that guidance for free.
+- An `initialize` naming `2025-06-18` or `2025-11-25` is answered with that
+  revision.
+- An `initialize` naming `2026-07-28` is answered with `2025-11-25`, the newest
+  revision that still has an `initialize` handshake.
+- An `initialize` naming anything older than the floor is answered with
+  `2025-11-25`; per the MCP lifecycle the client must then disconnect if it
+  cannot speak it.
+- A request whose `_meta` declares an unsupported revision is rejected with
+  `-32022` (`Unsupported protocol version`); `error.data.supported` lists the
+  three revisions above.
+- A `2026-07-28` request must carry `io.modelcontextprotocol/protocolVersion`
+  and `io.modelcontextprotocol/clientCapabilities` in `_meta`; one that omits
+  them is rejected with `-32602`.
+
+The server sends `instructions` describing the scan → stage → commit workflow,
+hunk-id staleness, and the drift guard, under either revision.
 
 ## Supported Tools
 
@@ -70,10 +80,11 @@ All tools require `repo_path`.
 
 ## Result Envelope Fields
 
-`2026-07-28` requires two additions that `pgs-mcp` sets explicitly:
+`2026-07-28` requires two additions:
 
 - every result carries `resultType`, which is always `"complete"` — no tool
-  result is ever partial or deferred.
+  result is ever partial or deferred. Sessions opened with `initialize` predate
+  the field and do not receive it.
 - `tools/list` carries `ttlMs: 3600000` and `cacheScope: "public"`. The tool set
   is frozen at compile time and carries no per-user data, so any client or
   intermediary may cache it for an hour and share that cache across
@@ -111,18 +122,21 @@ Or add the stdio server manually in Codex without the plugin:
 codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
-Example JSON-RPC session from another project:
+Example `2026-07-28` session. There is no handshake; every request carries
+the `_meta` keys:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"other-project","version":"0.1.0"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"pgs_scan","arguments":{"repo_path":"/path/to/other/project"}}}
+{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"pgs_scan","arguments":{"repo_path":"/path/to/other/project"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
 ```
 
-Example `server/discover` call, which needs the `_meta` keys:
+Example `initialize` session at `2025-11-25`. The remaining examples use this
+shape for brevity:
 
 ```json
-{"jsonrpc":"2.0","id":3,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"other-project","version":"0.1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"pgs_scan","arguments":{"repo_path":"/path/to/other/project"}}}
 ```
 
 Example mutating call:
@@ -148,7 +162,8 @@ Example amend call:
 - keep stdout reserved for JSON-RPC messages only
 - pass an explicit `repo_path` on every tool call
 - treat `pgs_stage`, `pgs_unstage`, and `pgs_commit` as destructive operations
-- send the `_meta` protocol keys on every request when negotiating `2026-07-28`
+- on `2026-07-28`, send the `_meta` protocol keys on every request; on an
+  `initialize` session, send nothing extra
 - `tasks/*` methods return `-32601`; there is no task lifecycle to poll, so read
   every tool result from the `tools/call` response directly
 - do not assume prompts, resources, logging, HTTP, OAuth, or registry support

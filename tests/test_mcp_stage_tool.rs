@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 
 use common::{
-    call_tool, commit_file, initialize_session, list_tools, run_pgs, setup_repo, shutdown_child,
+    call_tool, commit_file, list_tools, open_session, run_pgs, setup_repo, shutdown_child,
     spawn_mcp_stdio, write_file,
 };
 use serde_json::{Value, json};
@@ -20,7 +20,7 @@ fn mcp_stage_tool_matches_cli_contract() {
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let list_response = list_tools(&mut stdin, &mut stdout);
     assert_eq!(list_response["jsonrpc"], "2.0");
@@ -104,7 +104,7 @@ fn mcp_stage_tool_dry_run_explain_returns_previews_without_mutating_index() {
     );
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -167,7 +167,7 @@ fn mcp_stage_tool_explain_requires_dry_run() {
     write_file(dir.path(), "hello.txt", "line1\nline2\n");
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -207,7 +207,7 @@ fn mcp_stage_tool_dry_run_preserves_backup_nullability() {
     write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,
@@ -259,7 +259,7 @@ fn mcp_stage_tool_surfaces_retryable_conflict() {
     fs::write(&lock_path, b"locked").unwrap();
 
     let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
-    initialize_session(&mut stdin, &mut stdout);
+    open_session(&mut stdin, &mut stdout);
 
     let response = call_tool(
         &mut stdin,

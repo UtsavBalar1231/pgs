@@ -174,8 +174,42 @@ pub fn collect_responses(stdout: &mut BufReader<ChildStdout>, count: usize) -> H
     responses
 }
 
-/// Complete the MCP handshake at the only supported protocol revision.
-pub fn initialize_session(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) -> Value {
+/// Per-request `_meta` a `2026-07-28` client attaches in place of a handshake.
+pub fn modern_meta() -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientCapabilities": {}
+    })
+}
+
+/// Open a `2026-07-28` session: `server/discover` as request id 1, no `initialize`.
+pub fn open_session(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) -> Value {
+    write_json_line(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": { "_meta": modern_meta() }
+        }),
+    );
+
+    let response = read_response(stdout);
+    assert_eq!(response["id"], 1);
+    let supported = response["result"]["supportedVersions"]
+        .as_array()
+        .expect("discover must list supported versions");
+    assert!(supported.iter().any(|v| v == MCP_PROTOCOL_VERSION));
+
+    response
+}
+
+/// Complete the `initialize` handshake an initialize-era client opens with.
+pub fn initialize_legacy_session(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    protocol_version: &str,
+) -> Value {
     write_json_line(
         stdin,
         &json!({
@@ -183,20 +217,15 @@ pub fn initialize_session(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildSt
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": protocol_version,
                 "capabilities": {},
-                "clientInfo": {
-                    "name": "pgs-test-client",
-                    "version": "0.1.0"
-                }
+                "clientInfo": { "name": "pgs-test-client", "version": "0.1.0" }
             }
         }),
     );
 
     let response = read_response(stdout);
-    assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], 1);
-    assert_eq!(response["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
 
     write_json_line(
         stdin,
@@ -217,7 +246,7 @@ pub fn list_tools(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) -
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/list",
-            "params": {}
+            "params": { "_meta": modern_meta() }
         }),
     );
 
@@ -246,7 +275,8 @@ pub fn send_tool_call(stdin: &mut ChildStdin, request_id: u64, name: &str, argum
             "method": "tools/call",
             "params": {
                 "name": name,
-                "arguments": arguments
+                "arguments": arguments,
+                "_meta": modern_meta()
             }
         }),
     );
