@@ -61,6 +61,9 @@ Notable variants added for staging safety (see `src/error.rs` for full enum):
 |---------|------|------|-------------|
 | `NonUtf8Partial` | `non_utf8_partial` | 2 | Granular staging on a non-UTF-8 file; use whole-file staging |
 | `CrlfMismatch` | `crlf_mismatch` | 2 | Cross-ending partial staging (LF base vs CRLF workdir or vice versa) |
+| `ExternalFilter` | `external_filter` | 2 | Path's `filter=` attribute names a configured driver (git-lfs, git-crypt) libgit2 cannot run |
+| `UnsupportedEntry` | `unsupported_entry` | 2 | Path is a submodule or other non-file entry |
+| `NotARepository` | `not_a_repository` | 2 | `--repo` / `repo_path` names no git repository |
 | `RestoreFailed` | `restore_failed` | 4 | Staging op failed AND automatic rollback failed; index may be inconsistent; `backup_id` in error for manual recovery from `.git/pgs/backups/` |
 
 ## Testing (TDD Enforced)
@@ -80,6 +83,8 @@ Notable variants added for staging safety (see `src/error.rs` for full enum):
 - `commit_file(repo, path, content, message)` -> write, add, commit
 - `run_pgs(repo, args)` -> run the CLI binary with `--repo <dir> --json` (use when asserting on JSON)
 - `run_pgs_raw(repo, args)` -> run the CLI binary with `--repo <dir>` only (text mode, for marker-contract tests)
+- `open_session(stdin, stdout)` -> open a `2026-07-28` MCP session; `call_tool`/`list_tools` attach `_meta` to every request
+- `initialize_legacy_session(stdin, stdout, version)` -> `initialize` handshake for `2025-06-18`/`2025-11-25` tests
 
 ## Output Contract
 
@@ -91,6 +96,9 @@ See @docs/CLI_SPEC.md for the full contract.
 
 ### E2E tests:
 `tests/test_e2e.rs` and `tests/test_output_modes.rs` use `assert_cmd`. Library-level integration tests are in `tests/test_*.rs`.
+
+### Cross-platform:
+CI runs the suite on Linux, macOS, and Windows, plus a `cargo check` on the MSRV. Gate Unix-only fixtures (symlinks, file modes) with `#[cfg(unix)]`, and pin `core.autocrlf=false` in any test repo you build by hand (`setup_repo()` already does): Windows runners set it to `true` system-wide.
 
 ### Preventing flaky tests:
 - No sleeps or hardcoded timeouts
