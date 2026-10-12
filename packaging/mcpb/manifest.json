@@ -1,0 +1,45 @@
+{
+  "manifest_version": "0.3",
+  "name": "pgs",
+  "display_name": "pgs",
+  "version": "@VERSION@",
+  "description": "Non-interactive git staging at file, hunk, and line granularity.",
+  "long_description": "pgs stages git changes at file, hunk, and line granularity without a terminal prompt. Hunks are named by content hashes, stale selections are refused, and every mutation backs up the index first. Every tool takes an explicit repo_path.",
+  "author": {
+    "name": "UtsavBalar1231",
+    "url": "https://github.com/UtsavBalar1231"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/UtsavBalar1231/pgs"
+  },
+  "homepage": "https://github.com/UtsavBalar1231/pgs",
+  "documentation": "https://github.com/UtsavBalar1231/pgs/blob/main/docs/MCP_SERVER.md",
+  "support": "https://github.com/UtsavBalar1231/pgs/issues",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/@BINARY@",
+    "mcp_config": {
+      "command": "${__dirname}/server/@BINARY@",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools": [
+    { "name": "pgs_scan" },
+    { "name": "pgs_status" },
+    { "name": "pgs_overview" },
+    { "name": "pgs_stage" },
+    { "name": "pgs_unstage" },
+    { "name": "pgs_commit" },
+    { "name": "pgs_log" },
+    { "name": "pgs_split_hunk" },
+    { "name": "pgs_plan_check" },
+    { "name": "pgs_plan_diff" }
+  ],
+  "keywords": ["git", "staging", "commit", "hunk", "mcp"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["@PLATFORM@"]
+  }
+}
