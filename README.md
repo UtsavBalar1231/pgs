@@ -1,22 +1,167 @@
 # pgs
 
-Non-interactive git staging at file, hunk, and line granularity — built for AI
-agents and scripts.
+[![CI](https://github.com/UtsavBalar1231/pgs/actions/workflows/ci.yml/badge.svg)](https://github.com/UtsavBalar1231/pgs/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/UtsavBalar1231/pgs)](https://github.com/UtsavBalar1231/pgs/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`git add -p` needs a TTY. `pgs` doesn't.
+`pgs` stages git changes at file, hunk, and line granularity without a
+terminal prompt. It is a CLI (`pgs`) and a stdio MCP server (`pgs-mcp`) built on
+one engine, plus an agent skill that teaches the scan, plan, stage, commit
+workflow. It runs on Linux, macOS, and Windows.
 
 ## Why
 
-- **`git add -p` is interactive** — AI agents and scripts have no TTY.
-- **Hand-built patches are fragile** — one off-by-one line number and
-  `git apply --cached` rejects the whole patch.
-- **`git diff` is unstructured** — no stable way to name a specific hunk across
-  commands.
+`git add -p` can be driven headlessly by piping answers into it, so lack of a
+TTY is not the problem. The problem is what the answers mean: they are
+positional, one per hunk in diff order, so any change to the diff shifts every
+later answer. A short answer list stops early, exits 0, and leaves only a subset
+staged. Hunks have no stable names, so a selection made from one `git diff`
+cannot be replayed against the next. Building a patch by hand for
+`git apply --cached --unidiff-zero` has its own failure: a patch whose header
+names the wrong line is applied at that line, silently, with exit 0.
 
-`pgs` gives every change a content-addressed hunk ID (SHA-256), stages
-atomically with automatic backup/restore, and emits structured output that both
-humans and machines can parse. It ships a CLI (`pgs`) and a stdio MCP server
-(`pgs-mcp`) over the same engine.
+`pgs` names every hunk by a 12-hex content hash, so a selection means the same
+thing until the file changes, and an ID from a stale scan is refused. `--expect`
+checksums extend that check to line ranges and refuse stale input with exit 3.
+It builds each index blob in-process with libgit2 rather than shelling out to
+`git`, backs up the index before every mutation, and restores it when anything
+fails. The MCP server and the skill let an agent do all of this without
+touching a shell.
+
+## How it compares
+
+| Tool | Granularity | How you select | Notes |
+|------|-------------|----------------|-------|
+| `git add -p` piped, `git add -e`, `git apply --cached` | hunk, line | positional answers, or a hand-built patch or edit | Scriptable, but answers and patch headers carry no stable names and a wrong position can apply with exit 0. |
+| GitButler `but` | hunk | hunk IDs | Works inside GitButler's workspace model rather than the plain git index. |
+| Jujutsu `jj split` | file, when run non-interactively | paths | Operates on jj changes. Hunk-level splits need the interactive diff editor. |
+| git-surgeon | hunk | hunk IDs hashed from file path and content | Stages, unstages, and discards hunks. |
+| git-hunk | hunk | hunk | Several unrelated projects share this name. |
+| Roasbeef/hunk | line | `file:range` | Builds a unified diff for the range and applies it with `git apply --cached`. |
+| pgs | file, hunk, line | path, 12-hex hunk ID, or `path:range` | Builds index blobs in-process, refuses stale input, ships an MCP server and a skill. |
+
+This table describes what each project documents about itself. Check their
+repositories for current behavior.
+
+## Install
+
+### Prebuilt binaries
+
+Each [GitHub release](https://github.com/UtsavBalar1231/pgs/releases/latest)
+ships both binaries for every platform, named `pgs-<target>` and
+`pgs-mcp-<target>`, plus a `SHA256SUMS` file.
+
+| Platform | `<target>` |
+|----------|------------|
+| Linux x86_64 | `x86_64-unknown-linux-musl` |
+| Linux ARM64 | `aarch64-unknown-linux-musl` |
+| macOS, Intel and Apple Silicon | `universal-apple-darwin` (or `x86_64-apple-darwin`, `aarch64-apple-darwin`) |
+| Windows x86_64 | `x86_64-pc-windows-msvc` (`.exe`) |
+| Windows ARM64 | `aarch64-pc-windows-msvc` (`.exe`, new in 0.8.0) |
+
+Linux and macOS:
+
+```bash
+TARGET=x86_64-unknown-linux-musl   # or aarch64-unknown-linux-musl, universal-apple-darwin
+BASE=https://github.com/UtsavBalar1231/pgs/releases/latest/download
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/pgs     "$BASE/pgs-$TARGET"
+curl -fsSL -o ~/.local/bin/pgs-mcp "$BASE/pgs-mcp-$TARGET"
+chmod +x ~/.local/bin/pgs ~/.local/bin/pgs-mcp
+```
+
+Windows (PowerShell):
+
+```powershell
+$Target = "x86_64-pc-windows-msvc"   # or aarch64-pc-windows-msvc
+$Base = "https://github.com/UtsavBalar1231/pgs/releases/latest/download"
+$Dir = "$env:LOCALAPPDATA\pgs\bin"
+New-Item -ItemType Directory -Force $Dir | Out-Null
+Invoke-WebRequest "$Base/pgs-$Target.exe" -OutFile "$Dir\pgs.exe"
+Invoke-WebRequest "$Base/pgs-mcp-$Target.exe" -OutFile "$Dir\pgs-mcp.exe"
+```
+
+Add the install directory to your `PATH`.
+
+### From source
+
+```bash
+cargo install --git https://github.com/UtsavBalar1231/pgs --locked
+```
+
+This installs both `pgs` and `pgs-mcp`. It needs Rust 1.88+ and a C compiler
+(for libgit2).
+
+## Use with your agent
+
+`pgs-mcp` must be on your `PATH` (or use its absolute path in the commands
+below). The skill is optional; it is what teaches an agent the workflow.
+
+**Claude Code**
+
+```text
+/plugin marketplace add UtsavBalar1231/pgs
+/plugin install pgs@pgs-marketplace
+```
+
+Or, without the plugin: `claude mcp add --transport stdio --scope user pgs -- pgs-mcp`
+
+**Codex**
+
+```bash
+codex plugin marketplace add UtsavBalar1231/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+Or register only the server: `codex mcp add pgs -- pgs-mcp`, or in
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.pgs]
+command = "pgs-mcp"
+```
+
+**Gemini CLI**
+
+```bash
+gemini extensions install https://github.com/UtsavBalar1231/pgs
+```
+
+Or register only the server: `gemini mcp add -s user pgs pgs-mcp`
+
+**GitHub Copilot CLI and VS Code**
+
+```bash
+copilot plugin install UtsavBalar1231/pgs
+code --add-mcp '{"name":"pgs","command":"pgs-mcp"}'
+```
+
+The first command reads `.claude-plugin/marketplace.json`. VS Code also accepts
+the install link
+`vscode:mcp/install?%7B%22name%22%3A%22pgs%22%2C%22command%22%3A%22pgs-mcp%22%7D`.
+
+**Cursor**
+
+Open `cursor://anysphere.cursor-deeplink/mcp/install?name=pgs&config=eyJjb21tYW5kIjoicGdzLW1jcCJ9`,
+or add this to `~/.cursor/mcp.json`:
+
+```json
+{ "mcpServers": { "pgs": { "command": "pgs-mcp" } } }
+```
+
+**Skill only.** The `git-commit-staging` skill lives at
+`plugins/pgs/skills/git-commit-staging`. Plugin installs include it. For a manual
+MCP setup, copy that directory into `~/.agents/skills/` (read by Codex, Gemini,
+Cursor, Copilot, OpenCode, Amp, Goose, Junie, Factory, Warp, Windsurf, Zed, and
+Crush), `~/.claude/skills/` (Claude Code, Cline), or `~/.kiro/skills/` (Kiro).
+
+The plugin installs register 10 MCP tools: `pgs_scan`, `pgs_status`,
+`pgs_stage`, `pgs_unstage`, `pgs_commit`, `pgs_log`, `pgs_overview`,
+`pgs_split_hunk`, `pgs_plan_check`, and `pgs_plan_diff`.
+
+Setup for OpenCode, Goose, Amp, Crush, Continue, Cline, Zed, Kiro,
+Windsurf/Devin, Factory Droid, JetBrains Junie, and Warp is in
+[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 ## Quick start
 
@@ -51,8 +196,9 @@ pgs plan-diff  --stdin < plan.json     # reconcile a saved plan after edits or c
 ```
 
 A plan looks like
-`{"commits": [{"id": "c1", "selections": ["src/a.rs:abc123def456"], "message": "..."}]}`.
-`plan-check` and `plan-diff` are descriptive — they report overlaps, gaps, and
+`{"commits": [{"id": "c1", "selections": ["abc123def456", "src/b.rs"], "message": "..."}]}`.
+Each commit takes `selections`, and optionally `id`, `exclude`, and `message`.
+`plan-check` and `plan-diff` are descriptive: they report overlaps, gaps, and
 drift but never stage or commit.
 
 ## Selection syntax
@@ -71,7 +217,9 @@ If a real file path is exactly 12 hex characters, prefix it with `./` so it is
 read as a path, not a hunk ID.
 
 Hunk IDs are stable only while a hunk's content and position are unchanged.
-Re-scan after any edit, commit, or index change before reusing them.
+Re-scan after any edit, commit, or index change before reusing them. The
+`--context` value changes hunk boundaries and therefore IDs, so pass the same
+value to every call that shares IDs.
 
 ## Guard against drift
 
@@ -83,15 +231,31 @@ pgs stage src/main.rs:10-20 --expect "src/main.rs=<checksum from scan>"
 ```
 
 A stale checksum fails with exit code 3 (`stale_scan`) and leaves the index
-untouched — re-scan and retry. Partial (hunk/line) staging also refuses non-UTF-8
+untouched. Re-scan and retry. Partial (hunk/line) staging also refuses non-UTF-8
 files and files whose line endings differ from the index; stage those whole-file.
+
+## Platform support
+
+`pgs` runs on Linux, macOS, and Windows, and CI tests all three.
+
+Staging applies git's clean filters the way `git add` does: `core.autocrlf`,
+`text` and `eol` attributes, and `ident`. A path whose `filter=` attribute runs
+an external program, such as git-lfs or git-crypt, is refused rather than staged
+unfiltered. The error code is `external_filter` (exit 2); stage those paths with
+`git add`. This is new in 0.8.0.
+
+The plugin launcher downloads `pgs-mcp` on first start for
+Linux (x86_64, aarch64), macOS, and Windows x86_64 from a POSIX shell such as
+Git Bash. On Windows ARM64, install the binary from the release and register it
+with your agent directly.
 
 ## Output
 
-Default: structured text markers — `@@pgs:v1 <kind> <json>`.
+Default: structured text markers, `@@pgs:v1 <kind> <json>`.
 JSON: opt-in via `--json` or `--output json`.
 
-See `docs/CLI_SPEC.md` for the full output contract.
+See [docs/CLI_SPEC.md](docs/CLI_SPEC.md) for the full output contract and the
+table of error codes.
 
 ## Exit codes
 
@@ -99,83 +263,21 @@ See `docs/CLI_SPEC.md` for the full output contract.
 |------|---------|
 | 0 | Success |
 | 1 | No effect (nothing to stage, empty selection) |
-| 2 | User error (bad selector; binary, non-UTF-8, or CRLF partial-stage constraint) |
-| 3 | Conflict — re-scan and retry (stale scan, locked index) |
+| 2 | User error (bad selector; binary, non-UTF-8, CRLF, or external-filter partial-stage constraint) |
+| 3 | Conflict: re-scan and retry (stale scan, locked index) |
 | 4 | Internal error |
-
-## Claude Code plugin
-
-Install `pgs` as a Claude Code plugin for automatic MCP tool integration and the
-`git-commit-staging` skill:
-
-```bash
-# Add the marketplace
-/plugin marketplace add UtsavBalar1231/pgs
-
-# Install the plugin
-/plugin install pgs@pgs-marketplace
-```
-
-Or test locally during development:
-
-```bash
-claude --plugin-dir /path/to/pgs/plugins/pgs
-```
-
-**What you get:**
-- **10 MCP tools**: `pgs_scan`, `pgs_status`, `pgs_stage`, `pgs_unstage`,
-  `pgs_commit`, `pgs_log`, `pgs_overview`, `pgs_split_hunk`, `pgs_plan_check`,
-  and `pgs_plan_diff` — available automatically via the bundled MCP server.
-- **git-commit-staging skill**: teaches agents the scan → plan → stage → commit
-  workflow with hunk-level precision.
-- **Auto-install**: the plugin downloads the correct prebuilt binary for your
-  platform before launching the MCP server.
-
-**Supported platforms:** macOS (Intel + Apple Silicon), Linux (x86_64 + ARM64).
-Windows binaries are available for standalone use via `claude mcp add`.
-
-## Codex plugin
-
-Install `pgs` as a Codex plugin for the same MCP tools and skill:
-
-```bash
-codex plugin marketplace add UtsavBalar1231/pgs
-codex plugin add pgs@pgs-marketplace
-```
-
-Or test locally during development:
-
-```bash
-codex plugin marketplace add /path/to/pgs
-codex plugin add pgs@pgs-marketplace
-```
-
-The Codex manifest lives in `.codex-plugin/plugin.json` and is mirrored into
-`plugins/pgs/` for marketplace installation. The canonical skill source is
-`plugins/pgs/skills/git-commit-staging/SKILL.md`; the top-level `skills/` path is
-a repo-local symlink for root-plugin development.
 
 ## MCP server
 
-`pgs` also ships `pgs-mcp`, a local stdio MCP server over the same
-scan/status/stage/unstage/commit workflow.
-
-```bash
-cargo run --bin pgs-mcp
-```
-
-Or add it manually without the plugin:
-
-```bash
-claude mcp add --transport stdio pgs -- /path/to/pgs-mcp
-codex mcp add pgs -- /path/to/pgs-mcp
-```
+`pgs-mcp` is a local stdio MCP server over the same engine as the CLI. Run it
+with `pgs-mcp`, or from a source checkout with `cargo run --bin pgs-mcp`.
 
 MCP tool calls require an explicit `repo_path`. The server speaks MCP
-`2026-07-28` and also serves `initialize`-era clients at `2025-11-25` and
-`2025-06-18`. Advertised capabilities are exactly `{"tools":{}}` — no prompts,
-resources, logging, or tasks. For the full protocol contract and safety notes,
-see `docs/MCP_SERVER.md`.
+`2026-07-28` (per-request `_meta`, `server/discover`) and also serves
+`initialize`-era clients at `2025-11-25` and `2025-06-18`. Advertised
+capabilities are exactly `{"tools":{}}`: no prompts, resources, logging, or
+tasks. For the full protocol contract and safety notes, see
+[docs/MCP_SERVER.md](docs/MCP_SERVER.md).
 
 ### Opt-in hook: nudge toward pgs instead of `git add`
 
@@ -214,16 +316,22 @@ inside `$(...)` and after `&&`, but it fails open on shell it cannot parse, so
 the hook may run on a command you did not expect. And `git add` with no
 arguments does not match `git add *`, which wants at least one argument.
 
+
 ## Build
 
 ```bash
 cargo build                        # compile
 cargo test                         # all tests
-cargo clippy -- -D warnings        # lint (zero warnings)
+cargo clippy --all-targets -- -D warnings   # lint (zero warnings)
 cargo fmt --check                  # format check
 ```
 
-Requires Rust 1.88+ and a C compiler (for libgit2).
+Requires Rust 1.88+ and a C compiler (for libgit2). See
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request,
+[docs/CLI_SPEC.md](docs/CLI_SPEC.md) for the output contract, and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for system design. Report security
+issues as described in [SECURITY.md](SECURITY.md).
 
-See `docs/CLI_SPEC.md` for the complete output contract and
-`docs/ARCHITECTURE.md` for system design.
+## License
+
+[MIT](LICENSE)
