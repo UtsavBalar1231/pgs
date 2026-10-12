@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# A newer push supersedes an in-flight rehearsal; a tag build always finishes.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 env:
   CARGO_TERM_COLOR: always
 
