@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.UtsavBalar1231/pgs",
+  "title": "pgs",
+  "description": "Non-interactive git staging at file, hunk, and line granularity",
+  "repository": {
+    "url": "https://github.com/UtsavBalar1231/pgs",
+    "source": "github"
+  },
+  "version": "0.7.0",
+  "packages": []
+}

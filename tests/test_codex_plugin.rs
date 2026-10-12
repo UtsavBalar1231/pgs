@@ -25,6 +25,13 @@ fn relative_file_paths(root: &std::path::Path) -> std::collections::BTreeSet<std
     found
 }
 
+fn launcher_of(path: &str) -> String {
+    read_json(path)["mcpServers"]["pgs"]["args"][1]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 fn assert_regular_file(path: &str) {
     let metadata = std::fs::symlink_metadata(path).unwrap();
     assert!(
@@ -215,16 +222,58 @@ fn every_version_anchor_matches_the_crate_version() {
         assert_eq!(read_json(path)["version"], expected, "{path}");
     }
 
-    for path in [".mcp.json", "plugins/pgs/.mcp.json"] {
-        let launcher = read_json(path)["mcpServers"]["pgs"]["args"][1]
-            .as_str()
-            .unwrap()
-            .to_owned();
+    for path in ["gemini-extension.json", "server.json"] {
+        assert_eq!(read_json(path)["version"], expected, "{path}");
+    }
+
+    for path in [
+        ".mcp.json",
+        "plugins/pgs/.mcp.json",
+        "gemini-extension.json",
+    ] {
+        let launcher = launcher_of(path);
         assert!(
             launcher.contains(&format!("VERSION=\"{expected}\"")),
             "{path} launcher must download v{expected}"
         );
     }
+    assert_eq!(
+        launcher_of("gemini-extension.json"),
+        launcher_of(".mcp.json"),
+        "gemini-extension.json must carry the same launcher as .mcp.json"
+    );
+}
+
+#[test]
+fn gemini_extension_and_codex_marketplace_point_at_existing_paths() {
+    let gemini = read_json("gemini-extension.json");
+    assert_eq!(gemini["name"], "pgs");
+    assert!(gemini["description"].is_string());
+    assert!(
+        gemini.get("contextFileName").is_none(),
+        "AGENTS.md is developer documentation, not extension context"
+    );
+    assert_eq!(gemini["mcpServers"]["pgs"]["command"], "sh");
+    assert_eq!(gemini["mcpServers"]["pgs"]["args"][0], "-c");
+    assert_eq!(gemini["mcpServers"]["pgs"]["args"][2], "pgs-mcp");
+    assert!(
+        std::path::Path::new("skills/git-commit-staging/SKILL.md").is_file(),
+        "Gemini discovers skills/ at the extension root"
+    );
+
+    let marketplace = read_json(".agents/plugins/marketplace.json");
+    assert_eq!(marketplace["name"], "pgs-marketplace");
+    let pgs = marketplace["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["name"] == "pgs")
+        .expect("pgs marketplace entry must exist");
+    assert_eq!(pgs["source"]["source"], "local");
+    let plugin_root = std::path::Path::new(pgs["source"]["path"].as_str().unwrap());
+    assert!(plugin_root.join(".codex-plugin/plugin.json").is_file());
+    assert!(plugin_root.join(".mcp.json").is_file());
+    assert!(plugin_root.join("skills").is_dir());
 }
 
 #[test]
