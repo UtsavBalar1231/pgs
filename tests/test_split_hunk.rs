@@ -384,3 +384,103 @@ fn pgs_split_hunk_mcp_tool_returns_structured_content() {
         assert!(range["end"].is_u64(), "end must be u32");
     }
 }
+
+// ─── Ranges are stageable new-side selectors ──────────────────────────────────
+
+/// `l1\n` through `l<count>\n`.
+fn numbered_lines(count: u32) -> String {
+    use std::fmt::Write;
+    (1..=count).fold(String::new(), |mut text, n| {
+        writeln!(text, "l{n}").unwrap();
+        text
+    })
+}
+
+fn first_hunk_ranges(dir: &std::path::Path) -> Vec<(u64, u64, String)> {
+    let scan = run_pgs(dir, &["scan"]).success();
+    let scan: Value = serde_json::from_slice(&scan.get_output().stdout).unwrap();
+    let hunk_id = scan["files"][0]["hunks"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let split = run_pgs(dir, &["split-hunk", &hunk_id]).success();
+    let split: Value = serde_json::from_slice(&split.get_output().stdout).unwrap();
+    split["ranges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["start"].as_u64().unwrap(),
+                r["end"].as_u64().unwrap(),
+                r["origin_mix"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn staged_text(dir: &std::path::Path) -> String {
+    let repo = git2::Repository::open(dir).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index.get_path(std::path::Path::new("f.txt"), 0).unwrap();
+    String::from_utf8(repo.find_blob(entry.id).unwrap().content().to_vec()).unwrap()
+}
+
+#[test]
+fn split_hunk_reports_a_mixed_run_in_workdir_coordinates() {
+    let (dir, repo) = setup_repo();
+    let base = numbered_lines(10);
+    commit_file(&repo, dir.path(), "f.txt", &base, "init");
+    // Two lines inserted at the top shift old line 4 to new line 6, and it is replaced.
+    let work = base.replacen("l4\n", "L4\n", 1);
+    write_file(dir.path(), "f.txt", &format!("n1\nn2\n{work}"));
+
+    let ranges = first_hunk_ranges(dir.path());
+
+    assert_eq!(
+        ranges,
+        vec![(1, 2, "addition".into()), (6, 6, "mixed".into())]
+    );
+}
+
+#[test]
+fn split_hunk_deletion_range_stages_exactly_that_deletion() {
+    let (dir, repo) = setup_repo();
+    let base = numbered_lines(10);
+    commit_file(&repo, dir.path(), "f.txt", &base, "init");
+    write_file(dir.path(), "f.txt", &base.replacen("l5\n", "", 1));
+
+    let ranges = first_hunk_ranges(dir.path());
+    assert_eq!(ranges, vec![(4, 5, "deletion".into())]);
+
+    run_pgs(dir.path(), &["stage", "f.txt:4-5"]).success();
+    assert_eq!(staged_text(dir.path()), base.replacen("l5\n", "", 1));
+}
+
+#[test]
+fn split_hunk_each_reported_range_stages_one_run() {
+    let (dir, repo) = setup_repo();
+    let base = numbered_lines(12);
+    commit_file(&repo, dir.path(), "f.txt", &base, "init");
+    // One hunk with an addition, a deletion and a replacement, two context lines apart.
+    let work = base
+        .replacen("l3\n", "l3\nadded\n", 1)
+        .replacen("l6\n", "", 1)
+        .replacen("l9\n", "L9\n", 1);
+    write_file(dir.path(), "f.txt", &work);
+
+    let ranges = first_hunk_ranges(dir.path());
+    let kinds: Vec<&str> = ranges.iter().map(|(_, _, k)| k.as_str()).collect();
+    assert_eq!(kinds, ["addition", "deletion", "mixed"]);
+
+    // Staging the runs one at a time, last first so earlier numbers stay put,
+    // must land on the workdir with no run staged twice or skipped.
+    let mut expected = base;
+    let steps = [("l9\n", "L9\n"), ("l6\n", ""), ("l3\n", "l3\nadded\n")];
+    for ((start, end, _), (from, to)) in ranges.iter().rev().zip(steps) {
+        run_pgs(dir.path(), &["stage", &format!("f.txt:{start}-{end}")]).success();
+        expected = expected.replacen(from, to, 1);
+        assert_eq!(staged_text(dir.path()), expected, "after {start}-{end}");
+    }
+    assert_eq!(expected, work);
+}

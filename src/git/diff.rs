@@ -204,74 +204,111 @@ fn delta_to_file_status(delta: &git2::DiffDelta<'_>) -> FileStatus {
 }
 
 /// A classified contiguous run of changed lines inside a single hunk. `origin_mix` is `Addition`, `Deletion`, or `Mixed` — never `Context`, since context lines terminate runs.
+///
+/// `start..=end` are new-side (workdir) line numbers chosen so that the line-range
+/// selector `path:start-end` stages exactly this run under the deletion pairing rules:
+/// the added lines for an addition or mixed run, and the surviving lines on both sides
+/// of the gap for a pure deletion. A deletion that empties the file has no new-side line
+/// to name and is reported as `0..=0`; stage its hunk id instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HunkSplit {
-    /// First 1-indexed line number of the run (post-image for adds, pre-image for deletes).
+    /// First new-side line of the selector range.
     pub start: u32,
-    /// Last 1-indexed line number of the run (inclusive).
+    /// Last new-side line of the selector range (inclusive).
     pub end: u32,
     /// Category of the lines in the run.
     pub origin_mix: OriginMix,
 }
 
-/// Classify a hunk into contiguous runs of changed lines (descriptive, not prescriptive). Returns an empty vector for a hunk with no additions or deletions.
+/// A run being accumulated by [`suggest_splits`].
+struct PendingRun {
+    /// New-side number of the surviving line just before the run (0 at file start).
+    after_line: u32,
+    /// New-side numbers of the run's first and last added lines.
+    added: Option<(u32, u32)>,
+    has_deletion: bool,
+}
+
+impl PendingRun {
+    const fn finish(self, new_line_count: u32) -> HunkSplit {
+        if let Some((start, end)) = self.added {
+            let origin_mix = if self.has_deletion {
+                OriginMix::Mixed
+            } else {
+                OriginMix::Addition
+            };
+            return HunkSplit {
+                start,
+                end,
+                origin_mix,
+            };
+        }
+        let (start, end) = deletion_gap_range(self.after_line, new_line_count);
+        HunkSplit {
+            start,
+            end,
+            origin_mix: OriginMix::Deletion,
+        }
+    }
+}
+
+/// The new-side range that selects a pure deletion sitting after line `prev`.
+///
+/// Mirrors the gap rule in line selection: both survivors in the interior; at a file
+/// boundary the adjacent survivor plus one further line, or the adjacent line alone when
+/// no further line exists.
+const fn deletion_gap_range(prev: u32, new_line_count: u32) -> (u32, u32) {
+    let next = prev.saturating_add(1);
+    match (prev >= 1, next <= new_line_count) {
+        (true, true) => (prev, next),
+        (false, true) => (1, if new_line_count >= 2 { 2 } else { 1 }),
+        (true, false) => (if prev >= 2 { prev - 1 } else { 1 }, prev),
+        (false, false) => (0, 0),
+    }
+}
+
+/// Classify a hunk into contiguous runs of changed lines, each a stageable range.
+///
+/// `new_line_count` is the workdir file's line count, needed for deletions at a file
+/// boundary. Returns an empty vector for a hunk with no additions or deletions.
 #[must_use]
-pub fn suggest_splits(hunk: &HunkInfo) -> Vec<HunkSplit> {
+pub fn suggest_splits(hunk: &HunkInfo, new_line_count: u32) -> Vec<HunkSplit> {
     let mut splits = Vec::new();
-    let mut run_start: Option<u32> = None;
-    let mut run_end: u32 = 0;
-    let mut run_has_add = false;
-    let mut run_has_del = false;
+    let mut last_new_line = hunk.new_start.saturating_sub(1);
+    let mut run: Option<PendingRun> = None;
 
     for line in &hunk.lines {
         match line.origin {
-            LineOrigin::Addition => {
-                if run_start.is_none() {
-                    run_start = Some(line.line_number);
+            LineOrigin::Context => {
+                if let Some(done) = run.take() {
+                    splits.push(done.finish(new_line_count));
                 }
-                run_end = line.line_number;
-                run_has_add = true;
+                last_new_line = line.line_number;
+            }
+            LineOrigin::Addition => {
+                let pending = run.get_or_insert(PendingRun {
+                    after_line: last_new_line,
+                    added: None,
+                    has_deletion: false,
+                });
+                let first = pending.added.map_or(line.line_number, |(first, _)| first);
+                pending.added = Some((first, line.line_number));
+                last_new_line = line.line_number;
             }
             LineOrigin::Deletion => {
-                if run_start.is_none() {
-                    run_start = Some(line.line_number);
-                }
-                run_end = line.line_number;
-                run_has_del = true;
-            }
-            LineOrigin::Context => {
-                if let Some(start) = run_start.take() {
-                    splits.push(HunkSplit {
-                        start,
-                        end: run_end,
-                        origin_mix: classify_run(run_has_add, run_has_del),
-                    });
-                    run_has_add = false;
-                    run_has_del = false;
-                }
+                run.get_or_insert(PendingRun {
+                    after_line: last_new_line,
+                    added: None,
+                    has_deletion: false,
+                })
+                .has_deletion = true;
             }
         }
     }
-
-    if let Some(start) = run_start {
-        splits.push(HunkSplit {
-            start,
-            end: run_end,
-            origin_mix: classify_run(run_has_add, run_has_del),
-        });
+    if let Some(done) = run {
+        splits.push(done.finish(new_line_count));
     }
-
     splits
-}
-
-const fn classify_run(has_add: bool, has_del: bool) -> OriginMix {
-    // `(false, false)` is unreachable in practice (a run is pushed only after an add or del);
-    // folded into `Mixed` to satisfy exhaustiveness without a panic.
-    match (has_add, has_del) {
-        (true, false) => OriginMix::Addition,
-        (false, true) => OriginMix::Deletion,
-        (true, true) | (false, false) => OriginMix::Mixed,
-    }
 }
 
 /// Extract `HunkInfo` entries from a `Patch`.

@@ -524,7 +524,12 @@ JSON envelope:
 ```
 
 `ranges` carries one entry per maximal run of non-context lines inside the
-hunk. `origin_mix` values:
+hunk. `start` and `end` are workdir (new-side) line numbers chosen so that
+`pgs stage <path>:<start>-<end>` stages exactly that run: the added lines of an
+addition or mixed run (selecting them pulls in every deletion they pair with),
+and the surviving lines on both sides of a pure deletion. A deletion that
+empties the file has no line to name and is reported as `0-0`; stage the hunk
+id instead. `origin_mix` values:
 
 - `addition` — the run is only `Addition` lines.
 - `deletion` — the run is only `Deletion` lines.

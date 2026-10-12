@@ -1,6 +1,7 @@
 use clap::Args;
 
 use crate::error::PgsError;
+use crate::git::staging::workdir_line_count;
 use crate::git::{diff, repo};
 use crate::models::ScanResult;
 use crate::output::view::{CommandOutput, OriginMixView, SplitHunkOutput, SplitRangeView};
@@ -34,7 +35,8 @@ pub fn execute(
     // Freshness: fail retryable if workdir content drifted after scan construction.
     resolve::validate_freshness(&repository, &scan, &file_path, None)?;
 
-    let splits = diff::suggest_splits(hunk);
+    let new_line_count = workdir_line_count(&repository, &file_path);
+    let splits = diff::suggest_splits(hunk, new_line_count);
     let ranges: Vec<SplitRangeView> = splits
         .into_iter()
         .map(|s| SplitRangeView {
