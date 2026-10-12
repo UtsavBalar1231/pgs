@@ -128,17 +128,26 @@ pub fn execute(
     let tree_oid = index.write_tree()?;
     let tree = repository.find_tree(tree_oid)?;
 
-    let head_ref = repository.head()?;
-    let head_commit = head_ref.peel_to_commit()?;
-    let author = if args.amend {
-        head_commit.author()
-    } else {
-        sig.clone()
+    // Before the first commit there is no HEAD: a plain commit becomes the
+    // root commit, and there is nothing to amend.
+    let head_commit = match repository.head() {
+        Ok(head) => Some(head.peel_to_commit()?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => return Err(e.into()),
     };
-    let parent_commits = if args.amend {
-        head_commit.parents().collect()
-    } else {
-        vec![repository.find_commit(head_commit.id())?]
+    if args.amend && head_commit.is_none() {
+        return Err(PgsError::InvalidArguments {
+            detail: "--amend needs an existing commit, but the branch has none yet".to_owned(),
+        });
+    }
+    let author = match (&head_commit, args.amend) {
+        (Some(head), true) => head.author(),
+        _ => sig.clone(),
+    };
+    let parent_commits: Vec<git2::Commit<'_>> = match (&head_commit, args.amend) {
+        (Some(head), true) => head.parents().collect(),
+        (Some(head), false) => vec![repository.find_commit(head.id())?],
+        (None, _) => Vec::new(),
     };
     let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
     let base_tree = match parent_commits.first() {
@@ -147,16 +156,15 @@ pub fn execute(
     };
 
     // A plain commit needs staged changes. Amend can intentionally be message-only.
-    if !args.amend
-        && base_tree
-            .as_ref()
-            .is_some_and(|parent| tree_oid == parent.id())
-    {
+    let nothing_staged = base_tree
+        .as_ref()
+        .map_or(tree.is_empty(), |parent| tree_oid == parent.id());
+    if !args.amend && nothing_staged {
         return Err(PgsError::NoChanges);
     }
 
-    let commit_oid = if args.amend {
-        head_commit.amend(
+    let commit_oid = if let (Some(head), true) = (&head_commit, args.amend) {
+        head.amend(
             Some("HEAD"),
             None,
             Some(&sig),

@@ -19,7 +19,13 @@ pub fn create_backup(repo: &Repository) -> Result<BackupInfo, PgsError> {
     fs::create_dir_all(&backup_dir).map_err(|e| PgsError::io(&backup_dir, e))?;
 
     let index_path = repo.path().join("index");
-    let index_content = fs::read(&index_path).map_err(|e| PgsError::io(&index_path, e))?;
+    // A repository gets its index file on the first add; until then the
+    // snapshot is empty, and restoring it removes the file again.
+    let index_content = match fs::read(&index_path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(PgsError::io(&index_path, e)),
+    };
 
     let mut hasher = Sha256::new();
     hasher.update(&index_content);
@@ -63,6 +69,12 @@ pub fn restore_backup(repo: &Repository, backup_id: &str) -> Result<(), PgsError
 
     let backup_content = fs::read(&backup_file).map_err(|e| PgsError::io(&backup_file, e))?;
     let index_path = repo.path().join("index");
+    if backup_content.is_empty() {
+        return match fs::remove_file(&index_path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(PgsError::io(&index_path, e)),
+            _ => Ok(()),
+        };
+    }
     fs::write(&index_path, backup_content).map_err(|e| PgsError::io(&index_path, e))?;
 
     Ok(())
@@ -94,6 +106,20 @@ mod tests {
         let mut index = repo.index().unwrap();
         index.write().unwrap();
         (temp, repo)
+    }
+
+    #[test]
+    fn restore_of_snapshot_taken_without_an_index_removes_the_index() {
+        let temp = TempDir::new().unwrap();
+        let repo = Repository::init(temp.path()).unwrap();
+        let index_path = repo.path().join("index");
+        assert!(!index_path.exists());
+
+        let backup = create_backup(&repo).unwrap();
+        fs::write(&index_path, b"written by a failed stage").unwrap();
+        restore_backup(&repo, &backup.backup_id).unwrap();
+
+        assert!(!index_path.exists());
     }
 
     #[test]

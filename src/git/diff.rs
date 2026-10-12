@@ -28,11 +28,15 @@ pub fn diff_index_to_workdir(repo: &Repository, context_lines: u32) -> Result<Di
 /// This is the diff base for `status`: it shows what is currently staged
 /// for the next commit.
 pub fn diff_head_to_index(repo: &Repository, context_lines: u32) -> Result<Diff<'_>, PgsError> {
-    let head_commit = repo.head()?.peel_to_commit()?;
-    let head_tree = head_commit.tree()?;
+    // Before the first commit there is no HEAD; everything staged is an addition.
+    let head_tree = match repo.head() {
+        Ok(head) => Some(head.peel_to_commit()?.tree()?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => return Err(e.into()),
+    };
     let mut opts = DiffOptions::new();
     opts.context_lines(context_lines);
-    let diff = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut opts))?;
+    let diff = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?;
     Ok(diff)
 }
 
