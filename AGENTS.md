@@ -27,7 +27,6 @@ src/
     preview.rs         OperationPreview, PreviewLine
     plan.rs            CommitPlan, PlannedCommit
     selection.rs       ResolvedSelection, LineRange
-    backup.rs          BackupInfo
   error.rs             PgsError enum, code() and exit_code() mapping
 
   cmd/                 Command handlers — one file per command + adapter

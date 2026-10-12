@@ -225,7 +225,7 @@ pub fn execute(
         return Ok(output.into());
     }
 
-    let backup_info = backup::create_backup(&repository)?;
+    let backup_id = backup::create_backup(&repository)?;
 
     let mut actual_lines_by_file: HashMap<String, u32> = HashMap::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -269,11 +269,9 @@ pub fn execute(
                 actual_lines_by_file.insert(file_path.clone(), lines_affected);
             }
             Err(e) => {
-                if let Err(restore_err) =
-                    backup::restore_backup(&repository, &backup_info.backup_id)
-                {
+                if let Err(restore_err) = backup::restore_backup(&repository, &backup_id) {
                     return Err(PgsError::RestoreFailed {
-                        backup_id: backup_info.backup_id.clone(),
+                        backup_id: backup_id.clone(),
                         op_error: e.to_string(),
                         restore_error: restore_err.to_string(),
                     });
@@ -314,7 +312,7 @@ pub fn execute(
         OperationStatus::Ok,
         items,
         warnings,
-        Some(backup_info.backup_id),
+        Some(backup_id),
     )
     .into())
 }

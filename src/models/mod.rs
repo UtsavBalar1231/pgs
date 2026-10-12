@@ -3,7 +3,6 @@
 /// Most types derive `Serialize + Deserialize`. Exception: `OriginMix`
 /// derives neither — it is an internal classifier exposed only through view-model
 /// conversions in `src/output/view/`.
-pub mod backup;
 pub mod commit;
 pub mod operation;
 pub mod plan;
@@ -12,7 +11,6 @@ pub mod scan;
 pub mod selection;
 pub mod status;
 
-pub use backup::BackupInfo;
 pub use commit::CommitResult;
 pub use operation::OperationStatus;
 pub use plan::{CommitPlan, PlannedCommit};

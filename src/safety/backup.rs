@@ -1,20 +1,36 @@
 use crate::error::PgsError;
-use crate::models::BackupInfo;
 use chrono::Utc;
 use git2::Repository;
-use sha2::{Digest, Sha256};
 use std::fs;
-use uuid::Uuid;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Distinguishes backups taken within the same microsecond by one process.
+static BACKUP_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// Build an id that sorts in creation order: `backup-<UTC time>-<micros>-<pid>-<seq>`.
+///
+/// The process id keeps concurrent pgs processes apart; the per-process sequence keeps two
+/// backups in one microsecond apart and in order.
+fn new_backup_id() -> String {
+    let now = Utc::now();
+    let seq = BACKUP_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "backup-{}-{:06}-{:x}-{seq:04x}",
+        now.format("%Y%m%dT%H%M%S"),
+        now.timestamp_subsec_micros(),
+        std::process::id(),
+    )
+}
 
 /// Create a backup of the current git index.
 ///
-/// Writes the raw index file to `.git/pgs/backups/` along with a JSON metadata file.
+/// Writes the raw index file to `.git/pgs/backups/<id>.index` and returns the id.
 ///
 /// # Errors
 ///
 /// Returns an error if the backup directory cannot be created, the index cannot be read,
-/// or writing the backup files fails.
-pub fn create_backup(repo: &Repository) -> Result<BackupInfo, PgsError> {
+/// or writing the backup file fails.
+pub fn create_backup(repo: &Repository) -> Result<String, PgsError> {
     let backup_dir = repo.path().join("pgs").join("backups");
     fs::create_dir_all(&backup_dir).map_err(|e| PgsError::io(&backup_dir, e))?;
 
@@ -27,29 +43,11 @@ pub fn create_backup(repo: &Repository) -> Result<BackupInfo, PgsError> {
         Err(e) => return Err(PgsError::io(&index_path, e)),
     };
 
-    let mut hasher = Sha256::new();
-    hasher.update(&index_content);
-    let index_checksum = crate::hex_lower(&hasher.finalize());
-
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%S");
-    let uuid = Uuid::new_v4();
-    let uuid8 = &uuid.to_string()[..8];
-    let backup_id = format!("backup-{timestamp}-{uuid8}");
-
+    let backup_id = new_backup_id();
     let backup_file = backup_dir.join(format!("{backup_id}.index"));
     fs::write(&backup_file, &index_content).map_err(|e| PgsError::io(&backup_file, e))?;
 
-    let backup_info = BackupInfo {
-        backup_id,
-        timestamp: Utc::now().to_rfc3339(),
-        index_checksum,
-    };
-
-    let metadata_file = backup_dir.join(format!("{}.json", backup_info.backup_id));
-    let metadata_json = serde_json::to_string_pretty(&backup_info)?;
-    fs::write(&metadata_file, metadata_json).map_err(|e| PgsError::io(&metadata_file, e))?;
-
-    Ok(backup_info)
+    Ok(backup_id)
 }
 
 /// Restore the git index from a previously created backup.
@@ -117,7 +115,7 @@ mod tests {
 
         let backup = create_backup(&repo).unwrap();
         fs::write(&index_path, b"written by a failed stage").unwrap();
-        restore_backup(&repo, &backup.backup_id).unwrap();
+        restore_backup(&repo, &backup).unwrap();
 
         assert!(!index_path.exists());
     }
@@ -128,11 +126,10 @@ mod tests {
         let info = create_backup(&repo).expect("create_backup failed");
 
         let backup_dir = repo.path().join("pgs").join("backups");
-        let index_file = backup_dir.join(format!("{}.index", info.backup_id));
-        let meta_file = backup_dir.join(format!("{}.json", info.backup_id));
+        let index_file = backup_dir.join(format!("{info}.index"));
 
         assert!(index_file.exists(), "index backup file should exist");
-        assert!(meta_file.exists(), "metadata json file should exist");
+        assert!(!backup_dir.join(format!("{info}.json")).exists());
     }
 
     #[test]
@@ -144,7 +141,7 @@ mod tests {
         let info = create_backup(&repo).expect("create_backup failed");
 
         let backup_dir = repo.path().join("pgs").join("backups");
-        let backup_file = backup_dir.join(format!("{}.index", info.backup_id));
+        let backup_file = backup_dir.join(format!("{info}.index"));
         let backed_up = fs::read(&backup_file).unwrap();
 
         assert_eq!(
@@ -165,7 +162,7 @@ mod tests {
         fs::write(&index_path, b"corrupted").unwrap();
         assert_ne!(fs::read(&index_path).unwrap(), original);
 
-        restore_backup(&repo, &info.backup_id).expect("restore_backup failed");
+        restore_backup(&repo, &info).expect("restore_backup failed");
         let restored = fs::read(&index_path).unwrap();
         assert_eq!(restored, original, "restored index must match original");
     }
