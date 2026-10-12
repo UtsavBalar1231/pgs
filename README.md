@@ -35,9 +35,9 @@ touching a shell.
 | `git add -p` piped, `git add -e`, `git apply --cached` | hunk, line | positional answers, or a hand-built patch or edit | Scriptable, but answers and patch headers carry no stable names and a wrong position can apply with exit 0. |
 | GitButler `but` | hunk | hunk IDs | Works inside GitButler's workspace model rather than the plain git index. |
 | Jujutsu `jj split` | file, when run non-interactively | paths | Operates on jj changes. Hunk-level splits need the interactive diff editor. |
-| git-surgeon | hunk | hunk IDs hashed from file path and content | Stages, unstages, and discards hunks. |
-| git-hunk | hunk | hunk | Several unrelated projects share this name. |
-| Roasbeef/hunk | line | `file:range` | Builds a unified diff for the range and applies it with `git apply --cached`. |
+| [git-surgeon](https://github.com/raine/git-surgeon) | hunk, line | hunk IDs hashed from file path and content, `id:range` | Also commits, splits, folds, and rewords. |
+| [wkentaro/git-hunk](https://github.com/wkentaro/git-hunk) | hunk, line | SHA-256 hunk IDs, line numbers | Ships an agent skill and a published agent eval. |
+| [Roasbeef/hunk](https://github.com/Roasbeef/hunk) | line | `file:range` | Builds a unified diff for the range and applies it with `git apply --cached`. |
 | pgs | file, hunk, line | path, 12-hex hunk ID, or `path:range` | Builds index blobs in-process, refuses stale input, ships an MCP server and a skill. |
 
 This table describes what each project documents about itself. Check their
@@ -242,7 +242,8 @@ Staging applies git's clean filters the way `git add` does: `core.autocrlf`,
 `text` and `eol` attributes, and `ident`. A path whose `filter=` attribute runs
 an external program, such as git-lfs or git-crypt, is refused rather than staged
 unfiltered. The error code is `external_filter` (exit 2); stage those paths with
-`git add`. This is new in 0.8.0.
+`git add`. Submodules are refused the same way (`unsupported_entry`). Both are
+new in 0.8.0.
 
 The plugin launcher downloads `pgs-mcp` on first start for Linux (x86_64,
 aarch64), macOS, and Windows (x86_64, ARM64). It is a POSIX `sh` script, so on
