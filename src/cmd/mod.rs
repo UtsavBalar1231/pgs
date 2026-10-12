@@ -20,7 +20,7 @@ use crate::error::PgsError;
 use crate::output;
 use crate::output::view::OutputCommand;
 
-pub use crate::output::view::CliErrorOutput;
+pub use crate::output::view::{CliErrorOutput, CommandOutput};
 
 /// Output format requested at the CLI boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -39,26 +39,15 @@ pub struct ParsedCli {
     pub output_mode: OutputMode,
 }
 
-pub struct RenderableOutput(output::view::CommandOutput);
-
-impl RenderableOutput {
-    const fn new(output: output::view::CommandOutput) -> Self {
-        Self(output)
-    }
-
-    /// Post-render exit-code override for commands whose success envelope can
-    /// still signal a non-zero outcome. `plan-check` uses this to surface
-    /// overlaps/uncovered/unsafe/unknown issues as exit code 1 while still
-    /// emitting the full JSON envelope so the caller sees every finding.
-    #[must_use]
-    pub const fn exit_override(&self) -> Option<i32> {
-        match &self.0 {
-            output::view::CommandOutput::PlanCheck(plan_check) if plan_check.has_issues() => {
-                Some(1)
-            }
-            output::view::CommandOutput::PlanDiff(plan_diff) if plan_diff.has_drift() => Some(1),
-            _ => None,
-        }
+/// Exit code for a successful run whose envelope still reports an outcome the
+/// caller must act on: `plan-check` issues and `plan-diff` drift exit 1 while the
+/// full envelope is still printed.
+#[must_use]
+pub const fn exit_override(output: &CommandOutput) -> Option<i32> {
+    match output {
+        CommandOutput::PlanCheck(plan_check) if plan_check.has_issues() => Some(1),
+        CommandOutput::PlanDiff(plan_diff) if plan_diff.has_drift() => Some(1),
+        _ => None,
     }
 }
 
@@ -239,7 +228,7 @@ pub fn detect_output_mode(args: &[OsString]) -> Option<OutputMode> {
 /// # Errors
 ///
 /// Returns any runtime error produced by the selected command handler.
-pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
+pub fn run(parsed: ParsedCli) -> Result<CommandOutput, PgsError> {
     let Cli {
         repo,
         output: _,
@@ -250,59 +239,26 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
     let context = context.max(1);
 
     match command {
-        Command::Scan(args) => Ok(Some(RenderableOutput::new(scan::execute(
-            repo.as_deref(),
-            context,
-            args,
-        )?))),
-        Command::Stage(args) => Ok(Some(RenderableOutput::new(stage::execute(
-            repo.as_deref(),
-            context,
-            args,
-        )?))),
-        Command::Unstage(args) => Ok(Some(RenderableOutput::new(unstage::execute(
-            repo.as_deref(),
-            context,
-            args,
-        )?))),
-        Command::Status(args) => Ok(Some(RenderableOutput::new(status::execute(
-            repo.as_deref(),
-            context,
-            args.full,
-        )?))),
-        Command::Commit(args) => Ok(Some(RenderableOutput::new(commit::execute(
-            repo.as_deref(),
-            args,
-            true,
-        )?))),
-        Command::Log(args) => Ok(Some(RenderableOutput::new(log::execute(
-            repo.as_deref(),
-            args,
-        )?))),
-        Command::Overview => Ok(Some(RenderableOutput::new(overview::execute(
-            repo.as_deref(),
-            context,
-        )?))),
-        Command::SplitHunk(args) => Ok(Some(RenderableOutput::new(split::execute(
-            repo.as_deref(),
-            context,
-            args,
-        )?))),
-        Command::PlanCheck(args) => Ok(Some(RenderableOutput::new(plan_check::execute(
-            repo.as_deref(),
-            context,
-            args,
-        )?))),
-        Command::PlanDiff(args) => Ok(Some(RenderableOutput::new(plan_diff::execute(
-            repo.as_deref(),
-            context,
-            args,
-        )?))),
+        Command::Scan(args) => scan::execute(repo.as_deref(), context, args),
+        Command::Stage(args) => stage::execute(repo.as_deref(), context, args),
+        Command::Unstage(args) => unstage::execute(repo.as_deref(), context, args),
+        Command::Status(args) => status::execute(repo.as_deref(), context, args.full),
+        Command::Commit(args) => commit::execute(repo.as_deref(), args, true),
+        Command::Log(args) => log::execute(repo.as_deref(), args),
+        Command::Overview => overview::execute(repo.as_deref(), context),
+        Command::SplitHunk(args) => split::execute(repo.as_deref(), context, args),
+        Command::PlanCheck(args) => plan_check::execute(repo.as_deref(), context, args),
+        Command::PlanDiff(args) => plan_diff::execute(repo.as_deref(), context, args),
     }
 }
 
-pub fn render(renderable: &RenderableOutput, output_mode: OutputMode) -> Result<String, PgsError> {
-    output::render(&renderable.0, output_mode)
+/// Render a successful command result in the requested output mode.
+///
+/// # Errors
+///
+/// Returns an error if the output cannot be serialized.
+pub fn render(output: &CommandOutput, output_mode: OutputMode) -> Result<String, PgsError> {
+    output::render(output, output_mode)
 }
 
 const fn parse_error_code(kind: ErrorKind) -> &'static str {
