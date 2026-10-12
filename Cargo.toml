@@ -32,6 +32,15 @@ proptest = "1"
 # regex (dev-only): parses `src/...:NNN` citations from SKILL.md for the anti-drift test in tests/test_skill_capability_table.rs. Hand-rolled would be ~40 LOC of test-only scanning; regex is the canonical choice per CLAUDE.md dep rules.
 regex = "1"
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.'cfg(target_os = "windows")']
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
+pkg-fmt = "zip"
+
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
