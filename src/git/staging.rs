@@ -779,6 +779,11 @@ mod tests {
             config
                 .set_str("user.email", "test@test.com")
                 .expect("set email");
+            // Runner-wide config (core.autocrlf=true on Windows) must not
+            // rewrite the line endings these fixtures pin.
+            config
+                .set_bool("core.autocrlf", false)
+                .expect("set autocrlf");
         }
 
         {

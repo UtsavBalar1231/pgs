@@ -234,6 +234,7 @@ mod tests {
         assert_eq!(result.files[0].path, "test.txt");
     }
 
+    #[cfg(unix)]
     #[test]
     fn open_symlinked_git_objects_works_correctly() {
         let project_dir = TempDir::new().expect("project");

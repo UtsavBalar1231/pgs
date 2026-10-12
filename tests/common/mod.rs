@@ -21,6 +21,9 @@ pub fn setup_repo() -> (TempDir, Repository) {
         let mut config = repo.config().unwrap();
         config.set_str("user.name", "Test").unwrap();
         config.set_str("user.email", "test@test.com").unwrap();
+        // Runner-wide config (core.autocrlf=true on Windows) must not rewrite
+        // the line endings a test writes.
+        config.set_bool("core.autocrlf", false).unwrap();
     }
 
     // Create initial empty commit so HEAD exists
