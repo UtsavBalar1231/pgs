@@ -248,6 +248,39 @@ mcpServers:
     command: pgs-mcp
 ```
 
+## MCP Bundles
+
+Each release ships one MCP Bundle per platform, `pgs-mcp-<target>.mcpb`, for
+clients that install `.mcpb` files (for example Claude Desktop). A bundle is a
+zip holding `manifest.json` and the `pgs-mcp` binary under `server/`
+(`pgs-mcp.exe` on Windows). The manifest follows the
+[MCPB spec](https://github.com/modelcontextprotocol/mcpb) `0.3`, declares a
+`binary` server, and restricts `compatibility.platforms` to the bundle's OS. The
+release workflow fills the template in `packaging/mcpb/manifest.json` from
+`Cargo.toml` and checks every generated manifest against the MCPB JSON schema
+before the release assets are collected. Pick the bundle whose `<target>`
+matches your machine; the `universal-apple-darwin` bundle covers Intel and
+Apple Silicon Macs.
+
+`server.json` still lists no `packages`, so pgs is not published to the MCP
+Registry. Publishing the bundles would take:
+
+1. A published GitHub release, since the registry accepts MCPB artifacts
+   hosted on GitHub or GitLab releases.
+2. One `packages` entry per bundle in `server.json`, with `registryType`
+   `"mcpb"`, the bundle's release download URL as `identifier` (it must contain
+   "mcp", which `pgs-mcp-<target>.mcpb` does), `transport` of `stdio`, and
+   `fileSha256` set to the bundle's SHA-256, which is its line in
+   `SHA256SUMS`. The registry does not check the hash; clients do before they
+   install.
+3. `mcp-publisher publish`, authenticated as the owner of the
+   `io.github.UtsavBalar1231` namespace.
+
+The fields are from the registry's
+[package types](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/package-types.mdx)
+page. That page says nothing about how a client chooses between several `mcpb`
+entries for different platforms, so check that before listing all seven.
+
 ## The agent skill
 
 The `git-commit-staging` skill lives at `plugins/pgs/skills/git-commit-staging`

@@ -48,8 +48,15 @@ repositories for current behavior.
 ### Prebuilt binaries
 
 Each [GitHub release](https://github.com/UtsavBalar1231/pgs/releases/latest)
-ships both binaries for every platform, named `pgs-<target>` and
-`pgs-mcp-<target>`, plus a `SHA256SUMS` file.
+ships, for every platform:
+
+- both binaries, named `pgs-<target>` and `pgs-mcp-<target>`;
+- an archive, `pgs-<target>.tar.gz` (`pgs-<target>.zip` on Windows), holding
+  `pgs`, `pgs-mcp`, `LICENSE`, and `README.md` at its root;
+- an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb),
+  `pgs-mcp-<target>.mcpb`, for clients that install `.mcpb` files.
+
+A `SHA256SUMS` file covers all of them.
 
 | Platform | `<target>` |
 |----------|------------|
@@ -82,6 +89,40 @@ Invoke-WebRequest "$Base/pgs-mcp-$Target.exe" -OutFile "$Dir\pgs-mcp.exe"
 ```
 
 Add the install directory to your `PATH`.
+
+To install from an archive instead, unpack it and copy both binaries onto your
+`PATH`. On Linux and macOS, with `TARGET` and `BASE` set as above:
+
+```bash
+curl -fsSL "$BASE/pgs-$TARGET.tar.gz" | tar -xz -C ~/.local/bin pgs pgs-mcp
+```
+
+#### Verify a download
+
+Every binary, archive, and bundle in a release carries a signed build-provenance
+attestation that names this repository's release workflow. With the
+[GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify pgs-$TARGET.tar.gz -R UtsavBalar1231/pgs
+```
+
+The check passes only for a file that this repository's release workflow
+published. Releases made before attestations were added have none.
+
+### With cargo-binstall
+
+`Cargo.toml` carries [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
+metadata that points at the release archives. The crate name `pgs` is taken on
+crates.io by an unrelated project, so `cargo binstall pgs` does not install this
+tool. Point binstall at this repository instead:
+
+```bash
+cargo binstall --git https://github.com/UtsavBalar1231/pgs pgs
+```
+
+or, from a checkout, `cargo binstall --manifest-path . pgs`. Both install `pgs`
+and `pgs-mcp`.
 
 ### From source
 
