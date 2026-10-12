@@ -786,3 +786,27 @@ fn stage_different_selector_kinds_on_different_files_succeeds() {
         "only hunk 0 was selected; blob:\n{staged}"
     );
 }
+
+#[test]
+fn stage_intent_to_add_file_makes_it_a_real_addition() {
+    let (dir, _repo) = setup_repo();
+    write_file(dir.path(), "new.txt", "hello\n");
+    let added = std::process::Command::new("git")
+        .args(["add", "-N", "new.txt"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    assert!(added.success());
+
+    run_pgs(dir.path(), &["stage", "new.txt"]).success();
+
+    let repo = git2::Repository::open(dir.path()).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index.get_path(std::path::Path::new("new.txt"), 0).unwrap();
+    let flags = git2::IndexEntryExtendedFlag::from_bits_truncate(entry.flags_extended);
+    assert!(
+        !flags.is_intent_to_add(),
+        "flags_extended={:#x}",
+        entry.flags_extended
+    );
+}

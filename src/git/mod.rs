@@ -154,7 +154,12 @@ pub fn build_index_entry(
     mode_override: Option<u32>,
 ) -> git2::IndexEntry {
     let (mode, flags, flags_extended) = match index.get_path(std::path::Path::new(file_path), 0) {
-        Some(e) => (mode_override.unwrap_or(e.mode), e.flags, e.flags_extended),
+        // Writing real content resolves a `git add -N` placeholder.
+        Some(e) => (
+            mode_override.unwrap_or(e.mode),
+            e.flags,
+            e.flags_extended & !git2::IndexEntryExtendedFlag::INTENT_TO_ADD.bits(),
+        ),
         None => (mode_override.unwrap_or(0o100_644), 0, 0),
     };
     git2::IndexEntry {
