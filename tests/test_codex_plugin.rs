@@ -64,7 +64,31 @@ fn shared_mcp_manifest_uses_codex_native_cached_binary_launcher() {
     assert!(!launcher.contains("CLAUDE_PLUGIN_ROOT"));
     assert!(launcher.contains("CLAUDE_PLUGIN_DATA"));
     assert!(launcher.contains("DATA=\"$PGS_PLUGIN_DATA\""));
+    assert!(launcher.contains("DATA=\"$PLUGIN_DATA\""));
     assert!(launcher.contains("DATA=\"$CLAUDE_PLUGIN_DATA\""));
+    let data_chain = [
+        "\"$PGS_PLUGIN_DATA\"",
+        "DATA=\"$PLUGIN_DATA\"",
+        "DATA=\"$CLAUDE_PLUGIN_DATA\"",
+        "BASE=\"$XDG_DATA_HOME\"",
+    ]
+    .map(|needle| launcher.find(needle).unwrap());
+    assert!(
+        data_chain.is_sorted(),
+        "data-dir fallbacks are out of order"
+    );
+    assert!(launcher.contains("MINGW*|MSYS*|CYGWIN*) BINARY=\"$DATA/bin/pgs-mcp.exe\""));
+    assert!(launcher.contains("*) BINARY=\"$DATA/bin/pgs-mcp\""));
+    assert!(
+        launcher.contains(
+            "Linux:aarch64|Linux:arm64) BINARY_NAME=\"pgs-mcp-aarch64-unknown-linux-musl\""
+        )
+    );
+    assert!(launcher.contains(
+        "MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64) BINARY_NAME=\"pgs-mcp-x86_64-pc-windows-msvc.exe\""
+    ));
+    assert!(launcher.contains("MINGW*:arm64|MSYS*:arm64|CYGWIN*:arm64) BINARY_NAME=\"pgs-mcp-aarch64-pc-windows-msvc.exe\""));
+    assert!(launcher.contains("MINGW*:aarch64|MSYS*:aarch64|CYGWIN*:aarch64|"));
     assert!(launcher.contains("BASE=\"$XDG_DATA_HOME\""));
     assert!(launcher.contains("BASE=\"$HOME/.local/share\""));
     assert!(launcher.contains("DATA=\"$BASE/pgs-plugin\""));
