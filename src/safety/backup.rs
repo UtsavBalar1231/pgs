@@ -2,7 +2,15 @@ use crate::error::PgsError;
 use chrono::Utc;
 use git2::Repository;
 use std::fs;
+use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+/// How many backups `.git/pgs/backups/` keeps, the one just taken included.
+///
+/// Every stage and unstage takes a backup, so without a cap the directory grows with each
+/// operation. A backup matters only until its operation completes or its rollback is
+/// reported, so a short history is enough to recover by hand.
+pub const BACKUPS_RETAINED: usize = 50;
 
 /// Distinguishes backups taken within the same microsecond by one process.
 static BACKUP_SEQ: AtomicU32 = AtomicU32::new(0);
@@ -47,7 +55,60 @@ pub fn create_backup(repo: &Repository) -> Result<String, PgsError> {
     let backup_file = backup_dir.join(format!("{backup_id}.index"));
     fs::write(&backup_file, &index_content).map_err(|e| PgsError::io(&backup_file, e))?;
 
+    // Pruning is housekeeping: the new backup is already safe on disk, and failing the
+    // staging operation over an old file that would not delete would be worse than
+    // keeping it until the next run.
+    let _ = prune_backups(&backup_dir, &backup_id);
+
     Ok(backup_id)
+}
+
+/// Delete all but the newest [`BACKUPS_RETAINED`] backups in `backup_dir`.
+///
+/// Ids sort by creation time, so the newest are the greatest names. `keep_id` is never
+/// deleted, even if clock skew makes its name sort old. `.json` sidecars written by older
+/// pgs versions are removed. Files that are not `backup-*` are left alone. Every deletion is
+/// attempted; the first failure is returned afterwards.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be listed or a file cannot be deleted.
+fn prune_backups(backup_dir: &Path, keep_id: &str) -> Result<(), PgsError> {
+    let mut stale = Vec::new();
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(backup_dir).map_err(|e| PgsError::io(backup_dir, e))? {
+        let entry = entry.map_err(|e| PgsError::io(backup_dir, e))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("backup-") {
+            continue;
+        }
+        if name.strip_suffix(".json").is_some() {
+            stale.push(name);
+        } else if let Some(id) = name.strip_suffix(".index")
+            && id != keep_id
+        {
+            snapshots.push(name);
+        }
+    }
+
+    snapshots.sort_unstable_by(|a, b| b.cmp(a));
+    stale.extend(
+        snapshots
+            .into_iter()
+            .skip(BACKUPS_RETAINED.saturating_sub(1)),
+    );
+
+    let mut first_error = None;
+    for name in stale {
+        let path = backup_dir.join(name);
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                first_error.get_or_insert_with(|| PgsError::io(&path, e));
+            }
+            _ => {}
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Restore the git index from a previously created backup.
@@ -176,6 +237,101 @@ mod tests {
         assert!(
             matches!(err, PgsError::Internal(_)),
             "expected Internal error, got: {err}"
+        );
+    }
+
+    fn backup_dir_of(repo: &Repository) -> std::path::PathBuf {
+        repo.path().join("pgs").join("backups")
+    }
+
+    fn index_ids(repo: &Repository) -> Vec<String> {
+        let mut ids: Vec<String> = fs::read_dir(backup_dir_of(repo))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter_map(|n| n.strip_suffix(".index").map(str::to_owned))
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn create_backup_back_to_back_yields_distinct_ids_in_creation_order() {
+        let (_temp, repo) = setup_test_repo();
+        let ids: Vec<String> = (0..20).map(|_| create_backup(&repo).unwrap()).collect();
+
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted, ids, "ids must be unique and sort in creation order");
+    }
+
+    #[test]
+    fn create_backup_beyond_retention_keeps_only_the_newest() {
+        let (_temp, repo) = setup_test_repo();
+        let ids: Vec<String> = (0..60).map(|_| create_backup(&repo).unwrap()).collect();
+
+        assert_eq!(index_ids(&repo), ids[60 - BACKUPS_RETAINED..]);
+
+        let index_path = repo.path().join("index");
+        let original = fs::read(&index_path).unwrap();
+        fs::write(&index_path, b"corrupted").unwrap();
+        restore_backup(&repo, ids.last().unwrap()).unwrap();
+        assert_eq!(fs::read(&index_path).unwrap(), original);
+    }
+
+    #[test]
+    fn create_backup_removes_legacy_json_sidecars_and_spares_other_files() {
+        let (_temp, repo) = setup_test_repo();
+        let dir = backup_dir_of(&repo);
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join("backup-20240101T000000-deadbeef.json");
+        let unrelated = dir.join("notes.json");
+        fs::write(&legacy, b"{}").unwrap();
+        fs::write(&unrelated, b"{}").unwrap();
+
+        let id = create_backup(&repo).unwrap();
+
+        assert!(!legacy.exists());
+        assert!(unrelated.exists());
+        assert!(dir.join(format!("{id}.index")).exists());
+    }
+
+    #[test]
+    fn create_backup_never_prunes_itself_when_older_names_sort_newer() {
+        let (_temp, repo) = setup_test_repo();
+        let dir = backup_dir_of(&repo);
+        fs::create_dir_all(&dir).unwrap();
+        for n in 0..BACKUPS_RETAINED + 10 {
+            fs::write(
+                dir.join(format!("backup-29990101T0000{n:02}-deadbeef.index")),
+                b"",
+            )
+            .unwrap();
+        }
+
+        let id = create_backup(&repo).unwrap();
+
+        let ids = index_ids(&repo);
+        assert_eq!(ids.len(), BACKUPS_RETAINED);
+        assert!(ids.contains(&id));
+    }
+
+    #[test]
+    fn restore_backup_accepts_an_id_from_before_the_id_format_changed() {
+        let (_temp, repo) = setup_test_repo();
+        let dir = backup_dir_of(&repo);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("backup-20240101T000000-1a2b3c4d.index"),
+            b"legacy index",
+        )
+        .unwrap();
+
+        restore_backup(&repo, "backup-20240101T000000-1a2b3c4d").unwrap();
+
+        assert_eq!(
+            fs::read(repo.path().join("index")).unwrap(),
+            b"legacy index"
         );
     }
 }
