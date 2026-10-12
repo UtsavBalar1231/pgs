@@ -315,6 +315,12 @@ fn extract_hunks(patch: &Patch<'_>, file_path: &str) -> Result<Vec<HunkInfo>, Pg
                 LineOrigin::Context | LineOrigin::Addition => line.new_lineno().unwrap_or(0),
             };
 
+            // The origin marker keeps `-a +b` and ` a +b` from hashing alike.
+            hunk_content.push(match origin {
+                LineOrigin::Context => ' ',
+                LineOrigin::Addition => '+',
+                LineOrigin::Deletion => '-',
+            });
             hunk_content.push_str(&content);
             hunk_content.push('\n');
 

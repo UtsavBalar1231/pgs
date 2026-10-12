@@ -302,3 +302,22 @@ fn scan_semantic_hunk_flags_whitespace_only_false() {
         "whitespace_only should be false when the hunk adds non-whitespace content"
     );
 }
+
+#[test]
+fn scan_distinguishes_replacing_a_line_from_keeping_it_and_adding_another() {
+    let hunk_of = |workdir: &str| {
+        let (dir, repo) = setup_repo();
+        commit_file(&repo, dir.path(), "f.txt", "a\n", "add f");
+        write_file(dir.path(), "f.txt", workdir);
+        let output = run_pgs(dir.path(), &["scan", "--full"]).success();
+        let scan: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+        scan["files"][0]["hunks"][0].clone()
+    };
+
+    // `-a +b` and ` a +b` hash the same text unless the origin is part of it.
+    let replaced = hunk_of("b\n");
+    let appended = hunk_of("a\nb\n");
+
+    assert_ne!(replaced["id"], appended["id"]);
+    assert_ne!(replaced["checksum"], appended["checksum"]);
+}
