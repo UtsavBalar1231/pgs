@@ -78,7 +78,7 @@ All tools require `repo_path`.
 | `pgs_plan_check` | Validate a commit plan against a fresh scan | no |
 | `pgs_plan_diff` | Reconcile a saved commit plan against a fresh scan | no |
 
-`repo_path` is canonicalized internally, so the worktree path and its `.git` path map to the same mutation lane.
+`repo_path` is canonicalized internally, so the worktree path and its `.git` path map to the same mutation lock.
 
 ## Result Envelope Fields
 
@@ -99,7 +99,13 @@ Tool payloads are unchanged: read the command envelope from
 
 - `pgs_stage`, `pgs_unstage`, and `pgs_commit` change repository state unless `dry_run` is true
 - approve mutating tool use explicitly in any agent or automation policy before enabling them
-- same-repo mutating requests are serialized by canonical repo path
+- same-repo mutating requests never run at the same time: each canonical repo path has one
+  lock, and waiting requests are served first come, first served in the order the server
+  reached them
+- that order is not guaranteed to match the order requests were sent; to stage and then
+  commit, wait for the `pgs_stage` response before sending `pgs_commit`
+- a mutating request cancelled while it waits for the lock is dropped without touching the
+  index, and gets no response
 - cancellation is only honored before a mutating request starts its atomic section
 - once a mutation starts, it is allowed to finish or roll back on the existing command path
 

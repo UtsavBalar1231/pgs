@@ -51,32 +51,44 @@ end of session (exit 0).
 - `sanitize_tool_schemas` / `strip_nonstandard_integer_formats` — drops
   nonstandard integer `format` annotations such as `uint32` that trip client
   schema validators
-- `map_execution_result()` — converts typed adapter output into `CallToolResult`,
-  with `ToolOutcome` and `PgsToolError` carrying the structured failure payload
+- `map_execution_result()` — converts the adapter's `CommandOutput` into
+  `CallToolResult`, with `ToolOutcome` and `PgsToolError` carrying the
+  structured failure payload. The text summary of a dry-run stage/unstage says
+  the index is unchanged
 - `ToolAnnotations` per tool: read-only tools are
   `read_only(true).destructive(false).idempotent(true).open_world(false)`;
   `pgs_stage`, `pgs_unstage`, and `pgs_commit` are
   `read_only(false).destructive(true).idempotent(false).open_world(false)`
 
-### `runtime.rs` (~311 lines)
+### `runtime.rs` (~210 lines)
 
-- `PgsMcpRuntime` — per-repo mutation coordinator. There is no task registry; MCP
-  task support was removed when the server moved to `2026-07-28`, where tasks
-  live in a separate draft extension.
-- `MutationLane` — per-repo FIFO gate. Stage/unstage/commit on one repo never race.
-  Ordering is by `MutationOrder { request_key, arrival_sequence }` so lane entry
-  follows arrival order, not scheduler order.
+- `PgsMcpRuntime` — per-repo mutation coordinator: a map from canonical worktree
+  path to `Arc<tokio::sync::Mutex<()>>`. There is no task registry; MCP task
+  support was removed when the server moved to `2026-07-28`, where tasks live in
+  a separate draft extension.
+- Guarantee: stage/unstage/commit on one repo never run at the same time, and
+  waiters are served FIFO in the order their handler called `lock()` (tokio's
+  `Mutex` is fair). That is not wire-arrival order: rmcp spawns one task per
+  request, so two requests sent back to back can reach the lock in either
+  order. A client that needs stage-then-commit ordering must wait for the
+  stage response before sending the commit.
 - `execute_command()` — read path; runs the adapter on `spawn_blocking`.
-- `execute_mutation()` — write path; acquires the lane, honors cancellation
-  before the atomic section starts, then delegates to `execute_command()`. A
-  `repo_path` that resolves to no repository skips the lane and reports through
-  `execute_command()`, so it gets the same structured `pgs_error` as a read.
-- `preregister_mutation()` / `discard_preregistered_mutation()` — reserve a lane
-  slot at transport receive time, before handler scheduling can reorder requests.
+- `execute_mutation()` — write path; takes the repo lock, honors cancellation
+  before the atomic section starts, then runs `execute_command()` while holding
+  the guard. A `repo_path` that resolves to no repository skips the lock and
+  reports through `execute_command()`, so it gets the same structured
+  `pgs_error` as a read.
+- `lock_unless_cancelled()` — waits for the lock or the cancellation future,
+  polling cancellation first. A request cancelled while queued drops its waiter
+  and never touches the index. Takes the cancel signal as a plain future
+  because `CancellationToken` lives in `tokio-util`, which pgs does not depend
+  on directly; this is also what lets the unit tests drive it.
+- Nothing is reserved before `call_tool` runs, so a request rmcp rejects early
+  (for example an unsupported `_meta` protocol version) leaves no state behind.
 - `canonical_repo_path()` — resolves the worktree and canonicalizes it, so the
-  worktree path and its `.git` path share one lane.
+  worktree path and its `.git` path share one lock.
 
-### `server.rs` (~397 lines)
+### `server.rs` (~300 lines)
 
 - `PgsMcpServer` — implements `rmcp::ServerHandler`
 - `call_tool` — `parse_call()` classifies each request as
@@ -90,12 +102,7 @@ end of session (exit 0).
   capabilities (`tools` only), implementation name/version, and
   `SERVER_INSTRUCTIONS` (workflow, hunk-id staleness, and the
   `expected_checksums` drift guard)
-- `RegistrationTransport` — transport wrapper that calls
-  `preregister_mutation_if_needed` on every inbound message, and frees a
-  reserved slot when an error response for that request id goes out (rmcp
-  rejects some requests before `call_tool` runs; without this, one bad request
-  blocks every later mutation on the repository)
-- Transport: stdio via `rmcp::transport::stdio` + `AsyncRwTransport`
+- Transport: stdio via `rmcp::transport::stdio` + `AsyncRwTransport`, unwrapped
 
 ## Adapter Pattern (cmd/mcp_adapter.rs)
 
@@ -103,10 +110,10 @@ Lives in `src/cmd/` not `src/mcp/` — bridges MCP to CLI:
 
 | Type | Purpose |
 |------|---------|
-| `McpScanRequest`, `McpStatusRequest`, etc. | Typed request structs (all fields resolved, no Options) |
+| `McpScanRequest`, `McpStatusRequest`, etc. | Typed request structs (all fields resolved, no Options); no `JsonSchema`, schemas come from the `*ToolInput` types |
 | `McpCommandRequest` | Enum routing to the right command handler |
-| `McpTypedOutput` | Enum of typed command results |
-| `McpAdapterError` | Wraps `PgsError` with command context for MCP error mapping |
+| `CommandOutput` | Re-export of `output::view::CommandOutput`, the result `execute` returns |
+| `McpAdapterError` | Wraps `PgsError` with command context; `code()`/`exit_code()` read the source error |
 | `execute(request)` | Dispatches `McpCommandRequest` to CLI handlers |
 
 ## Key Dependency

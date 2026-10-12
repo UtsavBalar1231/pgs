@@ -361,15 +361,18 @@ index at a time (the agent issues one pgs call, waits for completion, then issue
 Under that assumption the TOCTOU window is never exercised. Do not run concurrent pgs
 invocations or pair pgs with another tool that mutates the index without coordination.
 
-**MCP mutation lanes**: `pgs-mcp` enforces that serial assumption for its own requests.
-`PgsMcpRuntime` (`src/mcp/runtime.rs`) keys a `MutationLane` by canonicalized worktree path
-and admits one `pgs_stage`/`pgs_unstage`/`pgs_commit` at a time per repository, in arrival
-order. Lane slots are reserved at the transport layer before handler scheduling, so ordering
-follows request arrival rather than task-scheduler nondeterminism. rmcp rejects some requests
-before the handler runs (an unsupported protocol version in `_meta`, for example); the
-transport frees the reserved slot when it sends that error, or one bad request would block
-every later mutation on the repository. Read-only tools bypass the lane entirely. This does not close the cross-process window above: a concurrent `git` process
-outside pgs is still unserialized.
+**MCP mutation lock**: `pgs-mcp` enforces that serial assumption for its own requests.
+`PgsMcpRuntime` (`src/mcp/runtime.rs`) keeps one `tokio::sync::Mutex` per canonicalized
+worktree path, and each `pgs_stage`/`pgs_unstage`/`pgs_commit` handler holds it for the whole
+command, so mutations on one repository never overlap. tokio's mutex is fair: waiters are
+served in the order they called `lock()`. That is handler order, not wire-arrival order; rmcp
+runs each request on its own task, so two requests sent back to back may reach the lock in
+either order. A client that depends on ordering (stage, then commit) must wait for each
+response before sending the next request. A request cancelled while waiting drops out of the
+queue without touching the index. The lock is taken inside the handler, so a request rmcp
+rejects before dispatch (an unsupported protocol version in `_meta`, for example) never holds
+or reserves anything. Read-only tools bypass the lock entirely. This does not close the
+cross-process window above: a concurrent `git` process outside pgs is still unserialized.
 
 ## Freshness invariant
 
