@@ -3,7 +3,7 @@ mod common;
 use common::{commit_file, setup_repo, write_file};
 
 use pgs::cmd::mcp_adapter::{
-    McpCommandRequest, McpScanRequest, McpStageRequest, McpTypedOutput, execute,
+    CommandOutput, McpCommandRequest, McpScanRequest, McpStageRequest, execute,
 };
 
 #[test]
@@ -28,7 +28,7 @@ fn mcp_adapter_scan_reuses_typed_command_output() {
     let output = execute(request).expect("scan should succeed");
 
     match output {
-        McpTypedOutput::Scan(scan) => {
+        CommandOutput::Scan(scan) => {
             assert_eq!(scan.version, "v1");
             assert_eq!(scan.command.as_str(), "scan");
             assert_eq!(format!("{:?}", scan.detail), "Compact");
@@ -54,10 +54,8 @@ fn mcp_adapter_preserves_pgs_error_metadata() {
 
     let error = execute(request).expect_err("empty repo scan should return an error");
 
-    assert_eq!(error.code, "no_changes");
-    assert_eq!(error.exit_code, 1);
-    assert_eq!(error.source.code(), error.code);
-    assert_eq!(error.source.exit_code(), error.exit_code);
+    assert_eq!(error.code(), "no_changes");
+    assert_eq!(error.exit_code(), 1);
     assert!(matches!(error.source, pgs::error::PgsError::NoChanges));
 }
 
@@ -98,7 +96,7 @@ fn stage_via_mcp_adapter_on_symlink_produces_correct_blob() {
     let output = execute(request).expect("stage via MCP should succeed");
 
     match output {
-        McpTypedOutput::Operation(op) => {
+        CommandOutput::Operation(op) => {
             assert_eq!(op.items.len(), 1, "expected one staged item");
             // A symlink target string "target.bin" is 1 logical line.
             // `stage_file` now returns line count, not byte count.

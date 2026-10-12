@@ -11,13 +11,13 @@ use crate::{
     cmd::mcp_adapter::{
         McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpPlanCheckRequest,
         McpPlanDiffRequest, McpScanRequest, McpSplitHunkRequest, McpStageRequest, McpStatusRequest,
-        McpTypedOutput, McpUnstageRequest,
+        McpUnstageRequest,
     },
     error::PgsError,
     models::CommitPlan,
     output::view::{
-        CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput, PlanCheckOutput,
-        PlanDiffOutput, ScanOutput, SplitHunkOutput, StatusOutput,
+        CommandOutput, CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput,
+        PlanCheckOutput, PlanDiffOutput, ScanOutput, SplitHunkOutput, StatusOutput,
     },
 };
 
@@ -399,7 +399,7 @@ pub fn tool_definition(name: &str) -> Option<Tool> {
 /// Returns [`PgsError`] if the structured MCP response payload cannot be
 /// serialized while building the final `CallToolResult`.
 pub fn map_execution_result(
-    result: Result<McpTypedOutput, McpAdapterError>,
+    result: Result<CommandOutput, McpAdapterError>,
 ) -> Result<CallToolResult, PgsError> {
     match result {
         Ok(output) => success_result(output),
@@ -660,7 +660,7 @@ fn log_summary_text(log: &LogOutput) -> String {
     }
 }
 
-fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
+fn success_result(output: CommandOutput) -> Result<CallToolResult, PgsError> {
     macro_rules! ok {
         ($wrapper:ident, $pgs:expr, $summary_fn:expr) => {{
             let pgs = $pgs;
@@ -677,15 +677,15 @@ fn success_result(output: McpTypedOutput) -> Result<CallToolResult, PgsError> {
         }};
     }
     match output {
-        McpTypedOutput::Scan(v) => ok!(ScanToolOutput, v, scan_summary_text),
-        McpTypedOutput::Operation(v) => ok!(OperationToolOutput, v, operation_summary_text),
-        McpTypedOutput::Status(v) => ok!(StatusToolOutput, v, status_summary_text),
-        McpTypedOutput::Commit(v) => ok!(CommitToolOutput, v, commit_summary_text),
-        McpTypedOutput::Log(v) => ok!(LogToolOutput, v, log_summary_text),
-        McpTypedOutput::Overview(v) => ok!(OverviewToolOutput, v, overview_summary_text),
-        McpTypedOutput::SplitHunk(v) => ok!(SplitHunkToolOutput, v, split_hunk_summary_text),
-        McpTypedOutput::PlanCheck(v) => ok!(PlanCheckToolOutput, v, plan_check_summary_text),
-        McpTypedOutput::PlanDiff(v) => ok!(PlanDiffToolOutput, v, plan_diff_summary_text),
+        CommandOutput::Scan(v) => ok!(ScanToolOutput, v, scan_summary_text),
+        CommandOutput::Operation(v) => ok!(OperationToolOutput, v, operation_summary_text),
+        CommandOutput::Status(v) => ok!(StatusToolOutput, v, status_summary_text),
+        CommandOutput::Commit(v) => ok!(CommitToolOutput, v, commit_summary_text),
+        CommandOutput::Log(v) => ok!(LogToolOutput, v, log_summary_text),
+        CommandOutput::Overview(v) => ok!(OverviewToolOutput, v, overview_summary_text),
+        CommandOutput::SplitHunk(v) => ok!(SplitHunkToolOutput, v, split_hunk_summary_text),
+        CommandOutput::PlanCheck(v) => ok!(PlanCheckToolOutput, v, plan_check_summary_text),
+        CommandOutput::PlanDiff(v) => ok!(PlanDiffToolOutput, v, plan_diff_summary_text),
     }
 }
 
@@ -760,9 +760,9 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
 
     PgsToolError {
         kind,
-        code: error.code.to_owned(),
+        code: error.code().to_owned(),
         message: error.source.to_string(),
-        exit_code: error.exit_code,
+        exit_code: error.exit_code(),
         retryable: matches!(kind, PgsToolErrorKind::Retryable),
         guidance: error_guidance(&error.source),
     }
@@ -1225,7 +1225,6 @@ mod tests {
     /// Guards the exact `structuredContent` shape of scan and status success envelopes.
     #[test]
     fn mcp_success_envelopes_match_snapshot() {
-        use crate::cmd::mcp_adapter::McpTypedOutput;
         use crate::models::{ScanResult, ScanSummary, StatusReport, StatusSummary};
 
         // Build via the public factory methods to avoid depending on private view types.
@@ -1242,7 +1241,7 @@ mod tests {
                 mode_changed: 0,
             },
         });
-        let scan_result = map_execution_result(Ok(McpTypedOutput::Scan(scan_output)))
+        let scan_result = map_execution_result(Ok(CommandOutput::Scan(scan_output)))
             .expect("scan success result must serialize");
         assert_eq!(scan_result.is_error, Some(false));
         assert_eq!(
@@ -1277,7 +1276,7 @@ mod tests {
                 total_deletions: 0,
             },
         });
-        let status_result = map_execution_result(Ok(McpTypedOutput::Status(status_output)))
+        let status_result = map_execution_result(Ok(CommandOutput::Status(status_output)))
             .expect("status success result must serialize");
         assert_eq!(status_result.is_error, Some(false));
         assert_eq!(

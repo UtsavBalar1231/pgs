@@ -1,14 +1,17 @@
-use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 use crate::error::PgsError;
 use crate::models::CommitPlan;
-use crate::output::view::{CommandOutput, OutputCommand};
+use crate::output::view::OutputCommand;
+
+/// Typed command output returned by [`execute`]. The `output` module is
+/// crate-private; this re-export is how library callers name the type.
+pub use crate::output::view::CommandOutput;
 
 use super::{commit, log, overview, plan_check, plan_diff, scan, split, stage, status, unstage};
 
 /// Typed MCP payload for `pgs_scan` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpScanRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -21,7 +24,7 @@ pub struct McpScanRequest {
 }
 
 /// Typed MCP payload for `pgs_status` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpStatusRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -32,7 +35,7 @@ pub struct McpStatusRequest {
 }
 
 /// Typed MCP payload for `pgs_stage` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpStageRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -55,7 +58,7 @@ pub struct McpStageRequest {
 }
 
 /// Typed MCP payload for `pgs_unstage` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpUnstageRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -70,7 +73,7 @@ pub struct McpUnstageRequest {
 }
 
 /// Typed MCP payload for `pgs_log` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpLogRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -81,7 +84,7 @@ pub struct McpLogRequest {
 }
 
 /// Typed MCP payload for `pgs_commit` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpCommitRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -94,7 +97,7 @@ pub struct McpCommitRequest {
 }
 
 /// Typed MCP payload for `pgs_overview` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpOverviewRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -103,7 +106,7 @@ pub struct McpOverviewRequest {
 }
 
 /// Typed MCP payload for `pgs_split_hunk` requests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpSplitHunkRequest {
     /// Explicit repository path supplied by the MCP caller.
     pub repo_path: String,
@@ -160,66 +163,28 @@ pub enum McpCommandRequest {
     PlanDiff(McpPlanDiffRequest),
 }
 
-/// Typed command output returned to MCP callers without re-parsing CLI markers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum McpTypedOutput {
-    /// Structured scan output.
-    Scan(crate::output::view::ScanOutput),
-    /// Structured stage or unstage output.
-    Operation(crate::output::view::OperationOutput),
-    /// Structured status output.
-    Status(crate::output::view::StatusOutput),
-    /// Structured commit output.
-    Commit(crate::output::view::CommitOutput),
-    /// Structured log output.
-    Log(crate::output::view::LogOutput),
-    /// Structured overview output (scan + status fusion).
-    Overview(crate::output::view::OverviewOutput),
-    /// Structured split-hunk output (descriptive run classification).
-    SplitHunk(crate::output::view::SplitHunkOutput),
-    /// Structured plan-check output (overlap / uncovered / unsafe / unknown).
-    PlanCheck(crate::output::view::PlanCheckOutput),
-    /// Structured plan-diff output (`still_valid` / shifted / gone).
-    PlanDiff(crate::output::view::PlanDiffOutput),
-}
-
-impl From<CommandOutput> for McpTypedOutput {
-    fn from(output: CommandOutput) -> Self {
-        match output {
-            CommandOutput::Scan(output) => Self::Scan(output),
-            CommandOutput::Operation(output) => Self::Operation(output),
-            CommandOutput::Status(output) => Self::Status(output),
-            CommandOutput::Commit(output) => Self::Commit(output),
-            CommandOutput::Log(output) => Self::Log(output),
-            CommandOutput::Overview(output) => Self::Overview(output),
-            CommandOutput::SplitHunk(output) => Self::SplitHunk(output),
-            CommandOutput::PlanCheck(output) => Self::PlanCheck(output),
-            CommandOutput::PlanDiff(output) => Self::PlanDiff(output),
-        }
-    }
-}
-
 /// Stable MCP-facing error metadata derived from a CLI command failure.
 #[derive(Debug)]
 pub struct McpAdapterError {
     /// Command that produced the failure.
     pub command: OutputCommand,
-    /// Stable machine-readable error code from [`PgsError`].
-    pub code: &'static str,
-    /// Exit code associated with the underlying error.
-    pub exit_code: i32,
     /// Original command error preserved for downstream mapping.
     pub source: PgsError,
 }
 
 impl McpAdapterError {
     pub(crate) const fn new(command: OutputCommand, source: PgsError) -> Self {
-        Self {
-            command,
-            code: source.code(),
-            exit_code: source.exit_code(),
-            source,
-        }
+        Self { command, source }
+    }
+
+    /// Stable machine-readable error code of the underlying [`PgsError`].
+    pub const fn code(&self) -> &'static str {
+        self.source.code()
+    }
+
+    /// Exit code associated with the underlying [`PgsError`].
+    pub const fn exit_code(&self) -> i32 {
+        self.source.exit_code()
     }
 }
 
@@ -233,7 +198,7 @@ impl McpAdapterError {
 /// Returns [`McpAdapterError`] when the underlying command fails. The error
 /// preserves the originating command, stable error code, exit code, and source
 /// [`PgsError`] for later MCP result mapping.
-pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterError> {
+pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterError> {
     match request {
         McpCommandRequest::Scan(request) => scan::execute(
             Some(request.repo_path.as_str()),
@@ -243,14 +208,12 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 full: request.full,
             },
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Scan, source)),
         McpCommandRequest::Status(request) => status::execute(
             Some(request.repo_path.as_str()),
             request.context.max(1),
             request.full,
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Status, source)),
         McpCommandRequest::Stage(request) => stage::execute(
             Some(request.repo_path.as_str()),
@@ -268,7 +231,6 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                     .collect(),
             },
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Stage, source)),
         McpCommandRequest::Unstage(request) => unstage::execute(
             Some(request.repo_path.as_str()),
@@ -279,7 +241,6 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 dry_run: request.dry_run,
             },
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Unstage, source)),
         McpCommandRequest::Commit(request) => commit::execute(
             Some(request.repo_path.as_str()),
@@ -290,7 +251,6 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
             },
             false,
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Commit, source)),
         McpCommandRequest::Log(request) => log::execute(
             Some(request.repo_path.as_str()),
@@ -299,11 +259,9 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 paths: request.paths,
             },
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Log, source)),
         McpCommandRequest::Overview(request) => {
             overview::execute(Some(request.repo_path.as_str()), request.context.max(1))
-                .map(Into::into)
                 .map_err(|source| McpAdapterError::new(OutputCommand::Overview, source))
         }
         McpCommandRequest::SplitHunk(request) => split::execute(
@@ -313,21 +271,18 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
                 hunk_id: request.hunk_id,
             },
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::SplitHunk, source)),
         McpCommandRequest::PlanCheck(request) => plan_check::run_with_plan(
             Some(request.repo_path.as_str()),
             request.context.max(1),
             &request.plan,
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::PlanCheck, source)),
         McpCommandRequest::PlanDiff(request) => plan_diff::run_with_plan(
             Some(request.repo_path.as_str()),
             request.context.max(1),
             &request.plan,
         )
-        .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::PlanDiff, source)),
     }
 }
