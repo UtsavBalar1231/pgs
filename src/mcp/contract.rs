@@ -16,8 +16,9 @@ use crate::{
     error::PgsError,
     models::CommitPlan,
     output::view::{
-        CommandOutput, CommitOutput, LogOutput, OperationOutput, OutputCommand, OverviewOutput,
-        PlanCheckOutput, PlanDiffOutput, ScanOutput, SplitHunkOutput, StatusOutput,
+        CommandOutput, CommitOutput, LogOutput, OperationOutput, OperationStatusView,
+        OutputCommand, OverviewOutput, PlanCheckOutput, PlanDiffOutput, ScanOutput,
+        SplitHunkOutput, StatusOutput,
     },
 };
 
@@ -780,6 +781,12 @@ fn scan_summary_text(scan: &ScanOutput) -> String {
 }
 
 fn operation_summary_text(operation: &OperationOutput) -> String {
+    if operation.status == OperationStatusView::DryRun {
+        return format!(
+            "Dry run: {} selection(s) validated; index unchanged.",
+            operation.items.len()
+        );
+    }
     let verb = match operation.command {
         OutputCommand::Stage => "Staged",
         OutputCommand::Unstage => "Unstaged",

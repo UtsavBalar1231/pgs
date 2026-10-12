@@ -127,6 +127,10 @@ fn mcp_unstage_tool_dry_run_matches_cli_contract() {
     assert_eq!(pgs["command"], "unstage");
     assert_eq!(pgs["status"], "dry_run");
     assert_eq!(pgs["backup_id"], Value::Null);
+    assert_eq!(
+        result["content"][0]["text"],
+        "Dry run: 1 selection(s) validated; index unchanged."
+    );
 
     let status_output = run_pgs(dir.path(), &["status"]).success();
     let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
