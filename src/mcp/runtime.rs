@@ -102,9 +102,8 @@ impl PgsMcpRuntime {
     ///
     /// # Errors
     ///
-    /// Returns an MCP error if preregistration data is invalid, the repository
-    /// path cannot be canonicalized, the request is cancelled before execution
-    /// begins, or the adapter result cannot be translated into an MCP response.
+    /// Returns an MCP error if the request is cancelled before execution begins
+    /// or the adapter result cannot be translated into an MCP response.
     pub async fn execute_mutation(
         &self,
         tool_name: &'static str,
@@ -117,7 +116,11 @@ impl PgsMcpRuntime {
         let RegisteredMutation { lane, order } = if let Some(registered) = registered {
             registered
         } else {
-            let repo_key = canonical_repo_path(repo_path)?;
+            // A path that resolves to no repository has no index to protect. The
+            // command path reports it with the same structured error as a read.
+            let Ok(repo_key) = canonical_repo_path(repo_path) else {
+                return self.execute_command(tool_name, command).await;
+            };
             let order = self.next_mutation_order(&context.id);
             let lane = self.repo_lane(repo_key);
             lane.enqueue(order.clone());

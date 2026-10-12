@@ -738,6 +738,7 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::EmptyCommitMessage
         | PgsError::InvalidArguments { .. }
         | PgsError::InputFileUnreadable { .. }
+        | PgsError::NotARepository { .. }
         | PgsError::ExplainWithoutDryRun
         | PgsError::NonUtf8Partial { .. }
         | PgsError::CrlfMismatch { .. }
@@ -890,6 +891,9 @@ fn error_guidance(error: &PgsError) -> String {
         PgsError::InvalidArguments { detail } => detail.clone(),
         PgsError::InputFileUnreadable { .. } => {
             "Check that the path exists, is a readable UTF-8 file, and is not `-`.".to_owned()
+        }
+        PgsError::NotARepository { .. } => {
+            "Pass the absolute path of a git working tree as repo_path.".to_owned()
         }
         PgsError::StaleScan { .. } => {
             "Re-run pgs_scan to refresh checksums and hunk IDs, then retry.".to_owned()

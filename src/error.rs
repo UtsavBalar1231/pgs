@@ -98,6 +98,16 @@ pub enum PgsError {
         source: std::io::Error,
     },
 
+    /// The repository path names no git repository.
+    ///
+    /// libgit2 reports this as a generic not-found error. The path came from the
+    /// caller, so it is a user error rather than [`PgsError::Git`] (exit 4).
+    #[error("not a git repository: {path}")]
+    NotARepository {
+        /// The path that was searched for a repository.
+        path: PathBuf,
+    },
+
     /// `--explain` was passed without `--dry-run`.
     #[error("--explain requires --dry-run")]
     ExplainWithoutDryRun,
@@ -230,6 +240,7 @@ impl PgsError {
             Self::EmptyCommitMessage => "empty_commit_message",
             Self::InvalidArguments { .. } => "invalid_arguments",
             Self::InputFileUnreadable { .. } => "input_file_unreadable",
+            Self::NotARepository { .. } => "not_a_repository",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
             Self::NonUtf8Partial { .. } => "non_utf8_partial",
             Self::CrlfMismatch { .. } => "crlf_mismatch",
@@ -260,6 +271,7 @@ impl PgsError {
             | Self::EmptyCommitMessage
             | Self::InvalidArguments { .. }
             | Self::InputFileUnreadable { .. }
+            | Self::NotARepository { .. }
             | Self::ExplainWithoutDryRun
             | Self::NonUtf8Partial { .. }
             | Self::CrlfMismatch { .. }
@@ -330,6 +342,16 @@ mod tests {
         for v in variants {
             assert_eq!(v.exit_code(), 2, "wrong exit code for: {v}");
         }
+    }
+
+    #[test]
+    fn not_a_repository_maps_to_exit_code_2_with_path_context() {
+        let err = PgsError::NotARepository {
+            path: "/no/such/repo".into(),
+        };
+        assert_eq!(err.exit_code(), 2);
+        assert_eq!(err.code(), "not_a_repository");
+        assert!(err.to_string().contains("/no/such/repo"), "{err}");
     }
 
     #[test]

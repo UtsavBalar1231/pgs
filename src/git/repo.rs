@@ -9,12 +9,19 @@ use crate::error::PgsError;
 ///
 /// `path = Some` opens at that path; `None` walks up from CWD. The workdir is
 /// corrected in-memory for non-standard layouts (e.g. `--separate-git-dir`).
-// Errors: PgsError::Git on open failure; PgsError::WorkdirMismatch if uncorrectable.
+// Errors: PgsError::NotARepository when nothing is found; PgsError::Git on any
+// other open failure; PgsError::WorkdirMismatch if uncorrectable.
 pub fn open(path: Option<&str>) -> Result<Repository, PgsError> {
-    let repo = match path {
-        Some(p) => Repository::open(p).map_err(PgsError::from)?,
-        None => Repository::discover(".").map_err(PgsError::from)?,
+    let opened = match path {
+        Some(p) => Repository::open(p),
+        None => Repository::discover("."),
     };
+    let repo = opened.map_err(|error| match error.code() {
+        git2::ErrorCode::NotFound => PgsError::NotARepository {
+            path: PathBuf::from(path.unwrap_or(".")),
+        },
+        _ => PgsError::from(error),
+    })?;
     validate_workdir(&repo, path)?;
     Ok(repo)
 }
@@ -124,14 +131,15 @@ mod tests {
     }
 
     #[test]
-    fn open_non_repo_path_returns_exit_code_4() {
+    fn open_non_repo_path_returns_not_a_repository() {
         let dir = TempDir::new().expect("tempdir");
         let non_repo = dir.path().join("not_a_repo");
         fs::create_dir_all(&non_repo).expect("create dir");
         let result = open(Some(non_repo.to_str().expect("utf8")));
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert_eq!(err.exit_code(), 4, "expected exit code 4, got: {err}");
+        assert_eq!(err.code(), "not_a_repository", "{err}");
+        assert_eq!(err.exit_code(), 2, "{err}");
     }
 
     #[test]
@@ -174,7 +182,7 @@ mod tests {
         let result = open(Some(subdir.to_str().expect("utf8")));
         // This is expected to fail for Repository::open (not discover)
         assert!(result.is_err());
-        assert_eq!(result.err().unwrap().exit_code(), 4);
+        assert_eq!(result.err().unwrap().code(), "not_a_repository");
     }
 
     /// Helper: run git commands during test setup.
