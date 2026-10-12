@@ -12,7 +12,9 @@
 - tasks: unsupported
 - remote HTTP transports: unsupported
 - OAuth: unsupported
-- registry publishing/discovery: unsupported
+- distribution: GitHub Releases (prebuilt `pgs-mcp-<target>` binaries) and the
+  plugin marketplaces in this repository; the server is not listed in an MCP
+  registry
 
 ## Protocol Version
 
@@ -122,6 +124,20 @@ Or add the stdio server manually in Codex without the plugin:
 codex mcp add pgs -- /path/to/pgs-mcp
 ```
 
+Other harnesses, with `pgs-mcp` on your `PATH`:
+
+```bash
+claude mcp add --transport stdio --scope user pgs -- pgs-mcp
+gemini mcp add -s user pgs pgs-mcp
+code --add-mcp '{"name":"pgs","command":"pgs-mcp"}'
+```
+
+Cursor installs from
+`cursor://anysphere.cursor-deeplink/mcp/install?name=pgs&config=eyJjb21tYW5kIjoicGdzLW1jcCJ9`.
+Per-harness setup for these and the rest (Copilot CLI, Kiro, Windsurf, Cline,
+Zed, OpenCode, Goose, Amp, Crush, Continue, Junie, Warp, Factory Droid) is in
+[INTEGRATIONS.md](INTEGRATIONS.md).
+
 Example `2026-07-28` session. There is no handshake; every request carries
 the `_meta` keys:
 
@@ -166,4 +182,5 @@ Example amend call:
   `initialize` session, send nothing extra
 - `tasks/*` methods return `-32601`; there is no task lifecycle to poll, so read
   every tool result from the `tools/call` response directly
-- do not assume prompts, resources, logging, HTTP, OAuth, or registry support
+- do not assume prompts, resources, logging, HTTP, OAuth, or MCP registry
+  listing
