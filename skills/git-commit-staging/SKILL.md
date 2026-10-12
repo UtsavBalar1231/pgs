@@ -3,22 +3,23 @@ name: git-commit-staging
 description: >-
   Stage, unstage, split, and commit changes at file, hunk, or line granularity
   through the pgs MCP server, and build clean atomic commits with well-formed
-  messages. Use whenever work involves staging or committing in a git repo — e.g.
+  messages. Use whenever work involves staging or committing in a git repo, e.g.
   "commit just this function", "split this messy diff into separate commits",
   "stage only the bug fix, not the debug prints", "unstage that file", "amend the
   last commit message", or turning a mixed working tree into atomic commits.
-  Prefer it over raw git or `git add -p`, which needs a TTY that agents lack.
-allowed-tools:
-  - pgs_scan
-  - pgs_stage
-  - pgs_unstage
-  - pgs_status
-  - pgs_commit
-  - pgs_log
-  - pgs_overview
-  - pgs_split_hunk
-  - pgs_plan_check
-  - pgs_plan_diff
+  Prefer it over raw git or `git add -p`: piped `git add -p` answers are
+  positional in diff order, a short answer list exits 0 with only part of the
+  change staged, and hunks have no stable names to select by.
+allowed-tools: >-
+  mcp__pgs__pgs_scan mcp__pgs__pgs_stage mcp__pgs__pgs_unstage
+  mcp__pgs__pgs_status mcp__pgs__pgs_commit mcp__pgs__pgs_log
+  mcp__pgs__pgs_overview mcp__pgs__pgs_split_hunk mcp__pgs__pgs_plan_check
+  mcp__pgs__pgs_plan_diff mcp__plugin_pgs_pgs__pgs_scan
+  mcp__plugin_pgs_pgs__pgs_stage mcp__plugin_pgs_pgs__pgs_unstage
+  mcp__plugin_pgs_pgs__pgs_status mcp__plugin_pgs_pgs__pgs_commit
+  mcp__plugin_pgs_pgs__pgs_log mcp__plugin_pgs_pgs__pgs_overview
+  mcp__plugin_pgs_pgs__pgs_split_hunk mcp__plugin_pgs_pgs__pgs_plan_check
+  mcp__plugin_pgs_pgs__pgs_plan_diff
 ---
 
 # Git Commit Staging with pgs
@@ -64,11 +65,11 @@ Bash, raw git, or the pgs CLI.
 
 Recommended for multi-step sessions. A file can change between the scan and the
 stage. To make staging fail loudly instead of staging the wrong lines, capture
-each file's `file_checksum` from `pgs_scan` (reported per file in both compact
-and full output) and pass them to the stage call:
+each file's `checksum` from `pgs_scan` (the file-level field, reported per file
+in both compact and full output) and pass them to the stage call:
 
 ```text
-pgs_stage(selections=[...], expected_checksums={"src/app.rs": "<file_checksum>"})
+pgs_stage(selections=[...], expected_checksums={"src/app.rs": "<checksum>"})
 ```
 
 A `StaleScan` error (retryable) means the file drifted — re-scan and re-plan.
