@@ -14,7 +14,9 @@ use rmcp::{
         Tool,
     },
     serve_server,
-    service::{RequestContext, RoleServer, RxJsonRpcMessage, TxJsonRpcMessage},
+    service::{
+        RequestContext, RoleServer, RxJsonRpcMessage, ServerInitializeError, TxJsonRpcMessage,
+    },
     transport::{Transport, async_rw::AsyncRwTransport, stdio},
 };
 
@@ -259,7 +261,14 @@ pub async fn run_stdio() -> Result<(), Box<dyn Error + Send + Sync>> {
         inner: AsyncRwTransport::new_server(stdin, stdout),
         runtime: Arc::clone(&runtime),
     };
-    let server = serve_server(PgsMcpServer { runtime }, transport).await?;
+    let server = match serve_server(PgsMcpServer { runtime }, transport).await {
+        Ok(server) => server,
+        // A 2026-07-28 client never sends `initialize`, and rmcp serves its whole
+        // session while still waiting for one, so stdin closing here is that
+        // session ending normally.
+        Err(ServerInitializeError::ConnectionClosed(_)) => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
     server.waiting().await?;
 
     Ok(())

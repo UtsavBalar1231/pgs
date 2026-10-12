@@ -391,3 +391,16 @@ fn mcp_local_launch_example_works() {
         "status"
     );
 }
+
+// A 2026-07-28 client never sends `initialize`, so closing stdin is how its
+// session normally ends. That must not look like a crash to the client.
+#[test]
+fn mcp_stdio_modern_session_exits_cleanly_when_the_client_closes_stdin() {
+    let (mut child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    open_session(&mut stdin, &mut stdout);
+
+    drop(stdin);
+    let status = child.wait().unwrap();
+
+    assert!(status.success(), "pgs-mcp exited with {status}");
+}
