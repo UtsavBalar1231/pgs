@@ -359,20 +359,13 @@ fn staged_two_hunk_fixture(dir: &Path, repo: &git2::Repository) -> Vec<String> {
     write_file(dir, "f.txt", &modified);
     run_pgs(dir, &["stage", "f.txt"]).success();
 
-    let reopened = git2::Repository::open(dir).unwrap();
-    let diff = diff_head_to_index(&reopened, 3).unwrap();
-    let scan = build_scan_result(&reopened, &diff, None).unwrap();
-    assert_eq!(scan.files.len(), 1, "fixture must stage exactly one file");
+    let hunk_ids = staged_hunk_ids(dir);
     assert_eq!(
-        scan.files[0].hunks.len(),
+        hunk_ids.len(),
         2,
         "fixture must produce exactly two staged hunks"
     );
-    scan.files[0]
-        .hunks
-        .iter()
-        .map(|h| h.hunk_id.clone())
-        .collect()
+    hunk_ids
 }
 
 fn staged_blob(dir: &Path) -> String {
