@@ -66,4 +66,4 @@ config: pin anything that changes bytes (`core.autocrlf`) in the test repo.
 `<thing>_<scenario>_<expected>` — e.g.:
 - `scan_modified_file_returns_hunk`
 - `stage_single_line_in_modified_file_updates_index`
-- `unstage_hunk_restores_head_content`
+- `unstage_hunk_by_id_restores_head_content`

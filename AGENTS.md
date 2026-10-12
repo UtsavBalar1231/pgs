@@ -82,7 +82,7 @@ anchor equal to the crate version.
 | Add/change CLI flag | `src/cmd/mod.rs` | Cli struct, Command enum |
 | Add/change MCP tool | `src/mcp/contract.rs` | Tool schemas, then `runtime.rs` |
 | Modify staging logic | `src/git/staging.rs` | `stage_file`, `stage_lines`; pairing in `git/mod.rs` |
-| Modify unstaging | `src/git/unstaging.rs` | `unstage_file`, `unstage_lines`, `unstage_hunk` |
+| Modify unstaging | `src/git/unstaging.rs` | `unstage_file`, `unstage_lines` |
 | Change diff behavior | `src/git/diff.rs` | `diff_index_to_workdir`, `diff_head_to_index` |
 | Change output format | `src/output/view/` | View-model types, then `text.rs`/`json.rs` |
 | Add shared data type | `src/models/` | Pick the domain submodule; re-export from `mod.rs` |
