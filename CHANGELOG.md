@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.8.0 - 2026-10-13
+
+### Breaking
+
+- Hunk ids and hunk checksums now hash each line together with its origin
+  marker (context, addition or deletion). Every id and checksum changes once.
+  Replacing `a` with `b` and keeping `a` while adding `b` at the same position
+  used to share an id, which broke the promise that a changed file yields a
+  different one and let `plan-diff` report high confidence for the wrong edit.
+  Re-scan before staging and refresh saved plans that carry `captured_hunk_id`
+  or hunk checksums.
+- Unstaging an appended line no longer also unstages the newline its
+  predecessor gained. With HEAD `aaa` and the index `aaa\nbbb`,
+  `unstage f.txt:2-2` now leaves `aaa\n`; unstage line 1 as well to return to
+  HEAD. Line 1 gaining its newline is its own change, and `stage` already
+  refuses to apply such a terminator change when nobody selected it.
+
+### Added
+
+- `pgs-mcp` serves `initialize`-era clients again: MCP `2025-11-25` and
+  `2025-06-18` alongside `2026-07-28`. Codex CLI, VS Code Copilot and Gemini
+  CLI all still open sessions with `initialize`; on rmcp 3.5 a modern-only
+  server refused every one of them with `-32022`.
+- Windows on ARM64 (`aarch64-pc-windows-msvc`) release binaries, and a
+  `SHA256SUMS` file on every release.
+- Gemini CLI extension (`gemini-extension.json`), a Codex-native marketplace
+  (`.agents/plugins/marketplace.json`), an MCP Registry `server.json` draft,
+  `glama.json`, a plugin README, and `docs/INTEGRATIONS.md` with setup for
+  Claude Code, Codex, Gemini CLI, Copilot CLI, VS Code, Cursor, Windsurf, Cline,
+  Zed, OpenCode, Goose, Amp, Crush, Continue, Kiro, JetBrains Junie, Factory
+  Droid and Warp.
+- New error codes, all exit 2: `not_a_repository` (the path names no git
+  repository), `external_filter` (the path needs a filter driver such as
+  git-lfs or git-crypt), and `unsupported_entry` (a submodule or other non-file
+  entry).
+- `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, and the `AGENTS.md` guides,
+  which were gitignored, are now tracked.
+
+### Changed
+
+- Staging runs files through git's built-in clean filters (`core.autocrlf`,
+  `text`/`eol`, `ident`), as `git add` does.
+- Index entries written by pgs carry zero stat data, size included, as
+  `git update-index --cacheinfo` does, so git and libgit2 compare content
+  rather than trusting a size that a partial stage or a filter made differ
+  from the disk. `git status` rehashes such a file once and refreshes the
+  entry.
+- Upgraded `rmcp` from 3.1 to 3.5 and every other dependency to its latest
+  compatible release. `git2` no longer builds vendored OpenSSL: pgs never
+  touches a remote, so the binaries ship without it.
+- The plugin launcher honours `PLUGIN_DATA` (Agent Plugins spec), installs
+  `pgs-mcp.exe` on Windows, and supports Windows ARM64 and Linux `arm64`.
+- CI tests Linux, macOS and Windows and checks the MSRV; the release workflow
+  rehearses every build, smoke-tests each binary, and checks the asset set on
+  pull requests before a tag depends on it.
+- The skill's `allowed-tools` lists real MCP tool names in the spec's
+  string form, and the skill and README no longer claim that `git add -p`
+  needs a TTY.
+
+### Fixed
+
+- Partial staging no longer reorders kept lines. Selection paired a
+  replace run's deletions with additions content-first while assembly paired
+  them by position, so HEAD `a\np\nb` (no final newline) with workdir
+  `a\nb\nq\n` and `stage f.txt:3-3` staged `a\np\nq\nb`, with exit 0. Both now
+  share one rule, and that range is refused with `unterminated_interior_line`.
+  `unstage` had the mirror bug.
+- Partial staging no longer strips a newline the selection kept: base `a\n`
+  with workdir `a\nb\nc` and `stage f.txt:2-2` staged `a\nb` although line 2 is
+  `b\n`, which then made staging line 3 impossible.
+- Under `core.autocrlf=true`, the Git for Windows default, every partial stage
+  was refused as `crlf_mismatch`, and a whole-file stage wrote CRLF into the
+  index.
+- A path whose `filter` attribute names a configured driver (git-lfs,
+  git-crypt) was staged unfiltered, putting full binaries or plaintext into the
+  index with exit 0. It is now refused.
+- One MCP request that rmcp rejects before dispatch, such as one declaring an
+  unsupported protocol version, made every later mutation on that repository
+  hang until the server restarted.
+- A 2026-07-28 MCP client closing its session made `pgs-mcp` exit 4.
+- Mutating MCP tools returned a bare JSON-RPC `-32603` for a bad `repo_path`,
+  and every surface reported a missing repository as an internal error.
+- `stage`, `status`, `overview`, `unstage` and `commit` failed in a repository
+  with no commits yet; `commit` now creates the root commit and rejects
+  `--amend` there.
+- A file marked with `git add -N` kept its intent-to-add flag after
+  `pgs stage`, so `git commit` saw nothing to commit.
+- Staging a submodule failed as `internal_error` (exit 4).
+
+### Removed
+
+- `staging_failed`, an error code nothing could emit, and dead launcher
+  scripts under `scripts/` and `plugins/pgs/scripts/`. The root `skills`
+  symlink is now a real directory, since symlinks break on Windows checkouts
+  and Gemini extension installs.
+
 ## 0.7.0 - 2026-08-05
 
 ### Added
