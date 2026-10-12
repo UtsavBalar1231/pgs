@@ -84,28 +84,6 @@ fn shared_mcp_manifest_uses_codex_native_cached_binary_launcher() {
 }
 
 #[test]
-fn launcher_scripts_refresh_stale_cached_plugin_binary() {
-    let runner = std::fs::read_to_string("scripts/run-pgs-mcp.sh").unwrap();
-    let installer = std::fs::read_to_string("scripts/install-binary.sh").unwrap();
-
-    assert!(runner.contains("CLAUDE_PLUGIN_ROOT"));
-    assert!(runner.contains("CLAUDE_PLUGIN_DATA"));
-    assert!(runner.contains("DATA_VERSION_FILE="));
-    assert!(runner.contains("INSTALLED_VERSION="));
-    assert!(runner.contains("[ \"$INSTALLED_VERSION\" != \"$VERSION\" ]"));
-    assert!(runner.contains("[ -r \"$DATA_VERSION_FILE\" ]"));
-
-    assert!(installer.contains("CLAUDE_PLUGIN_ROOT"));
-    assert!(installer.contains("CLAUDE_PLUGIN_DATA"));
-    assert!(installer.contains("LOCK_DIR="));
-    assert!(installer.contains("mkdir \"$LOCK_DIR\""));
-    assert!(installer.contains("TMP_BINARY="));
-    assert!(installer.contains("mv -f \"$TMP_BINARY\" \"$BINARY\""));
-    assert!(installer.contains("TMP_VERSION="));
-    assert!(installer.contains("mv -f \"$TMP_VERSION\" \"$DATA_VERSION_FILE\""));
-}
-
-#[test]
 fn marketplace_entry_points_to_codex_compatible_plugin_path() {
     let marketplace = read_json(".claude-plugin/marketplace.json");
     let plugins = marketplace["plugins"].as_array().unwrap();
@@ -137,8 +115,6 @@ fn marketplace_entry_points_to_codex_compatible_plugin_path() {
     assert_regular_file("plugins/pgs/skills/git-commit-staging/SKILL.md");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/references/tool-reference.md");
     assert_regular_file("plugins/pgs/skills/git-commit-staging/references/commit-message-guide.md");
-    assert_regular_file("plugins/pgs/scripts/run-pgs-mcp.sh");
-    assert_regular_file("plugins/pgs/scripts/install-binary.sh");
     assert_regular_file("plugins/pgs/VERSION");
     assert!(!std::path::Path::new("hooks/hooks.json").exists());
     assert!(!std::path::Path::new("plugins/pgs/hooks/hooks.json").exists());
@@ -152,14 +128,6 @@ fn packaged_codex_plugin_matches_repo_sources() {
             "plugins/pgs/.codex-plugin/plugin.json",
         ),
         (".mcp.json", "plugins/pgs/.mcp.json"),
-        (
-            "scripts/run-pgs-mcp.sh",
-            "plugins/pgs/scripts/run-pgs-mcp.sh",
-        ),
-        (
-            "scripts/install-binary.sh",
-            "plugins/pgs/scripts/install-binary.sh",
-        ),
         ("VERSION", "plugins/pgs/VERSION"),
     ] {
         assert_eq!(
