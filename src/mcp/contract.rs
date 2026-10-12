@@ -167,6 +167,9 @@ pub struct CommitToolInput {
     pub message_file: Option<String>,
     /// Replace the current HEAD commit instead of creating a new child commit.
     pub amend: Option<bool>,
+    /// Commit even though the repository has pre-commit, prepare-commit-msg or
+    /// commit-msg hooks, which pgs cannot run.
+    pub no_verify: Option<bool>,
 }
 
 impl From<CommitToolInput> for McpCommitRequest {
@@ -176,6 +179,7 @@ impl From<CommitToolInput> for McpCommitRequest {
             message: value.message,
             message_file: value.message_file,
             amend: value.amend.unwrap_or(false),
+            no_verify: value.no_verify.unwrap_or(false),
         }
     }
 }
@@ -744,6 +748,7 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::InvalidArguments { .. }
         | PgsError::InputFileUnreadable { .. }
         | PgsError::NotARepository { .. }
+        | PgsError::CommitHooksPresent { .. }
         | PgsError::ExternalFilter { .. }
         | PgsError::UnsupportedEntry { .. }
         | PgsError::ExplainWithoutDryRun
@@ -905,6 +910,10 @@ fn error_guidance(error: &PgsError) -> String {
         }
         PgsError::NotARepository { .. } => {
             "Pass the absolute path of a git working tree as repo_path.".to_owned()
+        }
+        PgsError::CommitHooksPresent { .. } => {
+            "Commit with git so the hooks run, or pass no_verify: true to commit without them."
+                .to_owned()
         }
         PgsError::ExternalFilter { .. } => {
             "Stage this path with git, which runs the filter driver; pgs cannot.".to_owned()

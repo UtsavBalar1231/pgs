@@ -26,6 +26,40 @@ pub fn open(path: Option<&str>) -> Result<Repository, PgsError> {
     Ok(repo)
 }
 
+/// The hooks `git commit` would run that pgs cannot: active `pre-commit`,
+/// `prepare-commit-msg` and `commit-msg` hooks, in that order.
+///
+/// Looks where git looks: `core.hooksPath` (relative to the working tree root
+/// when relative), else `hooks/` in the common git directory. Like git, only an
+/// executable file counts on Unix; `*.sample` files never do.
+///
+/// # Errors
+///
+/// `PgsError::Git` if the configuration cannot be read.
+pub fn active_commit_hooks(repo: &Repository) -> Result<Vec<String>, PgsError> {
+    let hooks_dir = match repo.config()?.get_path("core.hooksPath") {
+        Ok(path) if path.is_absolute() => path,
+        Ok(path) => repo.workdir().unwrap_or_else(|| repo.path()).join(path),
+        Err(_) => repo.commondir().join("hooks"),
+    };
+    Ok(["pre-commit", "prepare-commit-msg", "commit-msg"]
+        .into_iter()
+        .filter(|name| is_runnable_hook(&hooks_dir.join(name)))
+        .map(str::to_owned)
+        .collect())
+}
+
+#[cfg(unix)]
+fn is_runnable_hook(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_runnable_hook(path: &Path) -> bool {
+    path.is_file()
+}
+
 /// Validate and correct the repository workdir in-memory.
 ///
 /// In non-standard `.git` layouts (`--separate-git-dir`, Google Repo),

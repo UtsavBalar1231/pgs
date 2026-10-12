@@ -21,6 +21,10 @@ pub struct CommitArgs {
     /// Replace the current HEAD commit instead of creating a new child commit.
     #[arg(long)]
     pub amend: bool,
+    /// Commit even though pre-commit, prepare-commit-msg or commit-msg hooks
+    /// exist; pgs cannot run them.
+    #[arg(long)]
+    pub no_verify: bool,
 }
 
 /// Apply git's `--cleanup=whitespace` normalization to a raw commit message.
@@ -122,6 +126,12 @@ pub fn execute(
     let message = resolve_message(&args, allow_stdin)?;
 
     let repository = repo::open(repo_path)?;
+    if !args.no_verify {
+        let hooks = repo::active_commit_hooks(&repository)?;
+        if !hooks.is_empty() {
+            return Err(PgsError::CommitHooksPresent { hooks });
+        }
+    }
     let sig = repository.signature()?;
 
     let mut index = repository.index()?;
@@ -263,6 +273,7 @@ mod tests {
             message: message.map(ToOwned::to_owned),
             message_file: message_file.map(ToOwned::to_owned),
             amend: false,
+            no_verify: false,
         }
     }
 

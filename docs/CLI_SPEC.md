@@ -84,6 +84,7 @@ exit code is fixed per code.
 | `invalid_arguments` | 2 | Arguments are missing or mutually exclusive, such as `commit` with neither `-m` nor `-F`. |
 | `input_file_unreadable` | 2 | A caller-supplied file (commit message file, plan file) is missing, unreadable, or not valid UTF-8. |
 | `not_a_repository` | 2 | The path (from `--repo` or the working directory) names no git repository. |
+| `commit_hooks_present` | 2 | `commit` found active `pre-commit`, `prepare-commit-msg` or `commit-msg` hooks, which pgs cannot run. Commit with git, or pass `--no-verify`. |
 | `explain_without_dry_run` | 2 | `--explain` was passed without `--dry-run`. |
 | `non_utf8_partial` | 2 | Hunk or line selection on a file that is not valid UTF-8. Stage the whole file. |
 | `crlf_mismatch` | 2 | Hunk or line selection where the index and working tree use different dominant line endings. Stage the whole file. |
@@ -406,6 +407,21 @@ JSON envelope:
 
 Text record kinds:
 - `commit.result`
+
+#### Commit hooks
+
+libgit2 runs no hooks, so a pgs commit cannot run the `pre-commit`,
+`prepare-commit-msg` and `commit-msg` hooks `git commit` would. Rather than skip
+them silently, `commit` refuses with `commit_hooks_present` (exit 2) when any of
+them is active, naming them, before touching the index or object database. A
+hook is active when it exists in `core.hooksPath` (relative paths resolve
+against the working tree root) or else in `hooks/` of the common git directory;
+on Unix it must also be executable, as git requires. `*.sample` files never
+count.
+
+`--no-verify` (MCP: `no_verify: true`) commits anyway, as
+`git commit --no-verify` would. Otherwise stage with pgs and commit with `git
+commit`, which runs the hooks.
 
 #### Message validation
 

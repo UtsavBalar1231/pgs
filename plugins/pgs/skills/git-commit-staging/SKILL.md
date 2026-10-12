@@ -132,6 +132,12 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 
 ## Recovery
 
+- `pgs_error.code="commit_hooks_present"`: the repository has commit hooks pgs
+  cannot run. The staging is done and still in the index; make the commit with
+  `git commit -m ...` so the hooks run (the one raw-git exception), or tell the
+  user if you cannot run git. Pass `no_verify: true` only when the user
+  explicitly asks to skip the hooks.
+
 - `outcome="no_effect"`: inspect current state; the change may already be staged,
   unstaged, or committed. A line range that names only unchanged lines is also a
   no-op, not a silent success — it returns `SelectionEmpty` and leaves the index
@@ -152,4 +158,4 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 - Only the HEAD message is wrong and `pgs_status` is clean:
   `pgs_commit(amend=true, message=<full replacement message>)`.
 - For any history rewrite beyond a HEAD amend, stop and ask the user. Never use
-  raw git from this skill.
+  raw git from this skill, except `git commit` when commit hooks must run.

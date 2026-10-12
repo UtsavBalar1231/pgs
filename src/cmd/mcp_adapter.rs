@@ -94,6 +94,8 @@ pub struct McpCommitRequest {
     pub message_file: Option<String>,
     /// Whether to replace the current HEAD commit instead of creating a child commit.
     pub amend: bool,
+    /// Whether to commit despite hooks pgs cannot run.
+    pub no_verify: bool,
 }
 
 /// Typed MCP payload for `pgs_overview` requests.
@@ -244,6 +246,7 @@ pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterEr
                 message: request.message,
                 message_file: request.message_file,
                 amend: request.amend,
+                no_verify: request.no_verify,
             },
             false,
         )

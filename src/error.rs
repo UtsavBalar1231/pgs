@@ -124,6 +124,20 @@ pub enum PgsError {
         path: PathBuf,
     },
 
+    /// The repository has commit hooks `git commit` would run and pgs cannot.
+    ///
+    /// libgit2 runs no hooks, so committing would silently skip them: secret
+    /// scanners, linters, message checks. Refused unless the caller opts out.
+    #[error(
+        "this repository has commit hooks pgs cannot run ({}); commit with git so they run, \
+         or pass --no-verify (MCP: no_verify) to commit without them",
+        hooks.join(", ")
+    )]
+    CommitHooksPresent {
+        /// Names of the active hooks, e.g. `pre-commit`.
+        hooks: Vec<String>,
+    },
+
     /// The repository path names no git repository.
     ///
     /// libgit2 reports this as a generic not-found error. The path came from the
@@ -258,6 +272,7 @@ impl PgsError {
             Self::InvalidArguments { .. } => "invalid_arguments",
             Self::InputFileUnreadable { .. } => "input_file_unreadable",
             Self::NotARepository { .. } => "not_a_repository",
+            Self::CommitHooksPresent { .. } => "commit_hooks_present",
             Self::ExternalFilter { .. } => "external_filter",
             Self::UnsupportedEntry { .. } => "unsupported_entry",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
@@ -290,6 +305,7 @@ impl PgsError {
             | Self::InvalidArguments { .. }
             | Self::InputFileUnreadable { .. }
             | Self::NotARepository { .. }
+            | Self::CommitHooksPresent { .. }
             | Self::ExternalFilter { .. }
             | Self::UnsupportedEntry { .. }
             | Self::ExplainWithoutDryRun
@@ -372,6 +388,16 @@ mod tests {
         assert_eq!(err.exit_code(), 2);
         assert_eq!(err.code(), "not_a_repository");
         assert!(err.to_string().contains("/no/such/repo"), "{err}");
+    }
+
+    #[test]
+    fn commit_hooks_present_maps_to_exit_code_2_and_names_the_hooks() {
+        let err = PgsError::CommitHooksPresent {
+            hooks: vec!["pre-commit".into(), "commit-msg".into()],
+        };
+        assert_eq!(err.exit_code(), 2);
+        assert_eq!(err.code(), "commit_hooks_present");
+        assert!(err.to_string().contains("pre-commit, commit-msg"), "{err}");
     }
 
     #[test]
