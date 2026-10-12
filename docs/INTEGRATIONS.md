@@ -32,6 +32,28 @@ Or register the server without the plugin:
 claude mcp add --transport stdio --scope user pgs -- pgs-mcp
 ```
 
+To keep staged and unstaged counts in view, point a status line at the CLI. It
+reads the session's directory from the JSON Claude Code passes on stdin, prints
+nothing outside a repository, and needs `pgs` and `jq` on `PATH`:
+
+```sh
+#!/bin/sh
+# ~/.claude/pgs-statusline.sh
+dir=$(jq -r '.workspace.current_dir // .cwd')
+pgs --json --repo "$dir" overview 2>/dev/null | jq -r '
+  if has("unstaged") then
+    "pgs: \(.staged.summary.total_files) staged, \(.unstaged.summary.total_files) unstaged"
+  elif .code == "no_changes" then "pgs: clean"
+  else empty end'
+```
+
+```json
+{ "statusLine": { "type": "command", "command": "~/.claude/pgs-statusline.sh" } }
+```
+
+The plugin itself ships no hooks, mods, or status line: it only adds tools and a
+skill, so installing it changes nothing about a session until an agent calls it.
+
 ### Codex
 
 ```bash
