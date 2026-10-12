@@ -164,7 +164,7 @@ mod tests {
         let compact = CompactScanResult::from(&make_test_scan());
         let binary = &compact.files[1];
         assert!(binary.is_binary);
-        assert!(binary.hunks.is_empty());
+        assert!(binary.hunks.is_empty(), "{:?}", binary.hunks);
         assert_eq!(binary.hunks_count, 0);
     }
 

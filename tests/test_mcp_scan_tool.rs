@@ -113,7 +113,7 @@ fn mcp_scan_tool_full_matches_cli_contract() {
     assert_eq!(hunks.len(), 1);
     assert!(hunks[0]["checksum"].is_string());
     let lines = hunks[0]["lines"].as_array().unwrap();
-    assert!(!lines.is_empty());
+    assert!(!lines.is_empty(), "{lines:?}");
     assert!(lines[0]["origin"].is_string());
     assert!(lines[0]["content"].is_string());
 

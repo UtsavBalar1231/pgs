@@ -358,8 +358,8 @@ mod tests {
         };
         let result = diff_plan(&plan, &scan);
         assert_eq!(result.still_valid.len(), 1);
-        assert!(result.shifted.is_empty());
-        assert!(result.gone.is_empty());
+        assert!(result.shifted.is_empty(), "{:?}", result.shifted);
+        assert!(result.gone.is_empty(), "{:?}", result.gone);
     }
 
     #[test]
@@ -466,8 +466,8 @@ mod tests {
         };
         let result = diff_plan(&plan, &scan);
         assert_eq!(result.still_valid.len(), 1);
-        assert!(result.shifted.is_empty());
-        assert!(result.gone.is_empty());
+        assert!(result.shifted.is_empty(), "{:?}", result.shifted);
+        assert!(result.gone.is_empty(), "{:?}", result.gone);
     }
 
     #[test]

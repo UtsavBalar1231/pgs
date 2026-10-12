@@ -47,7 +47,7 @@ fn stage_hunk_by_id() {
 
     assert_eq!(json["status"], "ok");
     let items = json["items"].as_array().unwrap();
-    assert!(!items.is_empty());
+    assert!(!items.is_empty(), "{items:?}");
 }
 
 #[test]
@@ -268,7 +268,7 @@ fn stage_directory_with_trailing_slash() {
 
     assert_eq!(json["status"], "ok");
     let items = json["items"].as_array().unwrap();
-    assert!(!items.is_empty());
+    assert!(!items.is_empty(), "{items:?}");
 }
 
 #[test]

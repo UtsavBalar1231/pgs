@@ -83,7 +83,7 @@ fn scan_full_flag_includes_line_content() {
     assert_eq!(files[0]["binary"], false);
 
     let hunks = files[0]["hunks"].as_array().unwrap();
-    assert!(!hunks.is_empty());
+    assert!(!hunks.is_empty(), "{hunks:?}");
     let lines = hunks[0]["lines"].as_array().unwrap();
     assert!(!lines.is_empty(), "expected lines in full output");
     assert!(hunks[0]["id"].is_string());

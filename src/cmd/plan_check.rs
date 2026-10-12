@@ -302,7 +302,7 @@ mod tests {
         let result = check_plan(&plan, &scan);
         assert_eq!(result.overlaps.len(), 1);
         assert_eq!(result.overlaps[0].hunk_id, "aaa111bbb222");
-        assert!(result.uncovered.is_empty());
+        assert!(result.uncovered.is_empty(), "{:?}", result.uncovered);
     }
 
     #[test]
@@ -432,12 +432,24 @@ mod tests {
         let result = check_plan(&plan, &scan);
 
         // overlaps empty, uncovered empty, unsafe_selectors empty, unknown_paths empty
-        assert!(result.overlaps.is_empty());
-        assert!(result.uncovered.is_empty());
-        assert!(result.unsafe_selectors.is_empty());
-        assert!(result.unknown_paths.is_empty());
+        assert!(result.overlaps.is_empty(), "{:?}", result.overlaps);
+        assert!(result.uncovered.is_empty(), "{:?}", result.uncovered);
+        assert!(
+            result.unsafe_selectors.is_empty(),
+            "{:?}",
+            result.unsafe_selectors
+        );
+        assert!(
+            result.unknown_paths.is_empty(),
+            "{:?}",
+            result.unknown_paths
+        );
         // but unknown_hunk_ids is not
-        assert!(!result.unknown_hunk_ids.is_empty());
+        assert!(
+            !result.unknown_hunk_ids.is_empty(),
+            "{:?}",
+            result.unknown_hunk_ids
+        );
         assert!(
             result.has_issues(),
             "has_issues must return true when only unknown_hunk_ids is non-empty"
@@ -473,7 +485,11 @@ mod tests {
         let plan: CommitPlan = serde_json::from_str(raw).expect("deserialize with unknown field");
         assert_eq!(plan.commits.len(), 1);
         assert!(plan.commits[0].id.is_none());
-        assert!(plan.commits[0].exclude.is_empty());
+        assert!(
+            plan.commits[0].exclude.is_empty(),
+            "{:?}",
+            plan.commits[0].exclude
+        );
         assert!(plan.commits[0].message.is_none());
     }
 }

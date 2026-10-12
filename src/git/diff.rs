@@ -467,7 +467,7 @@ mod tests {
         commit_file(&repo, dir.path(), "README.md", "hello\n", "initial");
         let diff = diff_index_to_workdir(&repo, 3).expect("diff");
         let result = build_scan_result(&repo, &diff, None).expect("scan");
-        assert!(result.files.is_empty());
+        assert!(result.files.is_empty(), "{:?}", result.files);
         assert_eq!(result.summary.total_files, 0);
     }
 
@@ -494,7 +494,11 @@ mod tests {
         assert_eq!(result.files.len(), 1);
         assert_eq!(result.files[0].path, "src/main.rs");
         assert!(matches!(result.files[0].status, FileStatus::Modified));
-        assert!(!result.files[0].hunks.is_empty());
+        assert!(
+            !result.files[0].hunks.is_empty(),
+            "{:?}",
+            result.files[0].hunks
+        );
     }
 
     #[test]
@@ -728,7 +732,7 @@ mod tests {
         let report = build_status_report(&diff).expect("report");
 
         assert_eq!(report.summary.total_files, 0);
-        assert!(report.staged_files.is_empty());
+        assert!(report.staged_files.is_empty(), "{:?}", report.staged_files);
     }
 
     #[test]
