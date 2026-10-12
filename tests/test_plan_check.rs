@@ -751,3 +751,30 @@ fn plan_check_json_contains_unknown_hunk_ids_field_when_stale_id_used() {
         "unknown_paths must be empty when only a stale hunk id is given"
     );
 }
+
+/// A commit's `exclude` removes hunks from its coverage, as `stage --exclude`
+/// removes them from what it stages: a file selection that excludes the hunk an
+/// earlier commit takes does not overlap that commit, and covers the rest.
+#[test]
+fn plan_check_subtracts_excluded_hunks_from_a_commits_coverage() {
+    let (dir, repo) = setup_repo();
+    let base: String = (1..=20).fold(String::new(), |mut s, n| {
+        let _ = writeln!(s, "l{n}");
+        s
+    });
+    commit_file(&repo, dir.path(), "f.rs", &base, "initial");
+    write_file(
+        dir.path(),
+        "f.rs",
+        &base.replace("l2\n", "l2\nnew\n").replace("l18\n", "L18\n"),
+    );
+    let first = scan_first_hunk_id(dir.path());
+    let plan = json!({"commits": [
+        {"id": "top", "selections": [first]},
+        {"id": "rest", "selections": ["f.rs"], "exclude": [first]}
+    ]});
+
+    let (code, stdout, stderr) = run_plan_check_stdin(dir.path(), &plan.to_string(), &[]);
+
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+}

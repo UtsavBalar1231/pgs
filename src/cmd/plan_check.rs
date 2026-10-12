@@ -140,6 +140,7 @@ fn analyze_commit(
     unknown_paths: &mut BTreeSet<String>,
     unknown_hunk_ids: &mut Vec<UnknownHunkId>,
 ) {
+    let excluded = excluded_hunk_ids(commit, scan);
     for selection in &commit.selections {
         let Ok(spec) = detect_selection(selection) else {
             // Malformed selectors are reported as unsafe so the plan author sees them.
@@ -178,7 +179,9 @@ fn analyze_commit(
         if let Ok(resolved) = resolve::resolve_selection(scan, &spec) {
             if let Some(file) = scan.files.iter().find(|f| f.path == resolved.file_path) {
                 for idx in &resolved.hunk_indices {
-                    if let Some(hunk) = file.hunks.get(*idx) {
+                    if let Some(hunk) = file.hunks.get(*idx)
+                        && !excluded.contains(&hunk.hunk_id)
+                    {
                         coverage
                             .entry(hunk.hunk_id.clone())
                             .or_default()
@@ -195,6 +198,40 @@ fn analyze_commit(
             });
         }
     }
+}
+
+/// Hunks a commit's `exclude` removes, resolved as `stage --exclude` resolves
+/// them: every hunk an exclude names or intersects. An exclude that names
+/// nothing in the scan removes nothing.
+fn excluded_hunk_ids(commit: &PlannedCommit, scan: &ScanResult) -> BTreeSet<String> {
+    let mut excluded = BTreeSet::new();
+    for spec in commit
+        .exclude
+        .iter()
+        .filter_map(|s| detect_selection(s).ok())
+    {
+        let resolved = match &spec {
+            SelectionSpec::Directory { prefix } => {
+                resolve::resolve_directory(scan, prefix).unwrap_or_default()
+            }
+            other => resolve::resolve_selection(scan, other)
+                .into_iter()
+                .collect(),
+        };
+        for selection in resolved {
+            let Some(file) = scan.files.iter().find(|f| f.path == selection.file_path) else {
+                continue;
+            };
+            excluded.extend(
+                selection
+                    .hunk_indices
+                    .iter()
+                    .filter_map(|&idx| file.hunks.get(idx))
+                    .map(|hunk| hunk.hunk_id.clone()),
+            );
+        }
+    }
+    excluded
 }
 
 fn scan_has_path_or_prefix(scan_paths: &BTreeSet<String>, path: &str) -> bool {
