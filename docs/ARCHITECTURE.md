@@ -365,10 +365,12 @@ invocations or pair pgs with another tool that mutates the index without coordin
 `PgsMcpRuntime` (`src/mcp/runtime.rs`) keeps one `tokio::sync::Mutex` per canonicalized
 worktree path, and each `pgs_stage`/`pgs_unstage`/`pgs_commit` handler holds it for the whole
 command, so mutations on one repository never overlap. tokio's mutex is fair: waiters are
-served in the order they called `lock()`. That is handler order, not wire-arrival order; rmcp
-runs each request on its own task, so two requests sent back to back may reach the lock in
-either order. A client that depends on ordering (stage, then commit) must wait for each
-response before sending the next request. A request cancelled while waiting drops out of the
+served in the order they called `lock()`. rmcp runs each request on its own task, and
+`pgs-mcp` runs on tokio's single-threaded runtime, so those tasks run in the order rmcp
+spawned them, which is arrival order, and reach the lock in that order; git work runs on the
+blocking pool regardless. On a multi-threaded runtime a commit pipelined behind a stage ran
+first in about one run in four, which is why the flavor is pinned and tested
+(`mcp_pipelined_stage_then_commit_runs_in_arrival_order`). A request cancelled while waiting drops out of the
 queue without touching the index. The lock is taken inside the handler, so a request rmcp
 rejects before dispatch (an unsupported protocol version in `_meta`, for example) never holds
 or reserves anything. Read-only tools bypass the lock entirely. This does not close the

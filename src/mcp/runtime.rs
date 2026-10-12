@@ -21,8 +21,8 @@ use crate::{
 ///
 /// Each canonical worktree path owns one async mutex. Mutations on the same
 /// repository run one at a time and wait in FIFO order of their `lock()`
-/// calls (tokio's `Mutex` is fair). That is the order in which handler tasks
-/// reach the lock, not the order requests arrived on the wire.
+/// calls (tokio's `Mutex` is fair). On the current-thread runtime `pgs-mcp`
+/// uses, that is the order the requests arrived.
 #[derive(Debug, Default)]
 pub struct PgsMcpRuntime {
     repo_locks: StdMutex<HashMap<PathBuf, Arc<Mutex<()>>>>,

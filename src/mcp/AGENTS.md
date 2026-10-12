@@ -67,11 +67,10 @@ end of session (exit 0).
   support was removed when the server moved to `2026-07-28`, where tasks live in
   a separate draft extension.
 - Guarantee: stage/unstage/commit on one repo never run at the same time, and
-  waiters are served FIFO in the order their handler called `lock()` (tokio's
-  `Mutex` is fair). That is not wire-arrival order: rmcp spawns one task per
-  request, so two requests sent back to back can reach the lock in either
-  order. A client that needs stage-then-commit ordering must wait for the
-  stage response before sending the commit.
+  run in arrival order. tokio's `Mutex` serves waiters in `lock()` order, and
+  `src/bin/pgs-mcp.rs` pins the current-thread runtime so rmcp's per-request
+  tasks reach the lock in spawn (= arrival) order. Do not switch the runtime
+  to multi-thread: a pipelined stage-then-commit then reorders.
 - `execute_command()` — read path; runs the adapter on `spawn_blocking`.
 - `execute_mutation()` — write path; takes the repo lock, honors cancellation
   before the atomic section starts, then runs `execute_command()` while holding

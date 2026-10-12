@@ -110,3 +110,37 @@ fn mcp_mutation_rejected_before_dispatch_does_not_block_the_lane() {
 
     assert_eq!(accepted[&2]["result"]["isError"], false, "{accepted:?}");
 }
+
+// Clients may pipeline dependent mutations without waiting for each response.
+// The server runs mutations in the order the requests arrived, so a commit sent
+// right behind a stage commits what that stage staged.
+#[test]
+fn mcp_pipelined_stage_then_commit_runs_in_arrival_order() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "one\n", "add f");
+    write_file(dir.path(), "f.txt", "one\ntwo\n");
+    let repo_path = dir.path().display().to_string();
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    open_session(&mut stdin, &mut stdout);
+    send_tool_call(
+        &mut stdin,
+        2,
+        "pgs_stage",
+        &json!({ "repo_path": repo_path, "selections": ["f.txt"] }),
+    );
+    send_tool_call(
+        &mut stdin,
+        3,
+        "pgs_commit",
+        &json!({ "repo_path": repo_path, "message": "feat: two" }),
+    );
+    let responses = collect_responses(&mut stdout, 2);
+    shutdown_child(child);
+
+    assert_eq!(responses[&2]["result"]["isError"], false, "{responses:?}");
+    assert_eq!(responses[&3]["result"]["isError"], false, "{responses:?}");
+    let reopened = git2::Repository::open(dir.path()).unwrap();
+    let head = reopened.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head.message().unwrap(), "feat: two\n");
+}

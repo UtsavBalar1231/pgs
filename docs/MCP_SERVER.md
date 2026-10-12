@@ -100,10 +100,8 @@ Tool payloads are unchanged: read the command envelope from
 - `pgs_stage`, `pgs_unstage`, and `pgs_commit` change repository state unless `dry_run` is true
 - approve mutating tool use explicitly in any agent or automation policy before enabling them
 - same-repo mutating requests never run at the same time: each canonical repo path has one
-  lock, and waiting requests are served first come, first served in the order the server
-  reached them
-- that order is not guaranteed to match the order requests were sent; to stage and then
-  commit, wait for the `pgs_stage` response before sending `pgs_commit`
+  lock, and waiting requests are served in the order they arrived, so a `pgs_commit`
+  pipelined right behind a `pgs_stage` commits what that stage staged
 - a mutating request cancelled while it waits for the lock is dropped without touching the
   index, and gets no response
 - cancellation is only honored before a mutating request starts its atomic section
