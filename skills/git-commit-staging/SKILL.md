@@ -98,7 +98,8 @@ Full gate, normalization rules, and worked examples:
 - `pgs_overview` — first read of mixed staged/unstaged state.
 - `pgs_scan` — fresh unstaged file, hunk, and line data.
 - `pgs_stage` — stage selections, or preview with `dry_run=true`.
-- `pgs_unstage` — remove staged file, hunk, or line selections.
+- `pgs_unstage` — remove staged file, hunk, or line selections. Get staged
+  hunk IDs from `pgs_status(full=true)`; `pgs_scan` IDs are unstaged hunks.
 - `pgs_status` — inspect exactly what would be committed.
 - `pgs_commit` — create a commit; `amend=true` rewrites only the current HEAD.
 - `pgs_log` — read existing commit-message style.

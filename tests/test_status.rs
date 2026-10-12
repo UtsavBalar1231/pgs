@@ -49,3 +49,38 @@ fn status_after_stage_shows_file() {
     assert_eq!(json["summary"]["total_files"], 1);
     assert!(json["summary"]["total_additions"].as_u64().unwrap() > 0);
 }
+
+#[test]
+fn status_full_reports_staged_hunk_ids_that_unstage_accepts() {
+    let (dir, repo) = setup_repo();
+    let base: String = (1..=30)
+        .map(|n| format!("l{n}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    commit_file(&repo, dir.path(), "f.txt", &base, "init");
+    let work = base
+        .replacen("l5\n", "L5\n", 1)
+        .replacen("l25\n", "L25\n", 1);
+    write_file(dir.path(), "f.txt", &work);
+    run_pgs(dir.path(), &["stage", "f.txt"]).success();
+
+    let compact = run_pgs(dir.path(), &["status"]).success();
+    let compact: serde_json::Value = serde_json::from_slice(&compact.get_output().stdout).unwrap();
+    assert!(compact["files"][0].get("hunks").is_none(), "{compact}");
+
+    let full = run_pgs(dir.path(), &["status", "--full"]).success();
+    let full: serde_json::Value = serde_json::from_slice(&full.get_output().stdout).unwrap();
+    let hunks = full["files"][0]["hunks"].as_array().unwrap();
+    assert_eq!(hunks.len(), 2, "{full}");
+    assert!(hunks[0]["lines"].is_array());
+    let first = hunks[0]["id"].as_str().unwrap();
+
+    run_pgs(dir.path(), &["unstage", first]).success();
+
+    let reopened = git2::Repository::open(dir.path()).unwrap();
+    let index = reopened.index().unwrap();
+    let entry = index.get_path(std::path::Path::new("f.txt"), 0).unwrap();
+    let staged =
+        String::from_utf8(reopened.find_blob(entry.id).unwrap().content().to_vec()).unwrap();
+    assert_eq!(staged, base.replacen("l25\n", "L25\n", 1));
+}

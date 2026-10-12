@@ -75,6 +75,8 @@ pub struct StatusToolInput {
     pub repo_path: String,
     /// Optional diff context override.
     pub context: Option<u32>,
+    /// Include every staged hunk with its id and lines, to unstage by hunk id.
+    pub full: Option<bool>,
 }
 
 impl From<StatusToolInput> for McpStatusRequest {
@@ -82,6 +84,7 @@ impl From<StatusToolInput> for McpStatusRequest {
         Self {
             repo_path: value.repo_path,
             context: value.context.unwrap_or(DEFAULT_CONTEXT),
+            full: value.full.unwrap_or(false),
         }
     }
 }

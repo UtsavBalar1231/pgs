@@ -118,3 +118,26 @@ fn mcp_status_tool_empty_repo_returns_empty_success() {
     let summary = content[0]["text"].as_str().unwrap();
     assert!(summary.contains("Found 0 staged file(s), 0 addition(s), and 0 deletion(s)."));
 }
+
+#[test]
+fn mcp_status_tool_full_includes_staged_hunk_ids() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "a\n", "init");
+    write_file(dir.path(), "f.txt", "a\nb\n");
+    run_pgs(dir.path(), &["stage", "f.txt"]).success();
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    open_session(&mut stdin, &mut stdout);
+    let response = call_tool(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "pgs_status",
+        &json!({ "repo_path": dir.path().display().to_string(), "full": true }),
+    );
+    shutdown_child(child);
+
+    let hunks = &response["result"]["structuredContent"]["pgs"]["files"][0]["hunks"];
+    assert_eq!(hunks.as_array().map(Vec::len), Some(1), "{response}");
+    assert_eq!(hunks[0]["id"].as_str().map(str::len), Some(12));
+}

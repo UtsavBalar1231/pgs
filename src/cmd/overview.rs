@@ -25,7 +25,7 @@ pub fn execute(repo_path: Option<&str>, context: u32) -> Result<CommandOutput, P
         Err(other) => return Err(other),
     };
 
-    let staged = match status::execute(repo_path, context) {
+    let staged = match status::execute(repo_path, context, false) {
         Ok(CommandOutput::Status(status_output)) => Some(status_output),
         Ok(_) => {
             return Err(PgsError::Internal(

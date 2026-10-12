@@ -190,7 +190,7 @@ impl ScanHunkView {
         }
     }
 
-    fn from_full(hunk: HunkInfo) -> Self {
+    pub(super) fn from_full(hunk: HunkInfo) -> Self {
         let HunkInfo {
             hunk_id,
             old_start,

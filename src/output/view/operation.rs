@@ -2,11 +2,12 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::Serialize;
 
 use crate::models::{
-    CommitResult, OperationPreview, OperationStatus, StagedFileInfo, StatusReport, StatusSummary,
+    CommitResult, FileInfo, HunkInfo, OperationPreview, OperationStatus, StagedFileInfo,
+    StatusReport, StatusSummary,
 };
 
 use super::common::{OUTPUT_VERSION, OutputCommand};
-use super::scan::FileStatusView;
+use super::scan::{FileStatusView, ScanHunkView};
 
 #[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct CommitOutput {
@@ -113,6 +114,22 @@ pub struct StatusOutput {
     pub summary: StatusSummaryView,
 }
 
+impl StatusOutput {
+    /// Attach each file's staged hunks, as `status --full` reports them.
+    #[must_use]
+    pub fn with_hunks(mut self, staged: Vec<FileInfo>) -> Self {
+        let mut hunks_by_path: std::collections::HashMap<String, Vec<HunkInfo>> = staged
+            .into_iter()
+            .map(|file| (file.path, file.hunks))
+            .collect();
+        for file in &mut self.files {
+            let hunks = hunks_by_path.remove(&file.path).unwrap_or_default();
+            file.hunks = Some(hunks.into_iter().map(ScanHunkView::from_full).collect());
+        }
+        self
+    }
+}
+
 impl From<StatusReport> for StatusOutput {
     fn from(report: StatusReport) -> Self {
         let StatusReport {
@@ -139,6 +156,9 @@ pub struct StatusFileView {
     pub old_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_mode: Option<String>,
+    /// Staged hunks with ids and lines; present only for `status --full`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hunks: Option<Vec<ScanHunkView>>,
 }
 
 impl From<StagedFileInfo> for StatusFileView {
@@ -159,6 +179,7 @@ impl From<StagedFileInfo> for StatusFileView {
             lines_deleted: file.lines_deleted,
             old_mode,
             new_mode,
+            hunks: None,
         }
     }
 }

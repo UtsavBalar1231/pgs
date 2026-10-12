@@ -27,6 +27,8 @@ pub struct McpStatusRequest {
     pub repo_path: String,
     /// Unified diff context lines to request from the status command.
     pub context: u32,
+    /// Whether to include every staged hunk with its id and lines.
+    pub full: bool,
 }
 
 /// Typed MCP payload for `pgs_stage` requests.
@@ -243,11 +245,13 @@ pub fn execute(request: McpCommandRequest) -> Result<McpTypedOutput, McpAdapterE
         )
         .map(Into::into)
         .map_err(|source| McpAdapterError::new(OutputCommand::Scan, source)),
-        McpCommandRequest::Status(request) => {
-            status::execute(Some(request.repo_path.as_str()), request.context.max(1))
-                .map(Into::into)
-                .map_err(|source| McpAdapterError::new(OutputCommand::Status, source))
-        }
+        McpCommandRequest::Status(request) => status::execute(
+            Some(request.repo_path.as_str()),
+            request.context.max(1),
+            request.full,
+        )
+        .map(Into::into)
+        .map_err(|source| McpAdapterError::new(OutputCommand::Status, source)),
         McpCommandRequest::Stage(request) => stage::execute(
             Some(request.repo_path.as_str()),
             request.context.max(1),

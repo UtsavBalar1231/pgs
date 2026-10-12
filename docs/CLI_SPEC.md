@@ -331,6 +331,12 @@ JSON envelope:
 Text record kinds:
 - `status.begin`, `status.file`, `summary`, `status.end`
 
+`pgs status --full` (MCP: `full: true`) adds a `hunks` array to each file,
+in the same shape as `scan --full` hunks (`id`, ranges, `checksum`, `lines`).
+They come from the HEAD → index diff that `unstage` resolves against, so each
+`id` can be passed to `pgs unstage` as is. In text mode the hunks ride inside
+each `status.file` record's JSON.
+
 ### `commit`
 
 `pgs commit -m ...` creates a new child commit from staged changes. `pgs commit

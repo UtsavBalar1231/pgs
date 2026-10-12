@@ -91,7 +91,7 @@ impl ParsedCli {
             Command::Scan(_) => OutputCommand::Scan,
             Command::Stage(_) => OutputCommand::Stage,
             Command::Unstage(_) => OutputCommand::Unstage,
-            Command::Status => OutputCommand::Status,
+            Command::Status(_) => OutputCommand::Status,
             Command::Commit(_) => OutputCommand::Commit,
             Command::Log(_) => OutputCommand::Log,
             Command::Overview => OutputCommand::Overview,
@@ -111,7 +111,7 @@ pub enum Command {
     /// Remove selected changes from the index.
     Unstage(unstage::UnstageArgs),
     /// Show currently staged changes (HEAD vs index).
-    Status,
+    Status(status::StatusArgs),
     /// Create a git commit from staged changes.
     Commit(commit::CommitArgs),
     /// Show recent commit history.
@@ -264,9 +264,10 @@ pub fn run(parsed: ParsedCli) -> Result<Option<RenderableOutput>, PgsError> {
             context,
             args,
         )?))),
-        Command::Status => Ok(Some(RenderableOutput::new(status::execute(
+        Command::Status(args) => Ok(Some(RenderableOutput::new(status::execute(
             repo.as_deref(),
             context,
+            args.full,
         )?))),
         Command::Commit(args) => Ok(Some(RenderableOutput::new(commit::execute(
             repo.as_deref(),
