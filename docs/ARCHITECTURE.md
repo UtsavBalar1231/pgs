@@ -99,11 +99,12 @@ mechanism, implemented in `src/git/staging.rs`:
 
 1. Read the base blob from the current index (`read_index_blob`), falling back to
    HEAD (`read_head_blob`) for newly-tracked files.
-2. Read the workdir file (`read_workdir_for_blob`).
+2. Read the workdir file in the form `git add` would store
+   (`read_workdir_for_index`; see "Git's filters" below).
 3. Diff them with `similar::TextDiff::from_lines`.
 4. Walk every change; accept or reject each line based on the caller's selection set.
 5. Write the resulting bytes as an ODB blob (`repo.blob()`).
-6. Commit the entry into the index (`index.add_frombuffer()` + `index.write()`).
+6. Commit the entry into the index (`index.add()` + `index.write()`).
 
 No subprocess, no patch file, no `git apply`.
 
@@ -116,8 +117,10 @@ which silently alters content. Index-direct reconstruction avoids context lines
 entirely; the line-ending invariant is checked up front (`CrlfMismatch` error) and
 both sides are then diffed as-is.
 
-**Whitespace fuzz / offset drift.** `git apply` silently relocates hunks up to three
-lines from their declared position ("fuzz"), logging a warning that is easy to miss.
+**Offset drift.** `git apply` silently relocates a hunk whose context matches a
+few lines away from its declared position, reporting it only under `--verbose`,
+and `--unidiff-zero` applies a zero-context hunk at a wrong declared position
+with exit 0.
 An agent driving structured hunk IDs has precise addresses; silent relocation would
 stage different lines than the caller intended. The `similar` diff operates on the
 live base + workdir pair, so there is no declared position to drift from.
@@ -162,10 +165,40 @@ the index unchanged:
   dominant line endings on both sides before diffing. Files with no newlines (single-
   line) bypass the guard. Whole-file staging is byte-exact and handles CRLF correctly.
 
+- **External filter drivers** (`ExternalFilter`, exit 2): libgit2 runs only its
+  built-in filters. A path whose `filter` attribute names a configured
+  `filter.<name>.clean` or `.process` command (git-lfs, git-crypt) is refused,
+  whole-file and partial alike, because staging it would store the checkout bytes:
+  the full binary instead of an LFS pointer, or plaintext instead of ciphertext.
+  A filter attribute with no driver configured is skipped by `git add` too, so it
+  stages normally.
+
+- **Non-file entries** (`UnsupportedEntry`, exit 2): a submodule records a commit,
+  not content, so there is no blob to build. Sockets and fifos take the same path.
+
 - **Mode changes propagate through partial staging**: `stage_lines` and `stage_hunk`
   accept `mode_override: Option<u32>`, which flows into `build_index_entry`. A file
   whose permission bits changed is therefore staged with the new mode even when only
   some lines are selected.
+
+### Git's filters and index stat data
+
+`git add` runs a file through the repository's clean filters before storing it,
+and so does pgs: `read_workdir_for_index` passes every regular file through
+libgit2's built-in filters (`core.autocrlf`, the `text`/`eol` attributes,
+`ident`) by writing it with `Repository::blob_writer(Some(path))`, the only way
+libgit2 exposes that pipeline. Under `core.autocrlf=true`, the Git for Windows
+default, the index holds LF while the checkout holds CRLF; without the filter
+every partial stage was refused as `CrlfMismatch` and a whole-file stage wrote
+CRLF into the index. The drift checksum keeps hashing the raw file, because it
+fingerprints the disk, not the staged form.
+
+Index entries pgs writes carry zero stat data, size included, as
+`git update-index --cacheinfo` does. git and libgit2 treat a nonzero size that
+differs from the file on disk as proof of modification without reading
+content, and after a partial stage or a clean filter the staged blob's size does
+differ from the disk. A zero size makes both compare content instead; `git
+status` refreshes the entry the next time it runs.
 
 ### How a line range reaches a deleted line
 
@@ -197,6 +230,14 @@ and `b` vanished from the staged blob. Matching content first binds `-b` to `+b`
 which is the only pairing that means anything. git models the same edit the same
 way; this is not a `similar` quirk to work around, it is the shape of the diff.
 
+Selection and assembly share one rule. `replace_run_partners` decides which
+addition each deletion pairs with, and both the line selection and the blob
+assembly (`flush_replace_run`, used by stage and unstage alike) call it, so a
+kept original is emitted in the slot of the addition its fate was decided by.
+When assembly paired by position while selection paired by content, a kept line
+landed out of order: HEAD `a\np\nb` with workdir `a\nb\nq\n` and
+`stage f.txt:3-3` staged `a\np\nq\nb`, an order found in neither file.
+
 **Pure-deletion runs need both survivors.** A run of deletions with no additions
 has nothing to pair with. It occupies the gap between the surviving line before
 it and the surviving line after it, and it is applied only when the range covers
@@ -208,7 +249,7 @@ adjacent survivor plus at least one further line on that side; when no further
 line exists the adjacent survivor alone suffices, so the deletion stays
 reachable rather than becoming unstageable.
 
-Three invariants fall out of these rules and are the cheapest way to check them:
+Four invariants fall out of these rules and are the cheapest way to check them:
 
 - A range naming only unchanged lines never mutates the index. It resolves to no
   changed lines and returns `SelectionEmpty` (exit 1) rather than reporting a
@@ -220,8 +261,11 @@ Three invariants fall out of these rules and are the cheapest way to check them:
 - A partial stage never destroys content present in both the base and the
   workdir. A line that both sides agree on survives the operation regardless of
   which subset the range names.
+- A partial stage never reorders the lines it keeps. Kept originals stay in
+  their relative order, interleaved with the selected additions where those
+  additions replace them.
 
-The third invariant is the one that catches real defects, because the first two
+The last two invariants are the ones that catch real defects, because the first two
 describe only the extremes: staging *no* changed line and staging *every*
 changed line. Neither can reach a strict subset, which is exactly where content
 gets destroyed — three separate data-loss bugs satisfied both of the original
@@ -246,14 +290,20 @@ selection. Silently staging a change nobody asked for is the precise failure
 mode pgs exists to prevent, so the operation stops and names the alternative.
 Whole-hunk and whole-file staging of the same file remain byte-exact.
 
-**The trailing newline is derived, not imposed.** The result's final byte comes
-from whichever token was emitted last. The index/workdir trailing-newline
-convention is applied only when that final token came from the mutating side —
-the workdir when staging, the index when unstaging. When the final token is a
-preserved base line instead, its bytes are already correct and are left alone.
-Imposing the convention unconditionally is what appended a phantom newline onto
-a preserved base last line (making a staged file read as still-modified) and
-what stripped one from a legitimately terminated result.
+**Every token keeps its own bytes.** The result is the concatenation of the
+emitted tokens, each carrying its exact terminator, and nothing rewrites the
+final byte afterwards. A line's terminator is part of that line, so a line that
+gains or loses its newline is a change of its own (`-b` / `+b`). Staging line 2
+of base `a\n` against workdir `a\nb\nc` stages `a\nb\n`, because line 2 is
+`b\n`; unstaging only the appended line of HEAD `aaa` against index `aaa\nbbb`
+leaves `aaa\n`, because line 1 gaining its newline was not named. A fixup that
+imposed one side's trailing-newline convention on the result once rewrote
+correct results in both directions.
+
+**A line range cannot empty a file.** A range names new-side lines, and a file
+truncated to nothing has none, so `stage f.txt:1-1` on it resolves to nothing
+and returns `SelectionEmpty`. Stage the file or its hunk id instead; the "full
+range reproduces the workdir" invariant has no `N` to name here.
 
 Hunk-ID and whole-file selections bypass all of this: both include every line of
 their target, deletions included.
@@ -274,10 +324,10 @@ surfaces as two independent entries — a `Deleted` entry for the old path and a
 `Added` entry for the new path — and therefore produces two `FileInfo` values in
 the scan result, never one.
 
-`FileStatus::Renamed` (`src/models/scan.rs:68`) and the `stage_rename` call site
-(`src/cmd/stage.rs:382`, `src/git/staging.rs:524`) exist in the codebase but are
-not reachable from a normal scan. `delta_to_file_status` (`src/git/diff.rs:181`)
-maps `Delta::Renamed` correctly, but that branch is never triggered because no
+`FileStatus::Renamed` and the `stage_rename` call site (`src/cmd/stage.rs`,
+`src/git/staging.rs`) exist in the codebase but are not reachable from a normal
+scan. `delta_to_file_status` (`src/git/diff.rs`) maps `Delta::Renamed`
+correctly, but that branch is never triggered because no
 `Delta::Renamed` is ever produced by the index-to-workdir diff.
 
 This is an intentional current boundary. Enabling rename detection would require
@@ -288,8 +338,8 @@ tested.
 
 ## Concurrency boundary
 
-`pgs` calls `lock::wait_for_lock_release` (`src/safety/lock.rs:19`) at the start of every
-mutating operation (`src/cmd/stage.rs:62`, `src/cmd/unstage.rs` equivalent). That call polls
+`pgs` calls `lock::wait_for_lock_release` (`src/safety/lock.rs`) at the start of every
+mutating operation (`src/cmd/stage.rs`, `src/cmd/unstage.rs`). That call polls
 `index.lock` with exponential backoff until the file is absent, then returns — it does not
 create or hold the lock file. There is no OS-level lock held between the poll returning `Ok`
 and the final `index.write()` call deep in the staging path.
@@ -315,8 +365,10 @@ invocations or pair pgs with another tool that mutates the index without coordin
 `PgsMcpRuntime` (`src/mcp/runtime.rs`) keys a `MutationLane` by canonicalized worktree path
 and admits one `pgs_stage`/`pgs_unstage`/`pgs_commit` at a time per repository, in arrival
 order. Lane slots are reserved at the transport layer before handler scheduling, so ordering
-follows request arrival rather than task-scheduler nondeterminism. Read-only tools bypass the
-lane entirely. This does not close the cross-process window above: a concurrent `git` process
+follows request arrival rather than task-scheduler nondeterminism. rmcp rejects some requests
+before the handler runs (an unsupported protocol version in `_meta`, for example); the
+transport frees the reserved slot when it sends that error, or one bad request would block
+every later mutation on the repository. Read-only tools bypass the lane entirely. This does not close the cross-process window above: a concurrent `git` process
 outside pgs is still unserialized.
 
 ## Freshness invariant
@@ -361,13 +413,13 @@ The following are known gaps that are **not** addressed in the current codebase.
 recorded here so they are not forgotten and so maintainers can make informed decisions before
 enabling concurrent or long-running use cases.
 
-**Backup GC** — `backup::create_backup` (`src/safety/backup.rs:17`) writes two files per
+**Backup GC** — `backup::create_backup` (`src/safety/backup.rs`) writes two files per
 operation under `.git/pgs/backups/` (a `.index` snapshot and a `.json` metadata file). There
 is no TTL, count cap, or cleanup path anywhere in `src/safety/backup.rs`. In a long-lived
 repository with heavy usage the backup directory grows without bound. A future implementation
 should prune backups older than a configurable TTL or beyond a rolling count limit.
 
-**Index lock during restore** — `backup::restore_backup` (`src/safety/backup.rs:56`) writes
+**Index lock during restore** — `backup::restore_backup` (`src/safety/backup.rs`) writes
 the restored index via a plain `fs::write` with no lock file. A concurrent git process could
 read or write `index` while the restore is in progress. Full atomicity would require acquiring
 `index.lock` for the duration of the restore write, then releasing it — matching the protocol
