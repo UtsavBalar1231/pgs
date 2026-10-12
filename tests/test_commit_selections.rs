@@ -88,7 +88,11 @@ fn commit_refused_for_hooks_stages_nothing() {
 
     run_pgs(dir.path(), &["commit", "-m", "feat: g", "f.txt"]).code(2);
 
-    assert!(staged_paths(dir.path()).is_empty());
+    assert!(
+        staged_paths(dir.path()).is_empty(),
+        "{:?}",
+        staged_paths(dir.path())
+    );
 }
 
 #[test]
