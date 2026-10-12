@@ -693,6 +693,23 @@ names.
 Hunk-ID and whole-file selections are unaffected by these rules — both include
 every line of their target, deletions included.
 
+### One selector kind per file
+
+`stage` and `unstage` reject a call that names the same file with a line range
+and with a file or hunk selector, for example `pgs stage f.txt f.txt:28-28` or
+`pgs stage <hunk-id-in-f.txt> f.txt:5-5`. The call fails with
+`invalid_selection` (exit 2) and the index is untouched.
+
+Several selectors of one kind on one file are fine (`f.txt:5-5 f.txt:28-28`,
+or two hunk ids), and different kinds on different files are fine
+(`<hunk-id-in-f.txt> g.txt`). To combine kinds on one file, issue them as
+separate calls.
+
+The rejection exists because the selections for one file merge before staging,
+and that merge cannot keep an explicit hunk pick apart from the hunks a line
+range happens to touch. Accepting the mix would report both selections staged
+and silently apply only the range.
+
 ## Exit Codes
 
 - `0`: success
