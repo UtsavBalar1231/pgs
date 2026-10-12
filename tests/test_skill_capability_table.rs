@@ -47,23 +47,27 @@ fn read_all_skill_docs() -> String {
     .join("\n")
 }
 
+/// Reads `allowed-tools` as the Agent Skills spec defines it: one
+/// space-separated string, which the frontmatter may fold over several lines.
 fn parse_allowed_tools(skill: &str) -> BTreeSet<String> {
-    let mut tools = BTreeSet::new();
-    let mut in_allowed_tools = false;
-    for line in skill.lines() {
-        if line == "allowed-tools:" {
-            in_allowed_tools = true;
-            continue;
-        }
-        if in_allowed_tools {
-            if let Some(tool) = line.trim().strip_prefix("- ") {
-                tools.insert(tool.to_owned());
-            } else if line == "---" || !line.starts_with(' ') {
-                break;
-            }
-        }
+    let mut lines = skill
+        .lines()
+        .skip_while(|line| !line.starts_with("allowed-tools:"));
+    let inline = lines
+        .next()
+        .and_then(|line| line.strip_prefix("allowed-tools:"))
+        .map(str::trim)
+        .unwrap_or_default();
+    let mut value = if inline == ">-" || inline == ">" {
+        String::new()
+    } else {
+        inline.to_owned()
+    };
+    for line in lines.take_while(|line| line.starts_with(' ')) {
+        value.push(' ');
+        value.push_str(line.trim());
     }
-    tools
+    value.split_whitespace().map(str::to_owned).collect()
 }
 
 #[test]
@@ -106,6 +110,7 @@ fn skill_docs_leak_no_internal_implementation_details() {
         "structured_tool_result",
         "define_tool_output",
         "build_index_entry",
+        "file_checksum",
     ] {
         assert!(
             !docs.contains(symbol),
@@ -130,7 +135,14 @@ fn skill_allowed_tools_cover_every_mcp_tool() {
         pgs::mcp::contract::PGS_PLAN_DIFF_TOOL,
     ]
     .into_iter()
-    .map(str::to_owned)
+    // Claude Code names a standalone server's tools `mcp__<server>__<tool>` and a
+    // plugin-bundled server's `mcp__plugin_<plugin>_<server>__<tool>`.
+    .flat_map(|tool| {
+        [
+            format!("mcp__pgs__{tool}"),
+            format!("mcp__plugin_pgs_pgs__{tool}"),
+        ]
+    })
     .collect::<BTreeSet<_>>();
 
     assert_eq!(

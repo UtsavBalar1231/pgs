@@ -21,10 +21,11 @@ read as a path, not a hunk ID.
 A line range names workdir line numbers, so a deleted line has no number you can
 name. Deletions come along indirectly:
 
-- Where deletions are immediately followed by additions (a replacement), the
-  i-th deleted line rides along with the i-th added line and is staged only when
-  that added line is in your range. If the replacement deletes more lines than it
-  adds, the surplus rides with the last added line.
+- Where deletions are immediately followed by additions (a replacement), each
+  deleted line rides along with one added line and is staged only when that added
+  line is in your range. The partner is the first added line in the run with
+  identical content; failing that, the added line at the same position in the
+  run; failing that (more deletions than additions), the run's last added line.
 - Where lines were deleted and nothing was added, the deletion sits in the gap
   between two surviving lines. Your range must cover a surviving line on **each**
   side of the gap. At the top or bottom of the file the gap has one side only, so
@@ -47,12 +48,14 @@ since you scanned it:
 pgs_stage(
   repo_path="/path/to/repo",
   selections=["src/main.rs:10-20"],
-  expected_checksums={"src/main.rs": "<file_checksum from pgs_scan>"}
+  expected_checksums={"src/main.rs": "<checksum from pgs_scan>"}
 )
 ```
 
-`file_checksum` is reported per file by `pgs_scan` in both compact and full
-output. A `StaleScan` error (retryable) means re-scan and re-plan.
+`checksum` is the file-level field on each entry of `files` in `pgs_scan`
+output, present in both compact and full output. Do not use the hunk-level
+`checksum` that full output also carries. A `StaleScan` error (retryable) means
+re-scan and re-plan.
 
 ## Preview exact staged content
 
@@ -113,12 +116,18 @@ pgs normalizes every message before storing it; see
   "commits": [
     {
       "id": "c1",
-      "title": "fix(auth): reject empty password",
-      "selections": ["src/auth.rs:a1b2c3d4e5f6"],
+      "selections": ["a1b2c3d4e5f6", "src/session.rs"],
+      "exclude": ["f6e5d4c3b2a1"],
       "message": "fix(auth): reject empty password\n\nFail cleanly before validation."
     }
   ]
 }
 ```
+
+Each commit takes `selections` (required), plus optional `id`, `exclude`, and
+`message`. `selections` and `exclude` use the same selectors as `pgs_stage`: a
+file path, a bare 12-hex hunk ID, or a `path:range`. A hunk ID already names its
+file, so it takes no path prefix. `message` is a preview that the plan tools do
+not interpret.
 
 Plan tools validate and reconcile a plan; they never stage, unstage, or commit.
