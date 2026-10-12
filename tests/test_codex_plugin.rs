@@ -154,6 +154,43 @@ fn packaged_codex_plugin_matches_repo_sources() {
     }
 }
 
+// A release bump touches every file below. A stale manifest version strands
+// plugin users on the previous binary, so CI checks all of them on every push
+// rather than leaving it to the tag-time gate in release.yml.
+#[test]
+fn every_version_anchor_matches_the_crate_version() {
+    let expected = env!("CARGO_PKG_VERSION");
+
+    for path in ["VERSION", "plugins/pgs/VERSION"] {
+        assert_eq!(read_trimmed(path), expected, "{path}");
+    }
+
+    let marketplace = read_json(".claude-plugin/marketplace.json");
+    assert_eq!(
+        marketplace["plugins"][0]["version"], expected,
+        "marketplace.json"
+    );
+
+    for path in [
+        ".codex-plugin/plugin.json",
+        "plugins/pgs/.codex-plugin/plugin.json",
+        "plugins/pgs/.claude-plugin/plugin.json",
+    ] {
+        assert_eq!(read_json(path)["version"], expected, "{path}");
+    }
+
+    for path in [".mcp.json", "plugins/pgs/.mcp.json"] {
+        let launcher = read_json(path)["mcpServers"]["pgs"]["args"][1]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            launcher.contains(&format!("VERSION=\"{expected}\"")),
+            "{path} launcher must download v{expected}"
+        );
+    }
+}
+
 #[test]
 fn root_claude_directory_is_marketplace_only() {
     assert!(
