@@ -160,6 +160,7 @@ fn packaged_codex_plugin_matches_repo_sources() {
         ),
         (".mcp.json", "plugins/pgs/.mcp.json"),
         ("VERSION", "plugins/pgs/VERSION"),
+        ("LICENSE", "plugins/pgs/LICENSE"),
     ] {
         assert_eq!(
             std::fs::read_to_string(source).unwrap(),
