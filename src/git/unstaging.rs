@@ -9,7 +9,8 @@ use similar::TextDiff;
 
 use crate::error::PgsError;
 use crate::git::{
-    LineSelection, build_index_entry, read_head_blob, read_head_mode, read_index_blob,
+    LineSelection, build_index_entry, flush_replace_run, read_head_blob, read_head_mode,
+    read_index_blob,
 };
 use crate::models::{HunkInfo, LineOrigin};
 use crate::saturating_u32;
@@ -105,77 +106,46 @@ pub fn unstage_lines(
         });
     }
 
-    let trailing_newline = index_text.ends_with('\n');
-
     let diff = TextDiff::from_lines(head_text, index_text);
 
-    // Each element is `(token, from_index)`. The flag records which side the
-    // token's exact bytes came from: a restored HEAD line is already correct, so
-    // imposing the index side's trailing-newline convention on it would append a
-    // phantom byte and leave the file reported as still modified.
-    let mut result_lines: Vec<(&str, bool)> = Vec::new();
+    let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_affected: u32 = 0;
 
-    // Same run-buffering rationale as `stage_lines`: a replace-run arrives as
-    // every Delete then every Insert, so restored HEAD lines must be re-interleaved
-    // with the staged lines they replace rather than appended ahead of them.
+    // Same run buffering as `stage_lines`: a restored HEAD line is emitted in
+    // the slot of the staged line it pairs with.
     let mut run_deletes: Vec<(&str, bool)> = Vec::new();
     let mut run_inserts: Vec<(&str, bool)> = Vec::new();
 
     for change in diff.iter_all_changes() {
         match change.tag() {
             similar::ChangeTag::Equal => {
-                flush_unstage_run(
-                    &mut run_deletes,
-                    &mut run_inserts,
-                    &mut result_lines,
-                    &mut lines_affected,
-                );
-                result_lines.push((change.value(), false));
+                flush_replace_run(&mut run_deletes, &mut run_inserts, &mut result_lines);
+                result_lines.push(change.value());
             }
             similar::ChangeTag::Delete => {
-                // Line exists in HEAD but was deleted in index (staged deletion).
-                // old_index() gives the 0-based index in the old (HEAD) text.
+                // A HEAD line the index deleted; restoring it unstages the deletion.
                 let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
                 let restore = selection.old_lines.contains(&old_line);
+                if restore {
+                    lines_affected += 1;
+                }
                 run_deletes.push((change.value(), restore));
             }
             similar::ChangeTag::Insert => {
-                // Line was added in the index (staged addition).
-                // new_index() gives the 0-based index in the new (index) text.
+                // A line the index added; dropping it unstages the addition.
                 let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
                 let keep = !selection.new_lines.contains(&new_line);
+                if !keep {
+                    lines_affected += 1;
+                }
                 run_inserts.push((change.value(), keep));
             }
         }
     }
-    flush_unstage_run(
-        &mut run_deletes,
-        &mut run_inserts,
-        &mut result_lines,
-        &mut lines_affected,
-    );
+    flush_replace_run(&mut run_deletes, &mut run_inserts, &mut result_lines);
 
-    crate::git::reject_interior_unterminated(
-        file_path,
-        result_lines.iter().map(|&(value, _)| value),
-    )?;
-
-    let last_from_index = result_lines
-        .last()
-        .is_some_and(|&(_, from_index)| from_index);
-    let mut new_content: String = result_lines.iter().map(|&(value, _)| value).collect();
-
-    // Preserve trailing newline semantics from the original index content, but only
-    // when the final element is a kept index line. A restored HEAD line carries
-    // HEAD's exact bytes, which is precisely what unstaging is meant to land on.
-    if last_from_index {
-        if trailing_newline && !new_content.ends_with('\n') {
-            new_content.push('\n');
-        } else if !trailing_newline && new_content.ends_with('\n') {
-            new_content.pop();
-        }
-    }
+    crate::git::reject_interior_unterminated(file_path, result_lines.iter().copied())?;
+    let new_content = result_lines.concat();
 
     // Write the new blob and update the index
     let oid = repo.blob(new_content.as_bytes())?;
@@ -185,34 +155,6 @@ pub fn unstage_lines(
     index.write()?;
 
     Ok(lines_affected)
-}
-
-/// Emit one buffered replace-run into `out`, pairing the i-th delete with the
-/// i-th insert so each restored HEAD line lands at its replacement's position.
-///
-/// `deletes` carries `(line, restore)`; `inserts` carries `(line, keep)`.
-/// Both buffers are drained.
-fn flush_unstage_run<'a>(
-    deletes: &mut Vec<(&'a str, bool)>,
-    inserts: &mut Vec<(&'a str, bool)>,
-    out: &mut Vec<(&'a str, bool)>,
-    lines_affected: &mut u32,
-) {
-    for i in 0..deletes.len().max(inserts.len()) {
-        if let Some(&(value, keep)) = inserts.get(i) {
-            if keep {
-                out.push((value, true));
-            } else {
-                *lines_affected += 1;
-            }
-        }
-        if let Some(&(value, true)) = deletes.get(i) {
-            out.push((value, false));
-            *lines_affected += 1;
-        }
-    }
-    deletes.clear();
-    inserts.clear();
 }
 
 /// Unstage a single hunk by partitioning its lines into old/new coordinate spaces.
@@ -431,24 +373,29 @@ mod tests {
     }
 
     #[test]
-    fn unstage_lines_preserves_no_trailing_newline() {
+    fn unstage_appended_line_keeps_the_unselected_terminator_change() {
         let (dir, repo) = setup_repo_with_commit(&[("f.txt", "aaa")]);
         stage_content(&repo, dir.path(), "f.txt", "aaa\nbbb");
 
-        // Index content does NOT end with \n. After unstaging the addition (index-new-line 2),
-        // result should also NOT end with \n.
-        let sel = LineSelection {
+        // Line 1 gaining its newline is a change of its own (`-aaa` / `+aaa\n`).
+        // Unstaging only line 2 leaves it staged; the stage side refuses the
+        // mirror image for the same reason.
+        let only_appended = LineSelection {
             old_lines: std::collections::HashSet::new(),
             new_lines: std::iter::once(2).collect(),
         };
-        unstage_lines(&repo, "f.txt", &sel).expect("unstage_lines");
-
-        let result = read_index_content(&repo, "f.txt").expect("in index");
-        assert!(
-            !result.ends_with('\n'),
-            "result should NOT end with newline, got: {result:?}"
+        unstage_lines(&repo, "f.txt", &only_appended).expect("unstage line 2");
+        assert_eq!(
+            read_index_content(&repo, "f.txt").expect("in index"),
+            "aaa\n"
         );
-        assert_eq!(result, "aaa");
+
+        let terminator_change = LineSelection {
+            old_lines: std::iter::once(1).collect(),
+            new_lines: std::iter::once(1).collect(),
+        };
+        unstage_lines(&repo, "f.txt", &terminator_change).expect("unstage line 1");
+        assert_eq!(read_index_content(&repo, "f.txt").expect("in index"), "aaa");
     }
 
     #[test]

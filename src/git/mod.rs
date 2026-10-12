@@ -198,6 +198,67 @@ pub(crate) fn is_predominantly_crlf(text: &str) -> Option<bool> {
     Some(crlf_count * 2 > lf_count)
 }
 
+/// Pair each deletion of a replace run with the addition that replaces it.
+///
+/// The partner is the first addition with identical content, else the addition
+/// at the deletion's own index, else the run's last addition. A run with no
+/// additions is a pure deletion, and every entry is `None`. Line selection and
+/// blob assembly both use this rule, so a kept original is always emitted in
+/// the slot of the addition its selection was decided by.
+pub(crate) fn replace_run_partners(deletions: &[&str], additions: &[&str]) -> Vec<Option<usize>> {
+    let last = additions.len().checked_sub(1);
+    deletions
+        .iter()
+        .enumerate()
+        .map(|(i, deleted)| {
+            let positional = last.map(|last| i.min(last));
+            additions
+                .iter()
+                .position(|added| added == deleted)
+                .or(positional)
+        })
+        .collect()
+}
+
+/// Emit one buffered replace run into `out` and drain both buffers.
+///
+/// Each element is `(token, emit)`. Addition slots are walked in order, and a
+/// kept deletion follows the addition it pairs with under
+/// [`replace_run_partners`]; a pure-deletion run emits its kept lines in order.
+pub(crate) fn flush_replace_run<'a>(
+    deletes: &mut Vec<(&'a str, bool)>,
+    inserts: &mut Vec<(&'a str, bool)>,
+    out: &mut Vec<&'a str>,
+) {
+    let deleted_content: Vec<&str> = deletes.iter().map(|&(t, _)| line_content(t)).collect();
+    let added_content: Vec<&str> = inserts.iter().map(|&(t, _)| line_content(t)).collect();
+    let partners = replace_run_partners(&deleted_content, &added_content);
+    let kept_deletes = |slot: Option<usize>| {
+        deletes
+            .iter()
+            .zip(&partners)
+            .filter(move |&(&(_, keep), &partner)| keep && partner == slot)
+            .map(|(&(token, _), _)| token)
+    };
+
+    if inserts.is_empty() {
+        out.extend(kept_deletes(None));
+    }
+    for (slot, &(token, keep)) in inserts.iter().enumerate() {
+        if keep {
+            out.push(token);
+        }
+        out.extend(kept_deletes(Some(slot)));
+    }
+    deletes.clear();
+    inserts.clear();
+}
+
+/// A diff token's content without its line terminator, as scan reports it.
+pub(crate) fn line_content(token: &str) -> &str {
+    token.trim_end_matches('\n').trim_end_matches('\r')
+}
+
 /// Post-condition on an assembled blob: no interior element may be unterminated.
 ///
 /// `elements` are diff tokens in emission order, each still carrying its own

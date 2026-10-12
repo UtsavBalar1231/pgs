@@ -12,8 +12,8 @@ use similar::TextDiff;
 use crate::error::PgsError;
 use crate::git::repo;
 use crate::git::{
-    LineSelection, WorkdirFileType, build_index_entry, read_head_blob, read_index_blob,
-    read_workdir_for_blob, read_workdir_for_index,
+    LineSelection, WorkdirFileType, build_index_entry, flush_replace_run, read_head_blob,
+    read_index_blob, read_workdir_for_blob, read_workdir_for_index, replace_run_partners,
 };
 use crate::models::{
     DiffLineInfo, HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine,
@@ -124,33 +124,21 @@ pub(crate) fn stage_lines(
         });
     }
 
-    let work_has_trailing_newline = work_text.ends_with('\n');
-
     let diff = TextDiff::from_lines(base_text, work_text);
 
-    // Each element is `(token, from_workdir)`. The flag records which side the
-    // token's exact bytes came from, so the trailing-newline fixup can leave a
-    // preserved base token alone instead of imposing the workdir's convention on
-    // bytes that are already correct.
-    let mut result_lines: Vec<(&str, bool)> = Vec::new();
+    let mut result_lines: Vec<&str> = Vec::new();
     let mut lines_staged: u32 = 0;
 
-    // A replace-run arrives as every Delete followed by every Insert. Appending in
-    // that raw order would put preserved originals ahead of the staged lines they
-    // sit between, so the run is buffered and re-interleaved by pair index.
+    // A replace-run arrives as every Delete followed by every Insert, so it is
+    // buffered and emitted in pairing order once the run ends.
     let mut run_deletes: Vec<(&str, bool)> = Vec::new();
     let mut run_inserts: Vec<(&str, bool)> = Vec::new();
 
     for change in diff.iter_all_changes() {
         match change.tag() {
             similar::ChangeTag::Equal => {
-                flush_stage_run(
-                    &mut run_deletes,
-                    &mut run_inserts,
-                    &mut result_lines,
-                    &mut lines_staged,
-                );
-                result_lines.push((change.value(), false));
+                flush_replace_run(&mut run_deletes, &mut run_inserts, &mut result_lines);
+                result_lines.push(change.value());
             }
             similar::ChangeTag::Delete => {
                 let old_line = change.old_index().map_or(0, |i| saturating_u32(i + 1));
@@ -160,39 +148,18 @@ pub(crate) fn stage_lines(
             similar::ChangeTag::Insert => {
                 let new_line = change.new_index().map_or(0, |i| saturating_u32(i + 1));
                 let stage = selection.new_lines.contains(&new_line);
+                if stage {
+                    lines_staged += 1;
+                }
                 run_inserts.push((change.value(), stage));
             }
         }
     }
-    flush_stage_run(
-        &mut run_deletes,
-        &mut run_inserts,
-        &mut result_lines,
-        &mut lines_staged,
-    );
+    flush_replace_run(&mut run_deletes, &mut run_inserts, &mut result_lines);
 
-    crate::git::reject_interior_unterminated(
-        file_path,
-        result_lines.iter().map(|&(value, _)| value),
-    )?;
+    crate::git::reject_interior_unterminated(file_path, result_lines.iter().copied())?;
 
-    // Reconstruct content: join lines (each already carries its own newline from the diff).
-    let last_from_workdir = result_lines.last().is_some_and(|&(_, workdir)| workdir);
-    let mut result: String = result_lines.iter().map(|&(value, _)| value).collect();
-
-    // Trailing-newline fixup, applied only when the last element is a staged workdir
-    // token — which also means the result is non-empty and at least one line was
-    // staged. A preserved base token is byte-exact already, and overriding it destroys
-    // a base last line that merely regained its newline.
-    if last_from_workdir {
-        if work_has_trailing_newline && !result.ends_with('\n') {
-            result.push('\n');
-        } else if !work_has_trailing_newline && result.ends_with('\n') {
-            result.pop();
-        }
-    }
-
-    let content = result.into_bytes();
+    let content = result_lines.concat().into_bytes();
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
 
@@ -201,30 +168,6 @@ pub(crate) fn stage_lines(
     index.write()?;
 
     Ok(lines_staged)
-}
-
-/// Emit one buffered replace-run into `out`, pairing the i-th delete with the
-/// i-th insert so each preserved original lands at its replacement's position.
-///
-/// `deletes` carries `(line, preserve)`; `inserts` carries `(line, stage)`.
-/// Both buffers are drained.
-fn flush_stage_run<'a>(
-    deletes: &mut Vec<(&'a str, bool)>,
-    inserts: &mut Vec<(&'a str, bool)>,
-    out: &mut Vec<(&'a str, bool)>,
-    lines_staged: &mut u32,
-) {
-    for i in 0..deletes.len().max(inserts.len()) {
-        if let Some(&(value, true)) = inserts.get(i) {
-            out.push((value, true));
-            *lines_staged += 1;
-        }
-        if let Some(&(value, true)) = deletes.get(i) {
-            out.push((value, false));
-        }
-    }
-    deletes.clear();
-    inserts.clear();
 }
 
 /// Stage a single hunk by partitioning its lines into a [`LineSelection`].
@@ -532,20 +475,14 @@ fn select_replace_run<F: Fn(u32) -> bool>(
         (false, false) => false,
     };
 
-    for (i, line) in run
+    let deletions: Vec<&DiffLineInfo> = run
         .iter()
         .filter(|l| l.origin == LineOrigin::Deletion)
-        .enumerate()
-    {
-        let partner = addition_content
-            .iter()
-            .position(|content| *content == line.content)
-            .unwrap_or(i);
-        let selected = addition_selected
-            .get(partner)
-            .or_else(|| addition_selected.last())
-            .copied()
-            .unwrap_or(gap_selected);
+        .collect();
+    let deleted: Vec<&str> = deletions.iter().map(|l| l.content.as_str()).collect();
+    let partners = replace_run_partners(&deleted, &addition_content);
+    for (line, partner) in deletions.into_iter().zip(partners) {
+        let selected = partner.map_or(gap_selected, |slot| addition_selected[slot]);
         if selected {
             sel.old_lines.insert(line.line_number);
         }

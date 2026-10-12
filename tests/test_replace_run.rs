@@ -509,3 +509,53 @@ fn stage_line_range_on_emptied_file_reports_selection_empty() {
         "expected `selection_empty` on an emptied file, got: {combined}"
     );
 }
+
+/// HEAD `a\np\nb` with no final newline; workdir `a\nb\nq\n`. The deletion of
+/// `b` pairs with the `b\n` that replaces it, and `p` with the same addition by
+/// position, so both originals belong in that addition's slot, not around `q`.
+fn setup_regained_newline_beside_append() -> tempfile::TempDir {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "a\np\nb", "init");
+    write_file(dir.path(), "f.txt", "a\nb\nq\n");
+    drop(repo);
+    dir
+}
+
+#[test]
+fn stage_append_after_regained_newline_keeps_originals_in_order_and_refuses() {
+    let dir = setup_regained_newline_beside_append();
+
+    let output = run_pgs(dir.path(), &["stage", "f.txt:3-3"]).code(2);
+    let error: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+
+    // In order, the originals put `q` after the unterminated `b`, which needs a
+    // terminator nobody selected; the out-of-order `a\np\nq\nb` was staged before.
+    assert_eq!(error["code"], "unterminated_interior_line");
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\np\nb");
+}
+
+#[test]
+fn unstage_regained_newline_keeps_restored_originals_in_order_and_refuses() {
+    let dir = setup_regained_newline_beside_append();
+    run_pgs(dir.path(), &["stage", "f.txt"]).success();
+
+    let output = run_pgs(dir.path(), &["unstage", "f.txt:2-2"]).code(2);
+    let error: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+
+    assert_eq!(error["code"], "unterminated_interior_line");
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nq\n");
+}
+
+#[test]
+fn stage_interior_line_of_unterminated_workdir_keeps_its_newline() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "a\n", "init");
+    write_file(dir.path(), "f.txt", "a\nb\nc");
+    drop(repo);
+
+    run_pgs(dir.path(), &["stage", "f.txt:2-2"]).success();
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\n");
+
+    run_pgs(dir.path(), &["stage", "f.txt:3-3"]).success();
+    assert_eq!(staged_blob(dir.path(), "f.txt"), "a\nb\nc");
+}
