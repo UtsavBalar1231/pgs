@@ -244,10 +244,10 @@ an external program, such as git-lfs or git-crypt, is refused rather than staged
 unfiltered. The error code is `external_filter` (exit 2); stage those paths with
 `git add`. This is new in 0.8.0.
 
-The plugin launcher downloads `pgs-mcp` on first start for
-Linux (x86_64, aarch64), macOS, and Windows x86_64 from a POSIX shell such as
-Git Bash. On Windows ARM64, install the binary from the release and register it
-with your agent directly.
+The plugin launcher downloads `pgs-mcp` on first start for Linux (x86_64,
+aarch64), macOS, and Windows (x86_64, ARM64). It is a POSIX `sh` script, so on
+Windows it needs the `sh` that ships with Git for Windows on `PATH`; otherwise
+install the binary from the release and register it with your agent directly.
 
 ## Output
 

@@ -12,9 +12,10 @@ optional fields such as environment variables and timeouts.
 
 Plugin installs (Claude Code, Codex, Copilot CLI, Factory Droid) read the
 marketplace in this repository. The plugin's launcher downloads a matching
-`pgs-mcp` on first start for Linux (x86_64, aarch64) and macOS, and for Windows
-x86_64 when run from a POSIX shell such as Git Bash. On Windows ARM64, install
-the binary yourself and use a manual setup.
+`pgs-mcp` on first start for Linux (x86_64, aarch64), macOS, and Windows
+(x86_64, ARM64). On Windows it runs under the `sh` that ships with Git for
+Windows; without it on `PATH`, install the binary yourself and use a manual
+setup.
 
 ## Plugin and extension installs
 
