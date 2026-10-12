@@ -114,6 +114,16 @@ pub enum PgsError {
         driver: String,
     },
 
+    /// The path is neither a regular file nor a symlink, such as a submodule.
+    ///
+    /// A submodule (gitlink) records a commit, not file content, so there is no
+    /// blob to build. Stage it with git.
+    #[error("{path} is not a regular file or symlink (a submodule?); pgs cannot stage it")]
+    UnsupportedEntry {
+        /// The workdir path of the entry.
+        path: PathBuf,
+    },
+
     /// The repository path names no git repository.
     ///
     /// libgit2 reports this as a generic not-found error. The path came from the
@@ -258,6 +268,7 @@ impl PgsError {
             Self::InputFileUnreadable { .. } => "input_file_unreadable",
             Self::NotARepository { .. } => "not_a_repository",
             Self::ExternalFilter { .. } => "external_filter",
+            Self::UnsupportedEntry { .. } => "unsupported_entry",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
             Self::NonUtf8Partial { .. } => "non_utf8_partial",
             Self::CrlfMismatch { .. } => "crlf_mismatch",
@@ -290,6 +301,7 @@ impl PgsError {
             | Self::InputFileUnreadable { .. }
             | Self::NotARepository { .. }
             | Self::ExternalFilter { .. }
+            | Self::UnsupportedEntry { .. }
             | Self::ExplainWithoutDryRun
             | Self::NonUtf8Partial { .. }
             | Self::CrlfMismatch { .. }

@@ -35,8 +35,8 @@ pub struct WorkdirBlob {
 /// # Errors
 /// - `PgsError::Io` for `symlink_metadata`, `read_link`, or `read` failures
 ///   (including missing paths).
-/// - `PgsError::Internal` when the workdir entry is not a regular file or a
-///   symlink (e.g., a directory, a socket, a fifo).
+/// - `PgsError::UnsupportedEntry` when the workdir entry is not a regular file
+///   or a symlink (e.g., a submodule checkout, a socket, a fifo).
 pub fn read_workdir_for_blob(
     workdir_root: &std::path::Path,
     rel_path: &str,
@@ -75,10 +75,7 @@ pub fn read_workdir_for_blob(
             file_type: WorkdirFileType::Regular,
         });
     }
-    Err(PgsError::Internal(format!(
-        "unsupported workdir file type at {}: not a regular file or symlink",
-        full.display()
-    )))
+    Err(PgsError::UnsupportedEntry { path: full })
 }
 
 /// Read a workdir path in the form `git add` would store it in the index.
@@ -534,14 +531,14 @@ mod tests {
     }
 
     #[test]
-    fn read_workdir_for_blob_directory_returns_internal_error() {
+    fn read_workdir_for_blob_directory_returns_unsupported_entry() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         std::fs::create_dir(dir.path().join("subdir")).expect("mkdir");
         let result = read_workdir_for_blob(dir.path(), "subdir");
         let err = result.expect_err("expected error for directory");
         assert!(
-            matches!(err, crate::error::PgsError::Internal(_)),
-            "expected Internal, got: {err}"
+            matches!(err, crate::error::PgsError::UnsupportedEntry { .. }),
+            "expected UnsupportedEntry, got: {err}"
         );
     }
 

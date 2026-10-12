@@ -740,6 +740,7 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::InputFileUnreadable { .. }
         | PgsError::NotARepository { .. }
         | PgsError::ExternalFilter { .. }
+        | PgsError::UnsupportedEntry { .. }
         | PgsError::ExplainWithoutDryRun
         | PgsError::NonUtf8Partial { .. }
         | PgsError::CrlfMismatch { .. }
@@ -898,6 +899,9 @@ fn error_guidance(error: &PgsError) -> String {
         }
         PgsError::ExternalFilter { .. } => {
             "Stage this path with git, which runs the filter driver; pgs cannot.".to_owned()
+        }
+        PgsError::UnsupportedEntry { .. } => {
+            "Stage submodules and other non-file entries with git.".to_owned()
         }
         PgsError::StaleScan { .. } => {
             "Re-run pgs_scan to refresh checksums and hunk IDs, then retry.".to_owned()
