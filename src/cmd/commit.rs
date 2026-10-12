@@ -295,7 +295,9 @@ mod tests {
 
     #[test]
     fn resolve_message_missing_file_returns_input_file_unreadable() {
-        let err = resolve_message(&args(None, Some("/nonexistent/pgs-commit-msg.txt")), true)
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("missing-message.txt");
+        let err = resolve_message(&args(None, Some(missing.to_str().unwrap())), true)
             .expect_err("missing message file must be refused");
         assert!(
             matches!(err, PgsError::InputFileUnreadable { .. }),

@@ -72,8 +72,10 @@ mod tests {
 
     #[test]
     fn load_commit_plan_missing_path_returns_user_error() {
-        let err = load_commit_plan(Some("/tmp/does-not-exist-pgs-plan-io-test.json"))
-            .expect_err("missing file must fail");
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("missing-plan.json");
+        let err =
+            load_commit_plan(Some(missing.to_str().unwrap())).expect_err("missing file must fail");
         assert!(
             matches!(err, PgsError::InputFileUnreadable { .. }),
             "expected InputFileUnreadable, got: {err:?}"
