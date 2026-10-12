@@ -138,7 +138,7 @@ Lives in `src/cmd/` not `src/mcp/` — bridges MCP to CLI:
    and register it in `TOOL_DEFINITIONS`
 7. In `server.rs`, add a `parse_call()` arm choosing `ParsedToolCall::Read` or
    `::Mutating`; `list_tools()` and `get_tool()` read `TOOL_DEFINITIONS`
+8. Add test file: `tests/test_mcp_new_tool.rs`
 9. Add the tool to `EXPECTED_TOOL_NAMES` (`tests/test_mcp_stdio.rs`), the skill
    `allowed-tools` (both copies, both name prefixes), and
    `packaging/mcpb/manifest.json`
-8. Add test file: `tests/test_mcp_new_tool.rs`

@@ -792,6 +792,9 @@ Before writing anything, plan-apply refuses the run (exit 2,
 - a planned commit's selection fails to resolve against the starting scan, for
   example a range that names no changed line (`selection_empty`, exit 1).
 
+Hunks no planned commit covers (what `plan-check` reports as `uncovered`) do
+not block the run; they stay unstaged in the workdir.
+
 Hunk ids in the plan come from the scan the plan was built on. Committing one
 hunk can move the index-side position of a later hunk in the same file, and the
 id hashes that position, so plan-apply pins each id to its file, workdir start

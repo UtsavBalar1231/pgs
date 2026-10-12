@@ -182,7 +182,8 @@ Example amend call:
 
 - keep stdout reserved for JSON-RPC messages only
 - pass an explicit `repo_path` on every tool call
-- treat `pgs_stage`, `pgs_unstage`, and `pgs_commit` as destructive operations
+- treat `pgs_stage`, `pgs_unstage`, `pgs_commit`, and `pgs_plan_apply` as
+  destructive operations
 - on `2026-07-28`, send the `_meta` protocol keys on every request; on an
   `initialize` session, send nothing extra
 - `tasks/*` methods return `-32601`; there is no task lifecycle to poll, so read
