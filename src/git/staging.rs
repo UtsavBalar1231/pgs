@@ -13,7 +13,7 @@ use crate::error::PgsError;
 use crate::git::repo;
 use crate::git::{
     LineSelection, WorkdirFileType, build_index_entry, read_head_blob, read_index_blob,
-    read_workdir_for_blob,
+    read_workdir_for_blob, read_workdir_for_index,
 };
 use crate::models::{
     DiffLineInfo, HunkInfo, LineOrigin, LineRange, OperationPreview, PreviewLine,
@@ -36,8 +36,7 @@ pub fn stage_file(
     file_path: &str,
     mode_override: Option<u32>,
 ) -> Result<u32, PgsError> {
-    let workdir = repo::workdir(repo)?;
-    let blob = read_workdir_for_blob(workdir, file_path)?;
+    let blob = read_workdir_for_index(repo, file_path)?;
     let content = blob.bytes;
     let effective_mode = match mode_override {
         Some(m) => Some(m),
@@ -48,14 +47,8 @@ pub fn stage_file(
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
 
-    let entry = build_index_entry(
-        &index,
-        file_path,
-        oid,
-        saturating_u32(content.len()),
-        effective_mode,
-    );
-    index.add_frombuffer(&entry, &content)?;
+    let entry = build_index_entry(&index, file_path, oid, effective_mode);
+    index.add(&entry)?;
     index.write()?;
 
     Ok(count_lines(&content))
@@ -95,21 +88,14 @@ pub(crate) fn stage_lines(
     selection: &LineSelection,
     mode_override: Option<u32>,
 ) -> Result<u32, PgsError> {
-    let workdir = repo::workdir(repo)?;
-    let blob = read_workdir_for_blob(workdir, file_path)?;
+    let blob = read_workdir_for_index(repo, file_path)?;
     if blob.file_type == WorkdirFileType::Symlink {
         // Line granularity is meaningless on a symlink (one path-string).
         // Stage the whole link-target string under mode 0o120_000.
         let oid = repo.blob(&blob.bytes)?;
         let mut index = repo.index()?;
-        let entry = build_index_entry(
-            &index,
-            file_path,
-            oid,
-            saturating_u32(blob.bytes.len()),
-            Some(0o120_000),
-        );
-        index.add_frombuffer(&entry, &blob.bytes)?;
+        let entry = build_index_entry(&index, file_path, oid, Some(0o120_000));
+        index.add(&entry)?;
         index.write()?;
         return Ok(1);
     }
@@ -210,14 +196,8 @@ pub(crate) fn stage_lines(
     let oid = repo.blob(&content)?;
     let mut index = repo.index()?;
 
-    let entry = build_index_entry(
-        &index,
-        file_path,
-        oid,
-        saturating_u32(content.len()),
-        mode_override,
-    );
-    index.add_frombuffer(&entry, &content)?;
+    let entry = build_index_entry(&index, file_path, oid, mode_override);
+    index.add(&entry)?;
     index.write()?;
 
     Ok(lines_staged)
@@ -594,8 +574,7 @@ fn collect_preview_additions(
     file_path: &str,
     selected: &HashSet<u32>,
 ) -> Result<Vec<PreviewLine>, PgsError> {
-    let workdir = repo::workdir(repo)?;
-    let blob = read_workdir_for_blob(workdir, file_path)?;
+    let blob = read_workdir_for_index(repo, file_path)?;
     if blob.file_type == WorkdirFileType::Symlink {
         let target = String::from_utf8_lossy(&blob.bytes).into_owned();
         return Ok(vec![PreviewLine {
@@ -693,8 +672,7 @@ pub fn stage_rename(
     let mut index = repo.index()?;
     index.remove_path(Path::new(old_path))?;
 
-    let workdir = repo::workdir(repo)?;
-    let blob = read_workdir_for_blob(workdir, new_path)?;
+    let blob = read_workdir_for_index(repo, new_path)?;
     let content = blob.bytes;
     let effective_mode = match mode_override {
         Some(m) => Some(m),
@@ -704,14 +682,8 @@ pub fn stage_rename(
 
     let oid = repo.blob(&content)?;
 
-    let entry = build_index_entry(
-        &index,
-        new_path,
-        oid,
-        saturating_u32(content.len()),
-        effective_mode,
-    );
-    index.add_frombuffer(&entry, &content)?;
+    let entry = build_index_entry(&index, new_path, oid, effective_mode);
+    index.add(&entry)?;
     index.write()?;
     Ok(())
 }
@@ -747,13 +719,7 @@ mod tests {
         // Build the blob (link-target string bytes) and index entry manually.
         let blob_oid = repo.blob(target.as_bytes()).expect("blob");
         let mut index = repo.index().expect("index");
-        let entry = build_index_entry(
-            &index,
-            link_name,
-            blob_oid,
-            saturating_u32(target.len()),
-            Some(0o120_000),
-        );
+        let entry = build_index_entry(&index, link_name, blob_oid, Some(0o120_000));
         index
             .add_frombuffer(&entry, target.as_bytes())
             .expect("add_frombuffer");

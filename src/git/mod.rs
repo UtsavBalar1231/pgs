@@ -81,15 +81,45 @@ pub fn read_workdir_for_blob(
     )))
 }
 
+/// Read a workdir path in the form `git add` would store it in the index.
+///
+/// Regular files pass through the repository's clean filters (`core.autocrlf`,
+/// `text`/`eol`, `ident`), so a CRLF checkout of an LF file stages as LF.
+/// Symlink targets are never filtered. The drift checksum keeps hashing the raw
+/// bytes from [`read_workdir_for_blob`], because it fingerprints the file on disk.
+///
+/// # Errors
+/// Everything [`read_workdir_for_blob`] returns, plus `PgsError::Git` when a
+/// filter fails (e.g. `core.safecrlf=true` on endings that cannot round-trip).
+pub fn read_workdir_for_index(repo: &Repository, rel_path: &str) -> Result<WorkdirBlob, PgsError> {
+    let workdir = repo::workdir(repo)?;
+    let mut blob = read_workdir_for_blob(workdir, rel_path)?;
+    if blob.file_type == WorkdirFileType::Regular {
+        // libgit2 exposes its filters only through blob creation. The object
+        // written is the one a whole-file stage writes anyway.
+        let mut writer = repo.blob_writer(Some(std::path::Path::new(rel_path)))?;
+        std::io::Write::write_all(&mut writer, &blob.bytes)
+            .map_err(|e| PgsError::io(workdir.join(rel_path), e))?;
+        let oid = writer.commit()?;
+        blob.bytes = repo.find_blob(oid)?.content().to_vec();
+    }
+    Ok(blob)
+}
+
 /// Build an `IndexEntry` for a file, preserving existing mode/flags from the index.
 ///
 /// If the file is not yet in the index (new file), defaults to mode `0o100644`.
 /// Pass `mode_override` to apply a different mode (e.g. for `chmod +x` staging).
+///
+/// Stat data is left zero, size included, as `git update-index --cacheinfo`
+/// does. A nonzero size that differs from the file on disk makes git and
+/// libgit2 report the file modified without comparing content, and the staged
+/// blob's size differs from the disk size after a partial stage or a clean
+/// filter, so a zero size is the only value that never lies.
 pub fn build_index_entry(
     index: &git2::Index,
     file_path: &str,
     oid: git2::Oid,
-    content_len: u32,
     mode_override: Option<u32>,
 ) -> git2::IndexEntry {
     let (mode, flags, flags_extended) = match index.get_path(std::path::Path::new(file_path), 0) {
@@ -104,7 +134,7 @@ pub fn build_index_entry(
         mode,
         uid: 0,
         gid: 0,
-        file_size: content_len,
+        file_size: 0,
         id: oid,
         flags,
         flags_extended,
@@ -327,10 +357,10 @@ mod tests {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
         let oid = git2::Oid::ZERO_SHA1;
-        let entry = build_index_entry(&index, "new_file.rs", oid, 42, None);
+        let entry = build_index_entry(&index, "new_file.rs", oid, None);
         assert_eq!(entry.mode, 0o100_644);
         assert_eq!(entry.flags, 0);
-        assert_eq!(entry.file_size, 42);
+        assert_eq!(entry.file_size, 0);
         assert_eq!(entry.path, b"new_file.rs");
     }
 
@@ -339,7 +369,7 @@ mod tests {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
         let oid = git2::Oid::ZERO_SHA1;
-        let entry = build_index_entry(&index, "file.txt", oid, 10, None);
+        let entry = build_index_entry(&index, "file.txt", oid, None);
         assert_eq!(entry.mode, 0o100_644);
     }
 
@@ -348,7 +378,7 @@ mod tests {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
         let oid = git2::Oid::ZERO_SHA1;
-        let entry = build_index_entry(&index, "file.txt", oid, 10, Some(0o100_755));
+        let entry = build_index_entry(&index, "file.txt", oid, Some(0o100_755));
         assert_eq!(entry.mode, 0o100_755);
     }
 
@@ -357,7 +387,7 @@ mod tests {
         let (_dir, repo) = setup_repo_with_commit("content");
         let index = repo.index().expect("index");
         let oid = git2::Oid::ZERO_SHA1;
-        let entry = build_index_entry(&index, "new_file.rs", oid, 42, Some(0o100_755));
+        let entry = build_index_entry(&index, "new_file.rs", oid, Some(0o100_755));
         assert_eq!(entry.mode, 0o100_755);
     }
 

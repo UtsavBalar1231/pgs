@@ -42,13 +42,7 @@ pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError>
             let lines_affected = count_lines(&head_content);
             let oid = repo.blob(&head_content)?;
             let head_mode = read_head_mode(repo, file_path).ok();
-            let entry = build_index_entry(
-                &index,
-                file_path,
-                oid,
-                saturating_u32(head_content.len()),
-                head_mode,
-            );
+            let entry = build_index_entry(&index, file_path, oid, head_mode);
             index.add(&entry)?;
             index.write()?;
             Ok(lines_affected)
@@ -186,13 +180,7 @@ pub fn unstage_lines(
     // Write the new blob and update the index
     let oid = repo.blob(new_content.as_bytes())?;
     let mut index = repo.index()?;
-    let entry = build_index_entry(
-        &index,
-        file_path,
-        oid,
-        saturating_u32(new_content.len()),
-        None,
-    );
+    let entry = build_index_entry(&index, file_path, oid, None);
     index.add(&entry)?;
     index.write()?;
 
@@ -601,15 +589,8 @@ mod tests {
         let oid = repo.blob(index_crlf).expect("blob");
         {
             use crate::git::build_index_entry;
-            use crate::saturating_u32;
             let mut index = repo.index().expect("index");
-            let entry = build_index_entry(
-                &index,
-                "file.txt",
-                oid,
-                saturating_u32(index_crlf.len()),
-                None,
-            );
+            let entry = build_index_entry(&index, "file.txt", oid, None);
             index
                 .add_frombuffer(&entry, index_crlf)
                 .expect("add_frombuffer");
@@ -631,11 +612,10 @@ mod tests {
     /// we can plant non-UTF-8 content without going through `index.add_path`).
     fn stage_raw_bytes_into_index(repo: &Repository, file_path: &str, content: &[u8]) {
         use crate::git::build_index_entry;
-        use crate::saturating_u32;
 
         let oid = repo.blob(content).expect("blob");
         let mut index = repo.index().expect("index");
-        let entry = build_index_entry(&index, file_path, oid, saturating_u32(content.len()), None);
+        let entry = build_index_entry(&index, file_path, oid, None);
         index
             .add_frombuffer(&entry, content)
             .expect("add_frombuffer");
