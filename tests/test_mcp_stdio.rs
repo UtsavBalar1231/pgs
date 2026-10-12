@@ -21,7 +21,7 @@ const SUPPORTED_VERSIONS: [&str; 3] = ["2025-06-18", "2025-11-25", MCP_PROTOCOL_
 const NEWEST_INITIALIZE_VERSION: &str = "2025-11-25";
 
 /// Every tool the server is contracted to expose, in `tools/list` order.
-const EXPECTED_TOOL_NAMES: [&str; 10] = [
+const EXPECTED_TOOL_NAMES: [&str; 11] = [
     "pgs_scan",
     "pgs_status",
     "pgs_stage",
@@ -32,6 +32,7 @@ const EXPECTED_TOOL_NAMES: [&str; 10] = [
     "pgs_split_hunk",
     "pgs_plan_check",
     "pgs_plan_diff",
+    "pgs_plan_apply",
 ];
 
 fn assert_tools_capability_only(capabilities: &Value) {

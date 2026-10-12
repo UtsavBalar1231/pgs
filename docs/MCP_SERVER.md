@@ -77,6 +77,7 @@ All tools require `repo_path`.
 | `pgs_split_hunk` | Classify contiguous line runs in a hunk | no |
 | `pgs_plan_check` | Validate a commit plan against a fresh scan | no |
 | `pgs_plan_diff` | Reconcile a saved commit plan against a fresh scan | no |
+| `pgs_plan_apply` | Stage and commit each planned commit of a `CommitPlan`, in order | yes unless dry-run |
 
 `repo_path` is canonicalized internally, so the worktree path and its `.git` path map to the same mutation lock.
 

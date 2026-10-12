@@ -768,6 +768,87 @@ schema requires `repo_path` and `plan` (inline `CommitPlan` object);
 optional `context` defaults to 3. The full `PlanDiffOutput` envelope is
 returned inside `structuredContent.pgs`.
 
+### `plan-apply`
+
+Apply a `CommitPlan`: for each planned commit, in order, stage its selections
+and commit with its message, exactly as `pgs commit -m <message> <selections>
+--exclude <exclude>` would. The plan schema is the one `plan-check` and
+`plan-diff` accept; here `message` is required on every planned commit.
+
+```
+pgs plan-apply [--plan <path> | --stdin] [--dry-run] [--no-verify]
+```
+
+Before writing anything, plan-apply refuses the run (exit 2,
+`invalid_arguments` unless noted) when:
+
+- the plan has no commits, or a planned commit has no non-blank `message`;
+- the repository has active commit hooks (`commit_hooks_present`), unless
+  `--no-verify` is passed — the same rule as `commit`;
+- anything is already staged — the run starts from an empty index;
+- there are no unstaged changes (`no_changes`, exit 1);
+- `plan-check` would report overlaps, unsafe selectors, unknown paths, or
+  unknown hunk ids;
+- a planned commit's selection fails to resolve against the starting scan, for
+  example a range that names no changed line (`selection_empty`, exit 1).
+
+Hunk ids in the plan come from the scan the plan was built on. Committing one
+hunk can move the index-side position of a later hunk in the same file, and the
+id hashes that position, so plan-apply pins each id to its file, workdir start
+line and content checksum and re-resolves it before each commit. Line ranges
+and paths name workdir content, which committing does not change. An `exclude`
+whose hunk an earlier planned commit already took excludes nothing.
+
+`--dry-run` resolves every planned commit against the starting scan and writes
+nothing.
+
+A planned commit that fails after earlier ones were created stops the run. Its
+own staging is rolled back, so the index is empty again; the earlier commits
+stay. The envelope reports them, with `status: "partial"` and `failed`, and the
+command exits with the failed step's exit code.
+
+JSON envelope:
+
+```json
+{
+  "version": "v1",
+  "command": "plan-apply",
+  "status": "applied|dry_run|partial",
+  "commits": [
+    {
+      "id": "c1",
+      "message": "feat: a\n",
+      "commit_hash": "40-char sha, absent on a dry run",
+      "staged": [{ "selection": "a.txt", "lines_affected": 1 }]
+    }
+  ],
+  "failed": {
+    "id": "c2",
+    "code": "unterminated_interior_line",
+    "message": "...",
+    "exit_code": 2
+  }
+}
+```
+
+`id` is the planned commit's `id`, or `#<n>` (1-based) when it has none.
+`failed` is present only when `status` is `partial`.
+
+Text record kinds:
+- `plan.apply.begin`, one `plan.apply.commit` per commit, `plan.apply.failed`
+  (partial only), `plan.apply.end`. Begin and end carry `status` and the commit
+  count.
+
+Exit codes:
+- `0` when every planned commit was created, or on a successful dry run.
+- the failed step's exit code on a partial run.
+- `1`/`2` when the run is refused before writing, as listed above.
+
+MCP tool: `pgs_plan_apply` — mutating. Input schema requires `repo_path` and
+`plan`; optional `dry_run`, `no_verify`, and `context` (default 3). A partial
+run returns `isError: true` with the full envelope in `structuredContent.pgs`,
+so the caller still sees which commits were created.
+
 ## Selection Syntax
 
 Selections are positional and auto-detected:

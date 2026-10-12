@@ -43,6 +43,7 @@ Recognized marker kinds:
 - split-hunk: `split.begin`, `split.range`, `split.end`
 - plan-check: `plan.check.begin`, `plan.check.overlap`, `plan.check.uncovered`, `plan.check.unsafe`, `plan.check.unknown`, `plan.check.unknown_hunk`, `plan.check.end`
 - plan-diff: `plan.diff.begin`, `plan.diff.valid`, `plan.diff.shifted`, `plan.diff.gone`, `plan.diff.end`
+- plan-apply: `plan.apply.begin`, `plan.apply.commit`, `plan.apply.failed`, `plan.apply.end`
 - error: `error`
 
 JSON mode is opt-in (`--json`/`--output json`) and serializes the same view-models.

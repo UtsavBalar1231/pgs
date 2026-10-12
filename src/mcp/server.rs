@@ -20,10 +20,10 @@ use crate::{
     cmd::mcp_adapter::McpCommandRequest,
     mcp::contract::{
         self, CommitToolInput, LogToolInput, OverviewToolInput, PGS_COMMIT_TOOL, PGS_LOG_TOOL,
-        PGS_OVERVIEW_TOOL, PGS_PLAN_CHECK_TOOL, PGS_PLAN_DIFF_TOOL, PGS_SCAN_TOOL,
-        PGS_SPLIT_HUNK_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL, PlanCheckToolInput,
-        PlanDiffToolInput, ScanToolInput, SplitHunkToolInput, StageToolInput, StatusToolInput,
-        UnstageToolInput,
+        PGS_OVERVIEW_TOOL, PGS_PLAN_APPLY_TOOL, PGS_PLAN_CHECK_TOOL, PGS_PLAN_DIFF_TOOL,
+        PGS_SCAN_TOOL, PGS_SPLIT_HUNK_TOOL, PGS_STAGE_TOOL, PGS_STATUS_TOOL, PGS_UNSTAGE_TOOL,
+        PlanApplyToolInput, PlanCheckToolInput, PlanDiffToolInput, ScanToolInput,
+        SplitHunkToolInput, StageToolInput, StatusToolInput, UnstageToolInput,
     },
     mcp::{SUPPORTED_PROTOCOL_VERSIONS, runtime::PgsMcpRuntime},
 };
@@ -44,6 +44,10 @@ positional and auto-detected: `src/main.rs` (whole file), `abc123def456` (12-hex
 Hunk ids are content-addressed and go stale as soon as the file changes. Never reuse an id from \
 an earlier session or from before an edit; re-run pgs_scan and take the fresh id. Use \
 pgs_plan_diff to reconcile a saved plan against the current tree.
+
+For several commits, validate a CommitPlan with pgs_plan_check, then pgs_plan_apply stages and \
+commits each planned commit in order from an empty index, refusing before it writes anything \
+when the plan cannot finish.
 
 Line-range staging is not drift-safe on its own. Pass `expected_checksums` (map of path → \
 file-level SHA-256 from a prior scan) so a workdir edit between scan and stage fails with \
@@ -179,6 +183,14 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
             Ok(ParsedToolCall::Read(McpCommandRequest::PlanDiff(
                 input.into(),
             )))
+        }
+        PGS_PLAN_APPLY_TOOL => {
+            let input: PlanApplyToolInput = parse_tool_input(request.arguments)?;
+            let repo_path = input.repo_path.clone();
+            Ok(ParsedToolCall::Mutating {
+                repo_path,
+                command: McpCommandRequest::PlanApply(input.into()),
+            })
         }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
     }

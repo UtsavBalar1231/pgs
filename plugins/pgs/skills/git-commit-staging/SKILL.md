@@ -14,12 +14,12 @@ allowed-tools: >-
   mcp__pgs__pgs_scan mcp__pgs__pgs_stage mcp__pgs__pgs_unstage
   mcp__pgs__pgs_status mcp__pgs__pgs_commit mcp__pgs__pgs_log
   mcp__pgs__pgs_overview mcp__pgs__pgs_split_hunk mcp__pgs__pgs_plan_check
-  mcp__pgs__pgs_plan_diff mcp__plugin_pgs_pgs__pgs_scan
+  mcp__pgs__pgs_plan_diff mcp__pgs__pgs_plan_apply mcp__plugin_pgs_pgs__pgs_scan
   mcp__plugin_pgs_pgs__pgs_stage mcp__plugin_pgs_pgs__pgs_unstage
   mcp__plugin_pgs_pgs__pgs_status mcp__plugin_pgs_pgs__pgs_commit
   mcp__plugin_pgs_pgs__pgs_log mcp__plugin_pgs_pgs__pgs_overview
   mcp__plugin_pgs_pgs__pgs_split_hunk mcp__plugin_pgs_pgs__pgs_plan_check
-  mcp__plugin_pgs_pgs__pgs_plan_diff
+  mcp__plugin_pgs_pgs__pgs_plan_diff mcp__plugin_pgs_pgs__pgs_plan_apply
 ---
 
 # Git Commit Staging with pgs
@@ -35,6 +35,7 @@ Bash, raw git, or the pgs CLI.
 | Get fresh hunk IDs / line detail | `pgs_scan` |
 | Understand a mixed hunk | `pgs_split_hunk` |
 | Validate a multi-commit plan | `pgs_plan_check` |
+| Commit a validated plan in one call | `pgs_plan_apply` |
 | Stage or preview a selection | `pgs_stage` |
 | Inspect what will be committed | `pgs_status` |
 | Create or amend a commit | `pgs_commit` |
@@ -44,7 +45,10 @@ Bash, raw git, or the pgs CLI.
 1. Read state with `pgs_overview`. Use `pgs_scan` when you only need fresh
    unstaged hunk IDs or line-level detail.
 2. Plan commit groups by intent, not by filename, before staging anything.
-3. For multi-commit work, validate the grouping with `pgs_plan_check`.
+3. For multi-commit work, validate the grouping with `pgs_plan_check`. Once it
+   is clean, give every planned commit its `message` (after the message gate
+   below) and run `pgs_plan_apply` with `dry_run=true`, then without it: it
+   stages and commits each planned commit in order, from an empty index.
 4. Stage with the narrowest honest selector:
    - whole file for added, deleted, renamed, binary, or single-intent files;
    - hunk ID for an independent hunk;
@@ -108,6 +112,7 @@ Full gate, normalization rules, and worked examples:
 - `pgs_split_hunk` — classify the addition/deletion/mixed runs inside one hunk.
 - `pgs_plan_check` — validate a planned split before staging.
 - `pgs_plan_diff` — reconcile a saved plan after edits or commits.
+- `pgs_plan_apply` — stage and commit every planned commit of a clean plan.
 
 Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 `references/tool-reference.md`.
@@ -129,6 +134,9 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 - `pgs_split_hunk` is descriptive, not a staging plan; `pgs_plan_check` and
   `pgs_plan_diff` validate and reconcile but never stage; `pgs_overview` is
   read-only and does not replace a fresh scan once hunk IDs are stale.
+- `pgs_plan_apply` writes history. It refuses before writing anything when the
+  index is not empty, a planned commit has no message, or `pgs_plan_check`
+  would report overlaps, unsafe selectors, or unknown paths or hunk IDs.
 - A count-only dry run carries no preview lines — pass `explain=true`. Binary or
   unsupported previews return empty preview lines with a reason.
 
@@ -139,6 +147,12 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
   `git commit -m ...` so the hooks run (the one raw-git exception), or tell the
   user if you cannot run git. Pass `no_verify: true` only when the user
   explicitly asks to skip the hooks.
+
+- `pgs_plan_apply` returns `status="partial"` with `isError=true`: the
+  `commits` it lists were created and stay; `failed` names the planned commit
+  that stopped the run and its error, and the index is back to empty. Fix that
+  commit, drop the applied ones from the plan, re-scan for fresh hunk IDs, and
+  apply the rest.
 
 - `outcome="no_effect"`: inspect current state; the change may already be staged,
   unstaged, or committed. A line range that names only unchanged lines is also a

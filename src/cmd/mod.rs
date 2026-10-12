@@ -4,6 +4,7 @@ mod commit;
 pub mod log;
 pub mod mcp_adapter;
 mod overview;
+pub mod plan_apply;
 pub mod plan_check;
 pub mod plan_diff;
 pub(crate) mod plan_io;
@@ -47,6 +48,7 @@ pub const fn exit_override(output: &CommandOutput) -> Option<i32> {
     match output {
         CommandOutput::PlanCheck(plan_check) if plan_check.has_issues() => Some(1),
         CommandOutput::PlanDiff(plan_diff) if plan_diff.has_drift() => Some(1),
+        CommandOutput::PlanApply(plan_apply) => plan_apply.failure_exit_code(),
         _ => None,
     }
 }
@@ -88,6 +90,7 @@ impl ParsedCli {
             Command::SplitHunk(_) => OutputCommand::SplitHunk,
             Command::PlanCheck(_) => OutputCommand::PlanCheck,
             Command::PlanDiff(_) => OutputCommand::PlanDiff,
+            Command::PlanApply(_) => OutputCommand::PlanApply,
         }
     }
 }
@@ -117,6 +120,9 @@ pub enum Command {
     /// Reconcile a saved `CommitPlan` against a fresh scan: `still_valid` / shifted / gone.
     #[command(name = "plan-diff")]
     PlanDiff(plan_diff::PlanDiffArgs),
+    /// Apply a `CommitPlan`: stage and commit each planned commit in order.
+    #[command(name = "plan-apply")]
+    PlanApply(plan_apply::PlanApplyArgs),
 }
 
 impl Cli {
@@ -249,6 +255,7 @@ pub fn run(parsed: ParsedCli) -> Result<CommandOutput, PgsError> {
         Command::SplitHunk(args) => split::execute(repo.as_deref(), context, args),
         Command::PlanCheck(args) => plan_check::execute(repo.as_deref(), context, args),
         Command::PlanDiff(args) => plan_diff::execute(repo.as_deref(), context, args),
+        Command::PlanApply(args) => plan_apply::execute(repo.as_deref(), context, args),
     }
 }
 

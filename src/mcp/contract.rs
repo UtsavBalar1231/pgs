@@ -9,16 +9,16 @@ use serde_json::Value;
 
 use crate::{
     cmd::mcp_adapter::{
-        McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpPlanCheckRequest,
-        McpPlanDiffRequest, McpScanRequest, McpSplitHunkRequest, McpStageRequest, McpStatusRequest,
-        McpUnstageRequest,
+        McpAdapterError, McpCommitRequest, McpLogRequest, McpOverviewRequest, McpPlanApplyRequest,
+        McpPlanCheckRequest, McpPlanDiffRequest, McpScanRequest, McpSplitHunkRequest,
+        McpStageRequest, McpStatusRequest, McpUnstageRequest,
     },
     error::PgsError,
     models::CommitPlan,
     output::view::{
         CommandOutput, CommitOutput, LogOutput, OperationOutput, OperationStatusView,
-        OutputCommand, OverviewOutput, PlanCheckOutput, PlanDiffOutput, ScanOutput,
-        SplitHunkOutput, StatusOutput,
+        OutputCommand, OverviewOutput, PlanApplyOutput, PlanApplyStatus, PlanCheckOutput,
+        PlanDiffOutput, ScanOutput, SplitHunkOutput, StatusOutput,
     },
 };
 
@@ -42,6 +42,8 @@ pub const PGS_SPLIT_HUNK_TOOL: &str = "pgs_split_hunk";
 pub const PGS_PLAN_CHECK_TOOL: &str = "pgs_plan_check";
 /// MCP tool name for plan-diff (saved plan reconciliation against fresh scan).
 pub const PGS_PLAN_DIFF_TOOL: &str = "pgs_plan_diff";
+/// MCP tool name for applying a commit plan (stage and commit each planned commit).
+pub const PGS_PLAN_APPLY_TOOL: &str = "pgs_plan_apply";
 
 const DEFAULT_CONTEXT: u32 = 3;
 
@@ -299,6 +301,33 @@ impl From<PlanDiffToolInput> for McpPlanDiffRequest {
     }
 }
 
+/// JSON input schema for the `pgs_plan_apply` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanApplyToolInput {
+    /// Explicit repository path to mutate.
+    pub repo_path: String,
+    /// The `CommitPlan` to apply; every planned commit needs a `message`.
+    pub plan: CommitPlan,
+    /// Resolve every planned commit without staging or committing anything.
+    pub dry_run: Option<bool>,
+    /// Commit even though the repository has commit hooks pgs cannot run.
+    pub no_verify: Option<bool>,
+    /// Optional diff context override.
+    pub context: Option<u32>,
+}
+
+impl From<PlanApplyToolInput> for McpPlanApplyRequest {
+    fn from(value: PlanApplyToolInput) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            plan: value.plan,
+            dry_run: value.dry_run.unwrap_or(false),
+            no_verify: value.no_verify.unwrap_or(false),
+            context: value.context.unwrap_or(DEFAULT_CONTEXT),
+        }
+    }
+}
+
 /// Outcome classification surfaced in MCP tool results.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -368,6 +397,7 @@ define_tool_output!(OverviewToolOutput, OverviewOutput);
 define_tool_output!(SplitHunkToolOutput, SplitHunkOutput);
 define_tool_output!(PlanCheckToolOutput, PlanCheckOutput);
 define_tool_output!(PlanDiffToolOutput, PlanDiffOutput);
+define_tool_output!(PlanApplyToolOutput, PlanApplyOutput);
 
 /// No-effect/error envelope. All typed output structs skip `pgs` when `None`, so the
 /// JSON is command-agnostic: `{"outcome": ..., "pgs_error": ...}` for every command.
@@ -378,7 +408,7 @@ struct ToolOutcomeOnly {
 }
 
 /// The tool set is frozen and schema sanitization is pure, so it is built once
-/// and shared; `list_tools` would otherwise rebuild all ten definitions per tool.
+/// and shared; `list_tools` would otherwise rebuild all eleven definitions per tool.
 static TOOL_DEFINITIONS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
     vec![
         scan_tool(),
@@ -391,6 +421,7 @@ static TOOL_DEFINITIONS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
         split_hunk_tool(),
         plan_check_tool(),
         plan_diff_tool(),
+        plan_apply_tool(),
     ]
     .into_iter()
     .map(sanitize_tool_schemas)
@@ -667,6 +698,40 @@ fn plan_diff_tool() -> Tool {
     )
 }
 
+fn plan_apply_tool() -> Tool {
+    Tool::new(
+        PGS_PLAN_APPLY_TOOL,
+        "Apply a CommitPlan in an explicit local repository path: for each planned commit, in order, stage its selections and commit with its message. Requires an empty index and a plan that pgs_plan_check accepts; stops at the first failure and reports the commits already created. With dry_run, resolves every commit without writing. This mutates repository history.",
+        serde_json::Map::new(),
+    )
+    .with_title("Apply commit plan")
+    .with_input_schema::<PlanApplyToolInput>()
+    .with_output_schema::<PlanApplyToolOutput>()
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn plan_apply_summary_text(output: &PlanApplyOutput) -> String {
+    match (&output.status, &output.failed) {
+        (PlanApplyStatus::DryRun, _) => format!(
+            "Dry run: {} planned commit(s) resolved; nothing written.",
+            output.commits.len()
+        ),
+        (_, Some(failed)) => format!(
+            "Created {} commit(s); planned commit {} failed: {}",
+            output.commits.len(),
+            failed.id,
+            failed.message
+        ),
+        _ => format!("Created {} commit(s).", output.commits.len()),
+    }
+}
+
 fn log_summary_text(log: &LogOutput) -> String {
     if log.truncated {
         format!(
@@ -704,6 +769,25 @@ fn success_result(output: CommandOutput) -> Result<CallToolResult, PgsError> {
         CommandOutput::SplitHunk(v) => ok!(SplitHunkToolOutput, v, split_hunk_summary_text),
         CommandOutput::PlanCheck(v) => ok!(PlanCheckToolOutput, v, plan_check_summary_text),
         CommandOutput::PlanDiff(v) => ok!(PlanDiffToolOutput, v, plan_diff_summary_text),
+        CommandOutput::PlanApply(v) => {
+            // A partial apply is a failure that still carries what was created.
+            let partial = v.failed.is_some();
+            let text = plan_apply_summary_text(&v);
+            let outcome = if partial {
+                ToolOutcome::Error
+            } else {
+                ToolOutcome::Ok
+            };
+            structured_tool_result(
+                PlanApplyToolOutput {
+                    outcome,
+                    pgs: Some(v),
+                    pgs_error: None,
+                },
+                text,
+                partial,
+            )
+        }
     }
 }
 
@@ -815,7 +899,8 @@ fn operation_summary_text(operation: &OperationOutput) -> String {
         | OutputCommand::Overview
         | OutputCommand::SplitHunk
         | OutputCommand::PlanCheck
-        | OutputCommand::PlanDiff => "Applied",
+        | OutputCommand::PlanDiff
+        | OutputCommand::PlanApply => "Applied",
     };
     format!("{verb} {} selection(s).", operation.items.len())
 }
@@ -1018,6 +1103,7 @@ mod tests {
                 PGS_SPLIT_HUNK_TOOL,
                 PGS_PLAN_CHECK_TOOL,
                 PGS_PLAN_DIFF_TOOL,
+                PGS_PLAN_APPLY_TOOL,
             ]
         );
 
@@ -1102,7 +1188,12 @@ mod tests {
             PGS_PLAN_CHECK_TOOL,
             PGS_PLAN_DIFF_TOOL,
         ];
-        let mutating = [PGS_STAGE_TOOL, PGS_UNSTAGE_TOOL, PGS_COMMIT_TOOL];
+        let mutating = [
+            PGS_STAGE_TOOL,
+            PGS_UNSTAGE_TOOL,
+            PGS_COMMIT_TOOL,
+            PGS_PLAN_APPLY_TOOL,
+        ];
 
         for name in read_only {
             let tool = tool_definition(name).expect("tool should exist");

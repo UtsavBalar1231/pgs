@@ -9,8 +9,8 @@ pub use operation::{
     OperationStatusView, OverviewOutput, StatusOutput,
 };
 pub use plan::{
-    HunkRef, OriginMixView, PlanCheckOutput, PlanDiffEntry, PlanDiffMatchConfidence,
-    PlanDiffOutput, PlanDiffShift, PlanOverlap, SplitHunkOutput, SplitRangeView, UnknownHunkId,
-    UnsafeSelector,
+    HunkRef, OriginMixView, PlanAppliedCommit, PlanApplyFailure, PlanApplyOutput, PlanApplyStatus,
+    PlanCheckOutput, PlanDiffEntry, PlanDiffMatchConfidence, PlanDiffOutput, PlanDiffShift,
+    PlanOverlap, SplitHunkOutput, SplitRangeView, UnknownHunkId, UnsafeSelector,
 };
 pub use scan::{FileStatusView, ScanDetail, ScanFileView, ScanHunkView, ScanLineView, ScanOutput};

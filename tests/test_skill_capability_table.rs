@@ -133,6 +133,7 @@ fn skill_allowed_tools_cover_every_mcp_tool() {
         pgs::mcp::contract::PGS_SPLIT_HUNK_TOOL,
         pgs::mcp::contract::PGS_PLAN_CHECK_TOOL,
         pgs::mcp::contract::PGS_PLAN_DIFF_TOOL,
+        pgs::mcp::contract::PGS_PLAN_APPLY_TOOL,
     ]
     .into_iter()
     // Claude Code names a standalone server's tools `mcp__<server>__<tool>` and a

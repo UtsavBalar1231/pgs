@@ -4,6 +4,7 @@ use serde::Serialize;
 use crate::models::OriginMix;
 
 use super::common::{OUTPUT_VERSION, OutputCommand};
+use super::operation::OperationItemView;
 
 /// Classification label for a split-hunk range, rendered as a lowercase string.
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
@@ -200,5 +201,87 @@ impl PlanDiffOutput {
     #[must_use]
     pub const fn has_drift(&self) -> bool {
         !self.shifted.is_empty() || !self.gone.is_empty()
+    }
+}
+
+/// How far `plan-apply` got.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanApplyStatus {
+    /// Every planned commit was created.
+    Applied,
+    /// Nothing was written; each commit shows what it would stage.
+    DryRun,
+    /// A planned commit failed; the ones before it were created and kept.
+    Partial,
+}
+
+/// One planned commit as `plan-apply` handled it.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanAppliedCommit {
+    /// The planned commit's `id`, or `#<n>` (1-based) when it had none.
+    pub id: String,
+    /// The commit message as stored (normalized), or as planned on a dry run.
+    pub message: String,
+    /// Hash of the created commit; absent on a dry run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_hash: Option<String>,
+    /// What this commit staged, or would stage, one item per selection.
+    pub staged: Vec<OperationItemView>,
+}
+
+/// The planned commit that stopped `plan-apply`, and why.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanApplyFailure {
+    /// The failing planned commit's `id`, or `#<n>`.
+    pub id: String,
+    /// The error code, as in the error envelope.
+    pub code: &'static str,
+    /// The error message.
+    pub message: String,
+    /// The exit code the failure maps to.
+    pub exit_code: i32,
+}
+
+/// Result of `pgs plan-apply`.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct PlanApplyOutput {
+    /// Output contract version.
+    pub version: &'static str,
+    /// Always `plan-apply`.
+    pub command: OutputCommand,
+    /// How far the run got.
+    pub status: PlanApplyStatus,
+    /// The planned commits created (or, on a dry run, resolved), in plan order.
+    pub commits: Vec<PlanAppliedCommit>,
+    /// The planned commit that stopped the run; present only when `status` is `partial`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed: Option<PlanApplyFailure>,
+}
+
+impl PlanApplyOutput {
+    /// Build a `plan-apply` envelope.
+    #[must_use]
+    pub const fn new(
+        status: PlanApplyStatus,
+        commits: Vec<PlanAppliedCommit>,
+        failed: Option<PlanApplyFailure>,
+    ) -> Self {
+        Self {
+            version: OUTPUT_VERSION,
+            command: OutputCommand::PlanApply,
+            status,
+            commits,
+            failed,
+        }
+    }
+
+    /// The failed step's exit code, which the whole run exits with.
+    #[must_use]
+    pub const fn failure_exit_code(&self) -> Option<i32> {
+        match &self.failed {
+            Some(failure) => Some(failure.exit_code),
+            None => None,
+        }
     }
 }

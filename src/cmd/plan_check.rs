@@ -60,7 +60,7 @@ pub fn run_with_plan(
 
 /// Run the plan-check analysis with a pre-built [`ScanResult`]. Broken out for
 /// unit tests that want to avoid real git I/O.
-fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
+pub fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
     // hunk_id -> (file_path, file_idx, hunk_idx)
     let mut scan_hunks: BTreeMap<String, (String, usize, usize)> = BTreeMap::new();
     let mut scan_paths: BTreeSet<String> = BTreeSet::new();

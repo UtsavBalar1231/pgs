@@ -13,6 +13,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::SplitHunk(split) => Ok(serde_json::to_string_pretty(split)?),
         CommandOutput::PlanCheck(plan_check) => Ok(serde_json::to_string_pretty(plan_check)?),
         CommandOutput::PlanDiff(plan_diff) => Ok(serde_json::to_string_pretty(plan_diff)?),
+        CommandOutput::PlanApply(plan_apply) => Ok(serde_json::to_string_pretty(plan_apply)?),
     }
 }
 

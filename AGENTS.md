@@ -7,8 +7,8 @@ and ~10k of tests.
 
 | Binary | Entry | Runtime | Purpose |
 |--------|-------|---------|---------|
-| `pgs` | `src/main.rs` | sync | CLI — scan, stage, unstage, status, commit, log, overview, split-hunk, plan-check, plan-diff |
-| `pgs-mcp` | `src/bin/pgs-mcp.rs` | async (tokio) | MCP server over stdio — 10 tools; MCP `2026-07-28` plus `initialize`-era `2025-11-25`/`2025-06-18` |
+| `pgs` | `src/main.rs` | sync | CLI — scan, stage, unstage, status, commit, log, overview, split-hunk, plan-check, plan-diff, plan-apply |
+| `pgs-mcp` | `src/bin/pgs-mcp.rs` | async (tokio) | MCP server over stdio — 11 tools; MCP `2026-07-28` plus `initialize`-era `2025-11-25`/`2025-06-18` |
 
 Both share the same library crate. The MCP server reuses CLI command handlers via `cmd/mcp_adapter.rs`.
 
@@ -32,7 +32,8 @@ src/
   cmd/                 Command handlers — one file per command + adapter
     mod.rs             Cli struct (clap), Command enum, OutputMode, run() dispatcher
     mcp_adapter.rs     Typed bridge: MCP requests -> CLI command handlers
-    scan|stage|unstage|status|commit|log|overview|split|plan_check|plan_diff|plan_io.rs
+    scan|stage|unstage|status|commit|log|overview|split|plan_check|plan_diff|plan_apply|plan_io.rs
+    work_plan.rs       Selector resolution shared by stage and unstage
 
   git/                 All libgit2 operations — SEE src/git/AGENTS.md
   mcp/                 MCP protocol server (rmcp 3.5) — SEE src/mcp/AGENTS.md
@@ -45,7 +46,7 @@ src/
       mod.rs           CommandOutput enum, re-exports
       scan.rs          Scan view-model types
       operation.rs     Stage/unstage view-model types
-      plan.rs          Plan-check and plan-diff view-model types
+      plan.rs          Plan-check, plan-diff, and plan-apply view-model types
       common.rs        Shared error view model
     text.rs            @@pgs:v1 marker renderer
     json.rs            JSON envelope renderer

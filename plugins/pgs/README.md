@@ -22,6 +22,7 @@ This plugin installs the `pgs-mcp` MCP server and the `git-commit-staging` skill
 | `pgs_split_hunk` | Classify the addition, deletion, and mixed runs inside a hunk |
 | `pgs_plan_check` | Validate a commit plan against the current changes |
 | `pgs_plan_diff` | Reconcile a saved commit plan after the tree has changed |
+| `pgs_plan_apply` | Stage and commit every planned commit of a clean plan, in order |
 
 ## Bundled skill
 

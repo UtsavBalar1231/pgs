@@ -6,10 +6,10 @@ use crate::models::{LineOrigin, OperationPreview, PreviewLine};
 
 use super::view::{
     CliErrorOutput, CommandOutput, CommitOutput, FileStatusView, HunkRef, LineOriginView,
-    OperationOutput, OperationStatusView, OutputCommand, OverviewOutput, PlanCheckOutput,
-    PlanDiffEntry, PlanDiffOutput, PlanDiffShift, PlanOverlap, ScanDetail, ScanFileView,
-    ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput, StatusOutput, UnknownHunkId,
-    UnsafeSelector,
+    OperationOutput, OperationStatusView, OutputCommand, OverviewOutput, PlanApplyOutput,
+    PlanApplyStatus, PlanCheckOutput, PlanDiffEntry, PlanDiffOutput, PlanDiffShift, PlanOverlap,
+    ScanDetail, ScanFileView, ScanHunkView, ScanLineView, ScanOutput, SplitHunkOutput,
+    StatusOutput, UnknownHunkId, UnsafeSelector,
 };
 
 const MARKER_PREFIX: &str = "@@pgs:v1";
@@ -128,6 +128,7 @@ pub fn render(output: &CommandOutput) -> Result<String, PgsError> {
         CommandOutput::SplitHunk(split) => render_split(split),
         CommandOutput::PlanCheck(plan_check) => render_plan_check(plan_check),
         CommandOutput::PlanDiff(plan_diff) => render_plan_diff(plan_diff),
+        CommandOutput::PlanApply(plan_apply) => render_plan_apply(plan_apply),
     }
 }
 
@@ -524,6 +525,31 @@ fn render_plan_diff(output: &PlanDiffOutput) -> Result<String, PgsError> {
     }
     lines.push(render_marker("plan.diff.end", &boundary)?);
 
+    Ok(lines.join("\n"))
+}
+
+#[derive(Debug, Serialize)]
+struct PlanApplyBoundaryRecord {
+    command: OutputCommand,
+    status: PlanApplyStatus,
+    commits: usize,
+}
+
+fn render_plan_apply(output: &PlanApplyOutput) -> Result<String, PgsError> {
+    let boundary = PlanApplyBoundaryRecord {
+        command: output.command,
+        status: output.status,
+        commits: output.commits.len(),
+    };
+    let mut lines = Vec::with_capacity(output.commits.len() + 3);
+    lines.push(render_marker("plan.apply.begin", &boundary)?);
+    for commit in &output.commits {
+        lines.push(render_marker("plan.apply.commit", commit)?);
+    }
+    if let Some(failed) = &output.failed {
+        lines.push(render_marker("plan.apply.failed", failed)?);
+    }
+    lines.push(render_marker("plan.apply.end", &boundary)?);
     Ok(lines.join("\n"))
 }
 

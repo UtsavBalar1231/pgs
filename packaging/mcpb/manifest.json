@@ -35,7 +35,8 @@
     { "name": "pgs_log" },
     { "name": "pgs_split_hunk" },
     { "name": "pgs_plan_check" },
-    { "name": "pgs_plan_diff" }
+    { "name": "pgs_plan_diff" },
+    { "name": "pgs_plan_apply" }
   ],
   "keywords": ["git", "staging", "commit", "hunk", "mcp"],
   "license": "MIT",

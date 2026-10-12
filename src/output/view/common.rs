@@ -15,6 +15,7 @@ pub enum CommandOutput {
     SplitHunk(super::plan::SplitHunkOutput),
     PlanCheck(super::plan::PlanCheckOutput),
     PlanDiff(super::plan::PlanDiffOutput),
+    PlanApply(super::plan::PlanApplyOutput),
 }
 
 impl From<super::scan::ScanOutput> for CommandOutput {
@@ -71,6 +72,12 @@ impl From<super::plan::PlanDiffOutput> for CommandOutput {
     }
 }
 
+impl From<super::plan::PlanApplyOutput> for CommandOutput {
+    fn from(output: super::plan::PlanApplyOutput) -> Self {
+        Self::PlanApply(output)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCommand {
@@ -87,6 +94,8 @@ pub enum OutputCommand {
     PlanCheck,
     #[serde(rename = "plan-diff")]
     PlanDiff,
+    #[serde(rename = "plan-apply")]
+    PlanApply,
 }
 
 impl OutputCommand {
@@ -102,6 +111,7 @@ impl OutputCommand {
             Self::SplitHunk => "split",
             Self::PlanCheck => "plan-check",
             Self::PlanDiff => "plan-diff",
+            Self::PlanApply => "plan-apply",
         }
     }
 }

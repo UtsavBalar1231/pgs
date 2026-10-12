@@ -196,9 +196,9 @@ MCP setup, copy that directory into `~/.agents/skills/` (read by Codex, Gemini,
 Cursor, Copilot, OpenCode, Amp, Goose, Junie, Factory, Warp, Windsurf, Zed, and
 Crush), `~/.claude/skills/` (Claude Code, Cline), or `~/.kiro/skills/` (Kiro).
 
-The plugin installs register 10 MCP tools: `pgs_scan`, `pgs_status`,
+The plugin installs register 11 MCP tools: `pgs_scan`, `pgs_status`,
 `pgs_stage`, `pgs_unstage`, `pgs_commit`, `pgs_log`, `pgs_overview`,
-`pgs_split_hunk`, `pgs_plan_check`, and `pgs_plan_diff`.
+`pgs_split_hunk`, `pgs_plan_check`, `pgs_plan_diff`, and `pgs_plan_apply`.
 
 Setup for OpenCode, Goose, Amp, Crush, Continue, Cline, Zed, Kiro,
 Windsurf/Devin, Factory Droid, JetBrains Junie, and Warp is in
@@ -234,13 +234,17 @@ pgs log                                     # recent history (for message style)
 pgs split-hunk abc123def456            # classify addition/deletion/mixed runs in a hunk
 pgs plan-check --stdin < plan.json     # validate a multi-commit plan against a fresh scan
 pgs plan-diff  --stdin < plan.json     # reconcile a saved plan after edits or commits
+pgs plan-apply --stdin < plan.json     # stage and commit each planned commit, in order
 ```
 
 A plan looks like
 `{"commits": [{"id": "c1", "selections": ["abc123def456", "src/b.rs"], "message": "..."}]}`.
 Each commit takes `selections`, and optionally `id`, `exclude`, and `message`.
 `plan-check` and `plan-diff` are descriptive: they report overlaps, gaps, and
-drift but never stage or commit.
+drift but never stage or commit. `plan-apply` executes a clean plan: it needs an
+empty index and a `message` on every commit, refuses anything `plan-check` would
+flag before writing, and if a later commit fails it keeps the earlier ones and
+reports exactly which were created.
 
 ## Selection syntax
 

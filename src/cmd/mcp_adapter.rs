@@ -8,7 +8,9 @@ use crate::output::view::OutputCommand;
 /// crate-private; this re-export is how library callers name the type.
 pub use crate::output::view::CommandOutput;
 
-use super::{commit, log, overview, plan_check, plan_diff, scan, split, stage, status, unstage};
+use super::{
+    commit, log, overview, plan_apply, plan_check, plan_diff, scan, split, stage, status, unstage,
+};
 
 /// Typed MCP payload for `pgs_scan` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +139,21 @@ pub struct McpPlanCheckRequest {
     pub context: u32,
 }
 
+/// Typed MCP payload for `pgs_plan_apply` requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpPlanApplyRequest {
+    /// Explicit repository path supplied by the MCP caller.
+    pub repo_path: String,
+    /// The plan to apply.
+    pub plan: CommitPlan,
+    /// Resolve without writing.
+    pub dry_run: bool,
+    /// Commit despite hooks pgs cannot run.
+    pub no_verify: bool,
+    /// Unified diff context lines used while resolving selections.
+    pub context: u32,
+}
+
 /// Typed MCP payload for `pgs_plan_diff` requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpPlanDiffRequest {
@@ -171,6 +188,8 @@ pub enum McpCommandRequest {
     PlanCheck(McpPlanCheckRequest),
     /// Reconcile a saved commit plan against a fresh scan (plan-diff).
     PlanDiff(McpPlanDiffRequest),
+    /// Apply a commit plan.
+    PlanApply(McpPlanApplyRequest),
 }
 
 /// Stable MCP-facing error metadata derived from a CLI command failure.
@@ -298,5 +317,15 @@ pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterEr
             &request.plan,
         )
         .map_err(|source| McpAdapterError::new(OutputCommand::PlanDiff, source)),
+        McpCommandRequest::PlanApply(request) => plan_apply::run_with_plan(
+            Some(request.repo_path.as_str()),
+            request.context.max(1),
+            &request.plan,
+            plan_apply::ApplyOptions {
+                dry_run: request.dry_run,
+                no_verify: request.no_verify,
+            },
+        )
+        .map_err(|source| McpAdapterError::new(OutputCommand::PlanApply, source)),
     }
 }

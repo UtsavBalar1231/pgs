@@ -197,6 +197,20 @@ pub fn run(
     request: &CommitRequest,
     allow_stdin: bool,
 ) -> Result<CommandOutput, PgsError> {
+    commit(repo_path, context, request, allow_stdin).map(Into::into)
+}
+
+/// [`run`], returning the commit result itself.
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn commit(
+    repo_path: Option<&str>,
+    context: u32,
+    request: &CommitRequest,
+    allow_stdin: bool,
+) -> Result<CommitOutput, PgsError> {
     // Resolved first so `--amend` cannot destroy the existing message before failing.
     let message = resolve_message(request, allow_stdin)?;
 
@@ -210,12 +224,12 @@ pub fn run(
 
     let Some(stage_request) = &request.stage else {
         let result = create_commit(&repository, message, request.amend)?;
-        return Ok(CommitOutput::from(result).into());
+        return Ok(CommitOutput::from(result));
     };
     let staged = stage::apply(&repository, context, stage_request)?;
     let backup_id = staged.backup_id.as_deref().unwrap_or_default();
     match create_commit(&repository, message, request.amend) {
-        Ok(result) => Ok(CommitOutput::from(result).with_staged(staged.items).into()),
+        Ok(result) => Ok(CommitOutput::from(result).with_staged(staged.items)),
         Err(error) => Err(backup::rollback(&repository, backup_id, error)),
     }
 }

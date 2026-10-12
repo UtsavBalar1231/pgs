@@ -109,7 +109,8 @@ pgs normalizes every message before storing it; see
 
 ## CommitPlan shape
 
-`pgs_plan_check` and `pgs_plan_diff` take a `CommitPlan` you hand-construct:
+`pgs_plan_check`, `pgs_plan_diff`, and `pgs_plan_apply` take a `CommitPlan` you
+hand-construct:
 
 ```json
 {
@@ -127,7 +128,13 @@ pgs normalizes every message before storing it; see
 Each commit takes `selections` (required), plus optional `id`, `exclude`, and
 `message`. `selections` and `exclude` use the same selectors as `pgs_stage`: a
 file path, a bare 12-hex hunk ID, or a `path:range`. A hunk ID already names its
-file, so it takes no path prefix. `message` is a preview that the plan tools do
-not interpret.
+file, so it takes no path prefix. `message` is a preview that `pgs_plan_check`
+and `pgs_plan_diff` do not interpret; `pgs_plan_apply` requires it on every
+commit and commits with it.
 
-Plan tools validate and reconcile a plan; they never stage, unstage, or commit.
+`pgs_plan_check` and `pgs_plan_diff` validate and reconcile a plan; they never
+stage, unstage, or commit. `pgs_plan_apply` does both, one planned commit at a
+time, in order. Hunk IDs in the plan come from the scan the plan was built on;
+`pgs_plan_apply` follows each one across the earlier commits of the same run, so
+an earlier commit in the same file does not strand a later hunk ID. Line ranges
+name workdir lines, which committing does not move.

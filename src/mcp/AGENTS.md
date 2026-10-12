@@ -38,9 +38,10 @@ end of session (exit 0).
 
 ### `contract.rs` (~1275 lines)
 
-- Ten tool-name constants: `PGS_SCAN_TOOL`, `PGS_STATUS_TOOL`, `PGS_STAGE_TOOL`,
+- Eleven tool-name constants: `PGS_SCAN_TOOL`, `PGS_STATUS_TOOL`, `PGS_STAGE_TOOL`,
   `PGS_UNSTAGE_TOOL`, `PGS_COMMIT_TOOL`, `PGS_LOG_TOOL`, `PGS_OVERVIEW_TOOL`,
-  `PGS_SPLIT_HUNK_TOOL`, `PGS_PLAN_CHECK_TOOL`, `PGS_PLAN_DIFF_TOOL`
+  `PGS_SPLIT_HUNK_TOOL`, `PGS_PLAN_CHECK_TOOL`, `PGS_PLAN_DIFF_TOOL`,
+  `PGS_PLAN_APPLY_TOOL`
 - One `*ToolInput` struct per tool, each deriving `JsonSchema` (from
   `rmcp::schemars`) for MCP auto-discovery
 - `From<ToolInput> for Mcp*Request` conversions applying defaults (e.g. `context`
@@ -57,7 +58,7 @@ end of session (exit 0).
   the index is unchanged
 - `ToolAnnotations` per tool: read-only tools are
   `read_only(true).destructive(false).idempotent(true).open_world(false)`;
-  `pgs_stage`, `pgs_unstage`, and `pgs_commit` are
+  `pgs_stage`, `pgs_unstage`, `pgs_commit`, and `pgs_plan_apply` are
   `read_only(false).destructive(true).idempotent(false).open_world(false)`
 
 ### `runtime.rs` (~210 lines)
@@ -66,7 +67,7 @@ end of session (exit 0).
   path to `Arc<tokio::sync::Mutex<()>>`. There is no task registry; MCP task
   support was removed when the server moved to `2026-07-28`, where tasks live in
   a separate draft extension.
-- Guarantee: stage/unstage/commit on one repo never run at the same time, and
+- Guarantee: stage/unstage/commit/plan-apply on one repo never run at the same time, and
   run in arrival order. tokio's `Mutex` serves waiters in `lock()` order, and
   `src/bin/pgs-mcp.rs` pins the current-thread runtime so rmcp's per-request
   tasks reach the lock in spawn (= arrival) order. Do not switch the runtime
@@ -93,7 +94,7 @@ end of session (exit 0).
 - `call_tool` — `parse_call()` classifies each request as
   `ParsedToolCall::Read` or `ParsedToolCall::Mutating`, then routes to the
   matching runtime path
-- `list_tools` — returns all ten tools with `ttlMs: 3_600_000` and
+- `list_tools` — returns all eleven tools with `ttlMs: 3_600_000` and
   `cacheScope: Public` (rmcp would default a missing hint to `0` / `private`,
   and Claude Code rejects a `tools/list` without them)
 - `get_tool` — single-tool lookup by name
@@ -135,6 +136,9 @@ Lives in `src/cmd/` not `src/mcp/` — bridges MCP to CLI:
 5. Add execution branch in `mcp_adapter::execute()`
 6. Add a `new_tool()` builder in `contract.rs` with the right `ToolAnnotations`,
    and register it in `TOOL_DEFINITIONS`
-7. In `server.rs`, add the tool to `list_tools()`, `get_tool()`, and a
-   `parse_call()` arm choosing `ParsedToolCall::Read` or `::Mutating`
+7. In `server.rs`, add a `parse_call()` arm choosing `ParsedToolCall::Read` or
+   `::Mutating`; `list_tools()` and `get_tool()` read `TOOL_DEFINITIONS`
+9. Add the tool to `EXPECTED_TOOL_NAMES` (`tests/test_mcp_stdio.rs`), the skill
+   `allowed-tools` (both copies, both name prefixes), and
+   `packaging/mcpb/manifest.json`
 8. Add test file: `tests/test_mcp_new_tool.rs`
