@@ -162,6 +162,12 @@ Text record kinds:
 - compact: `scan.begin`, `file`, `hunk`, `summary`, `scan.end`
 - full: `scan.begin`, `file.begin`, `hunk.begin`, raw diff body lines, `hunk.end`, `file.end`, `summary`, `scan.end`
 
+`status.type` is one of `Added`, `Modified`, `Deleted`, `Renamed` (with
+`old_path`), or `TypeChanged`: the path switched between a regular file and a
+symlink. A `TypeChanged` path is staged and unstaged whole, under its new mode;
+hunk and line selectors on it return `granular_on_whole_file`. It counts toward
+`modified` in the summary.
+
 Hunk payload notes:
 - `id` (`hunk_id`) — position-DEPENDENT addressing key: `sha256(path:old_start:new_start:content)[..12]`, where `content` is every hunk line prefixed with its origin marker (` ` context, `+` addition, `-` deletion) and terminated with `\n`. The marker makes replacing a line and keeping it beside an addition hash differently. Shifts when an earlier hunk changes the line count. Use to select a hunk when the scan is fresh.
 - `checksum` (hunk-level) — position-STABLE content fingerprint: SHA-256 of the same origin-marked `content`, with no positional data. Invariant under position shifts — if earlier edits push this hunk to a new line number, `checksum` survives unchanged. Agents should prefer `checksum` over `id` to re-locate a hunk after cross-hunk edits. `plan-diff` uses `checksum` for `High`-confidence shifted-hunk classification. Present in `scan --full` output only (omitted from compact hunks).

@@ -278,7 +278,10 @@ fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) ->
                 || (f.old_mode != f.new_mode && f.hunks.is_empty())
                 || matches!(
                     f.status,
-                    FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
+                    FileStatus::Added
+                        | FileStatus::Deleted
+                        | FileStatus::Renamed { .. }
+                        | FileStatus::TypeChanged
                 ))
     })
 }

@@ -224,6 +224,9 @@ pub fn validate_whole_file_constraints(
     if let Some(p) = target_path
         && let Some(file) = scan.files.iter().find(|f| f.path == p)
     {
+        if file.status == FileStatus::TypeChanged {
+            return Err(PgsError::GranularOnWholeFile { path: p.to_owned() });
+        }
         // Symlinks (mode 0o120_000) have no line granularity but a granular
         // selector is treated as intent, not error — the dispatch guard in
         // cmd/stage.rs short-circuits to whole-file staging and emits a

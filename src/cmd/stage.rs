@@ -409,8 +409,8 @@ fn execute_single_stage(
             staging::stage_lines(repo, file_path, &sel, mode_override)
         }
 
-        // Binary or Added file-level: stage the whole file
-        (_, _, _, true) | (FileStatus::Added, _, _, _) => {
+        // Binary, Added, or type-changed: stage the whole file under its new mode
+        (_, _, _, true) | (FileStatus::Added | FileStatus::TypeChanged, _, _, _) => {
             let file_info = scan.files.iter().find(|f| f.path == file_path);
             let mode_override = file_info.map(|fi| fi.new_mode);
             staging::stage_file(repo, file_path, mode_override)
@@ -458,7 +458,10 @@ fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) ->
                 || (f.old_mode != f.new_mode && f.hunks.is_empty())
                 || matches!(
                     f.status,
-                    FileStatus::Added | FileStatus::Deleted | FileStatus::Renamed { .. }
+                    FileStatus::Added
+                        | FileStatus::Deleted
+                        | FileStatus::Renamed { .. }
+                        | FileStatus::TypeChanged
                 ))
     })
 }

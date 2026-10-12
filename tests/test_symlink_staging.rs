@@ -106,3 +106,70 @@ fn stage_added_symlink_with_line_range_succeeds_with_warning() {
     );
     assert_eq!(entry.mode, 0o120_000, "index mode must be 0o120000");
 }
+
+/// Index entry (mode, blob text) for `path`, read through a fresh handle.
+#[cfg(unix)]
+fn index_entry(dir: &Path, path: &str) -> (u32, String) {
+    let repo = git2::Repository::open(dir).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index.get_path(Path::new(path), 0).unwrap();
+    let blob = repo.find_blob(entry.id).unwrap();
+    (
+        entry.mode,
+        String::from_utf8(blob.content().to_vec()).unwrap(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_and_stage_file_replaced_by_symlink_as_one_type_change() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f", "content\n", "add f");
+    std::fs::remove_file(dir.path().join("f")).unwrap();
+    std::os::unix::fs::symlink("elsewhere", dir.path().join("f")).unwrap();
+
+    let scan = run_pgs(dir.path(), &["scan"]).success();
+    let scan: serde_json::Value = serde_json::from_slice(&scan.get_output().stdout).unwrap();
+    let files = scan["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "one entry per path: {scan}");
+    assert_eq!(files[0]["status"]["type"], "TypeChanged");
+
+    run_pgs(dir.path(), &["stage", "f"]).success();
+
+    assert_eq!(
+        index_entry(dir.path(), "f"),
+        (0o120_000, "elsewhere".into())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stage_symlink_replaced_by_regular_file_stores_the_file() {
+    let (dir, _repo) = setup_repo();
+    std::os::unix::fs::symlink("elsewhere", dir.path().join("f")).unwrap();
+    run_pgs(dir.path(), &["stage", "f"]).success();
+    run_pgs(dir.path(), &["commit", "-m", "add link"]).success();
+    std::fs::remove_file(dir.path().join("f")).unwrap();
+    std::fs::write(dir.path().join("f"), "now a file\n").unwrap();
+
+    run_pgs(dir.path(), &["stage", "f"]).success();
+
+    assert_eq!(
+        index_entry(dir.path(), "f"),
+        (0o100_644, "now a file\n".into())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn line_range_on_a_type_change_is_refused() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f", "content\n", "add f");
+    std::fs::remove_file(dir.path().join("f")).unwrap();
+    std::os::unix::fs::symlink("elsewhere", dir.path().join("f")).unwrap();
+
+    let output = run_pgs(dir.path(), &["stage", "f:1-1"]).code(2);
+    let error: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+
+    assert_eq!(error["code"], "granular_on_whole_file");
+}

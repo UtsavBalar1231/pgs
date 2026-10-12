@@ -273,6 +273,7 @@ pub enum FileStatusView {
     Modified,
     Deleted,
     Renamed { old_path: String },
+    TypeChanged,
 }
 
 impl From<FileStatus> for FileStatusView {
@@ -282,6 +283,7 @@ impl From<FileStatus> for FileStatusView {
             FileStatus::Modified => Self::Modified,
             FileStatus::Deleted => Self::Deleted,
             FileStatus::Renamed { old_path } => Self::Renamed { old_path },
+            FileStatus::TypeChanged => Self::TypeChanged,
         }
     }
 }

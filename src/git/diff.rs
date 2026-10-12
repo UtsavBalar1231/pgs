@@ -16,6 +16,7 @@ use crate::models::{
 pub fn diff_index_to_workdir(repo: &Repository, context_lines: u32) -> Result<Diff<'_>, PgsError> {
     let mut opts = DiffOptions::new();
     opts.context_lines(context_lines);
+    opts.include_typechange(true);
     opts.include_untracked(true);
     opts.recurse_untracked_dirs(true);
     opts.show_untracked_content(true);
@@ -36,6 +37,7 @@ pub fn diff_head_to_index(repo: &Repository, context_lines: u32) -> Result<Diff<
     };
     let mut opts = DiffOptions::new();
     opts.context_lines(context_lines);
+    opts.include_typechange(true);
     let diff = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?;
     Ok(diff)
 }
@@ -100,7 +102,7 @@ pub fn build_scan_result(
         summary.total_hunks += hunks.len();
         match &status {
             FileStatus::Added => summary.added += 1,
-            FileStatus::Modified => summary.modified += 1,
+            FileStatus::Modified | FileStatus::TypeChanged => summary.modified += 1,
             FileStatus::Deleted => summary.deleted += 1,
             FileStatus::Renamed { .. } => summary.renamed += 1,
         }
@@ -190,6 +192,7 @@ fn delta_to_file_status(delta: &git2::DiffDelta<'_>) -> FileStatus {
     match delta.status() {
         Delta::Added | Delta::Untracked => FileStatus::Added,
         Delta::Deleted => FileStatus::Deleted,
+        Delta::Typechange => FileStatus::TypeChanged,
         Delta::Renamed => {
             let old_path = delta
                 .old_file()

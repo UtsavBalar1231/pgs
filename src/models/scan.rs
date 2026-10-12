@@ -69,6 +69,11 @@ pub enum FileStatus {
         /// The original path before renaming.
         old_path: String,
     },
+    /// The path changed type, between a regular file and a symlink.
+    ///
+    /// Staged whole: a line diff between a file's content and a link target
+    /// means nothing.
+    TypeChanged,
 }
 
 /// A single diff hunk with content-based ID.
