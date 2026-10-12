@@ -83,18 +83,21 @@ pub fn read_workdir_for_blob(
 
 /// Read a workdir path in the form `git add` would store it in the index.
 ///
-/// Regular files pass through the repository's clean filters (`core.autocrlf`,
+/// Regular files pass through the repository's built-in clean filters (`core.autocrlf`,
 /// `text`/`eol`, `ident`), so a CRLF checkout of an LF file stages as LF.
 /// Symlink targets are never filtered. The drift checksum keeps hashing the raw
 /// bytes from [`read_workdir_for_blob`], because it fingerprints the file on disk.
 ///
 /// # Errors
-/// Everything [`read_workdir_for_blob`] returns, plus `PgsError::Git` when a
-/// filter fails (e.g. `core.safecrlf=true` on endings that cannot round-trip).
+/// Everything [`read_workdir_for_blob`] returns; `PgsError::ExternalFilter` when
+/// the path needs a filter driver libgit2 cannot run (git-lfs, git-crypt); and
+/// `PgsError::Git` when a built-in filter fails (e.g. `core.safecrlf=true` on
+/// endings that cannot round-trip).
 pub fn read_workdir_for_index(repo: &Repository, rel_path: &str) -> Result<WorkdirBlob, PgsError> {
     let workdir = repo::workdir(repo)?;
     let mut blob = read_workdir_for_blob(workdir, rel_path)?;
     if blob.file_type == WorkdirFileType::Regular {
+        reject_external_filter(repo, rel_path)?;
         // libgit2 exposes its filters only through blob creation. The object
         // written is the one a whole-file stage writes anyway.
         let mut writer = repo.blob_writer(Some(std::path::Path::new(rel_path)))?;
@@ -104,6 +107,34 @@ pub fn read_workdir_for_index(repo: &Repository, rel_path: &str) -> Result<Workd
         blob.bytes = repo.find_blob(oid)?.content().to_vec();
     }
     Ok(blob)
+}
+
+/// Refuse a path whose `filter` attribute names a configured external driver.
+///
+/// A named filter with no `clean` or `process` command configured is skipped by
+/// `git add` as well, so it is not refused.
+fn reject_external_filter(repo: &Repository, rel_path: &str) -> Result<(), PgsError> {
+    let attr = repo.get_attr_bytes(
+        std::path::Path::new(rel_path),
+        "filter",
+        git2::AttrCheckFlags::default(),
+    )?;
+    let git2::AttrValue::String(driver) = git2::AttrValue::from_bytes(attr) else {
+        return Ok(());
+    };
+    let config = repo.config()?;
+    let configured = ["clean", "process"].iter().any(|command| {
+        config
+            .get_string(&format!("filter.{driver}.{command}"))
+            .is_ok()
+    });
+    if configured {
+        return Err(PgsError::ExternalFilter {
+            path: rel_path.to_owned(),
+            driver: driver.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Build an `IndexEntry` for a file, preserving existing mode/flags from the index.

@@ -739,6 +739,7 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::InvalidArguments { .. }
         | PgsError::InputFileUnreadable { .. }
         | PgsError::NotARepository { .. }
+        | PgsError::ExternalFilter { .. }
         | PgsError::ExplainWithoutDryRun
         | PgsError::NonUtf8Partial { .. }
         | PgsError::CrlfMismatch { .. }
@@ -894,6 +895,9 @@ fn error_guidance(error: &PgsError) -> String {
         }
         PgsError::NotARepository { .. } => {
             "Pass the absolute path of a git working tree as repo_path.".to_owned()
+        }
+        PgsError::ExternalFilter { .. } => {
+            "Stage this path with git, which runs the filter driver; pgs cannot.".to_owned()
         }
         PgsError::StaleScan { .. } => {
             "Re-run pgs_scan to refresh checksums and hunk IDs, then retry.".to_owned()

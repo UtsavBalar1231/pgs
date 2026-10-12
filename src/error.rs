@@ -98,6 +98,22 @@ pub enum PgsError {
         source: std::io::Error,
     },
 
+    /// The path's `filter` attribute names a driver pgs cannot run.
+    ///
+    /// libgit2 cannot execute external clean filters (`filter.<name>.clean` or
+    /// `.process`, as git-lfs and git-crypt install), so staging the path would
+    /// store the checkout bytes: the full binary instead of an LFS pointer, or
+    /// plaintext instead of ciphertext.
+    #[error(
+        "{path} uses the external filter driver `{driver}`, which pgs cannot run; stage it with git"
+    )]
+    ExternalFilter {
+        /// Repo-relative path that carries the filter attribute.
+        path: String,
+        /// The configured filter driver name.
+        driver: String,
+    },
+
     /// The repository path names no git repository.
     ///
     /// libgit2 reports this as a generic not-found error. The path came from the
@@ -241,6 +257,7 @@ impl PgsError {
             Self::InvalidArguments { .. } => "invalid_arguments",
             Self::InputFileUnreadable { .. } => "input_file_unreadable",
             Self::NotARepository { .. } => "not_a_repository",
+            Self::ExternalFilter { .. } => "external_filter",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
             Self::NonUtf8Partial { .. } => "non_utf8_partial",
             Self::CrlfMismatch { .. } => "crlf_mismatch",
@@ -272,6 +289,7 @@ impl PgsError {
             | Self::InvalidArguments { .. }
             | Self::InputFileUnreadable { .. }
             | Self::NotARepository { .. }
+            | Self::ExternalFilter { .. }
             | Self::ExplainWithoutDryRun
             | Self::NonUtf8Partial { .. }
             | Self::CrlfMismatch { .. }
