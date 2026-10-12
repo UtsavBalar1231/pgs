@@ -152,3 +152,44 @@ fn mcp_cancelled_mutation_leaves_index_untouched() {
     assert_eq!(files.len(), 1, "cancelled stage must not touch the index");
     assert_eq!(files[0]["path"], "a.txt");
 }
+
+// rmcp rejects some requests before `call_tool` runs, after the transport has
+// already reserved a lane slot for them. A slot nobody frees blocks every later
+// mutation on that repository until the server restarts.
+#[test]
+fn mcp_mutation_rejected_before_dispatch_does_not_block_the_lane() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "a\n", "add f");
+    write_file(dir.path(), "f.txt", "a\nb\n");
+    let arguments = json!({
+        "repo_path": dir.path().display().to_string(),
+        "selections": ["f.txt"],
+        "dry_run": true
+    });
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio_with_env(&[]);
+    write_json_line(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "pgs_stage",
+                "arguments": arguments,
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2024-11-05",
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }
+            }
+        }),
+    );
+    let rejected = collect_responses(&mut stdout, 1);
+    assert_eq!(rejected[&1]["error"]["code"], -32022);
+
+    send_tool_call(&mut stdin, 2, "pgs_stage", &arguments);
+    let accepted = collect_responses(&mut stdout, 1);
+    shutdown_child(child);
+
+    assert_eq!(accepted[&2]["result"]["isError"], false, "{accepted:?}");
+}

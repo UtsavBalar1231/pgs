@@ -281,6 +281,14 @@ where
         &mut self,
         item: TxJsonRpcMessage<RoleServer>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
+        // rmcp answers some requests with an error before `call_tool` ever runs,
+        // after `receive` reserved a lane slot for them. That error is the last
+        // point the slot can be freed; for a dispatched request it is a no-op.
+        if let rmcp::model::JsonRpcMessage::Error(error) = &item
+            && let Some(id) = &error.id
+        {
+            self.runtime.discard_preregistered_mutation(id);
+        }
         self.inner.send(item)
     }
 
