@@ -29,8 +29,7 @@ use crate::saturating_u32;
 ///
 /// # Errors
 ///
-/// Returns `PgsError::Git` if libgit2 operations fail, or
-/// `PgsError::StagingFailed` if the index write fails.
+/// Returns `PgsError::Git` if libgit2 operations fail.
 pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
     let head_result = read_head_blob(repo, file_path);
     let mut index = repo.index()?;

@@ -14,7 +14,7 @@ pub mod status;
 
 pub use backup::BackupInfo;
 pub use commit::CommitResult;
-pub use operation::{FailedItem, OperationStatus, StageResult, StagedItem};
+pub use operation::OperationStatus;
 pub use plan::{CommitPlan, PlannedCommit};
 pub use preview::{OperationPreview, PreviewLine};
 pub use scan::{
@@ -63,23 +63,6 @@ mod tests {
         };
         let json = serde_json::to_string(&result).expect("serialize");
         let back: ScanResult = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(result, back);
-    }
-
-    #[test]
-    fn stage_result_json_round_trip() {
-        let result = StageResult {
-            status: OperationStatus::Ok,
-            succeeded: vec![StagedItem {
-                selection: "src/main.rs".into(),
-                lines_staged: 5,
-            }],
-            failed: vec![],
-            warnings: vec![],
-            backup_id: "backup-001".into(),
-        };
-        let json = serde_json::to_string(&result).expect("serialize");
-        let back: StageResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(result, back);
     }
 

@@ -193,15 +193,6 @@ pub enum PgsError {
     #[error("git index is locked by another process")]
     IndexLocked,
 
-    /// Index-direct staging write failed.
-    #[error("staging failed for {path}: {reason}")]
-    StagingFailed {
-        /// Path to the file.
-        path: String,
-        /// Reason for the failure.
-        reason: String,
-    },
-
     // --- Exit code 4: Internal error ---
     /// The operation failed and the automatic rollback via `restore_backup` also failed.
     /// The index may be inconsistent; use `backup_id` to restore manually from
@@ -275,7 +266,6 @@ impl PgsError {
             Self::UnterminatedInteriorLine { .. } => "unterminated_interior_line",
             Self::StaleScan { .. } => "stale_scan",
             Self::IndexLocked => "index_locked",
-            Self::StagingFailed { .. } => "staging_failed",
             Self::RestoreFailed { .. } => "restore_failed",
             Self::WorkdirMismatch { .. } => "workdir_mismatch",
             Self::Git(_) => "git_error",
@@ -307,7 +297,7 @@ impl PgsError {
             | Self::CrlfMismatch { .. }
             | Self::UnterminatedInteriorLine { .. } => 2,
 
-            Self::StaleScan { .. } | Self::IndexLocked | Self::StagingFailed { .. } => 3,
+            Self::StaleScan { .. } | Self::IndexLocked => 3,
 
             Self::RestoreFailed { .. }
             | Self::WorkdirMismatch { .. }
@@ -426,15 +416,6 @@ mod tests {
     #[test]
     fn index_locked_maps_to_exit_code_3() {
         assert_eq!(PgsError::IndexLocked.exit_code(), 3);
-    }
-
-    #[test]
-    fn staging_failed_maps_to_exit_code_3() {
-        let err = PgsError::StagingFailed {
-            path: "src/main.rs".into(),
-            reason: "blob write failed".into(),
-        };
-        assert_eq!(err.exit_code(), 3);
     }
 
     #[test]

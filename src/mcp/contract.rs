@@ -745,9 +745,7 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::NonUtf8Partial { .. }
         | PgsError::CrlfMismatch { .. }
         | PgsError::UnterminatedInteriorLine { .. } => PgsToolErrorKind::User,
-        PgsError::StaleScan { .. } | PgsError::IndexLocked | PgsError::StagingFailed { .. } => {
-            PgsToolErrorKind::Retryable
-        }
+        PgsError::StaleScan { .. } | PgsError::IndexLocked => PgsToolErrorKind::Retryable,
         PgsError::RestoreFailed { .. }
         | PgsError::WorkdirMismatch { .. }
         | PgsError::Git(_)
@@ -908,9 +906,6 @@ fn error_guidance(error: &PgsError) -> String {
         }
         PgsError::IndexLocked => {
             "Wait for the git index lock to clear, then retry the request.".to_owned()
-        }
-        PgsError::StagingFailed { .. } => {
-            "Retry the request once the repository index is stable.".to_owned()
         }
         PgsError::RestoreFailed { backup_id, .. } => format!(
             "The index may be inconsistent. Restore manually: \
