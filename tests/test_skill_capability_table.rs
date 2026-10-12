@@ -67,22 +67,6 @@ fn parse_allowed_tools(skill: &str) -> BTreeSet<String> {
 }
 
 #[test]
-fn top_level_skill_path_is_a_symlink_to_the_packaged_skill_tree() {
-    let root_skills = manifest_dir().join("skills");
-    let metadata = fs::symlink_metadata(&root_skills)
-        .unwrap_or_else(|e| panic!("failed to stat {}: {e}", root_skills.display()));
-    let target = fs::read_link(&root_skills)
-        .unwrap_or_else(|e| panic!("failed to read {} symlink: {e}", root_skills.display()));
-
-    assert!(
-        metadata.file_type().is_symlink(),
-        "{} must be a symlink, not a second maintained skill directory",
-        root_skills.display()
-    );
-    assert_eq!(target, PathBuf::from("plugins/pgs/skills"));
-}
-
-#[test]
 fn root_claude_directory_does_not_define_a_second_plugin_root() {
     assert!(
         !manifest_dir().join(".claude-plugin/plugin.json").exists(),

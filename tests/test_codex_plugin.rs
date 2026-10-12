@@ -9,6 +9,22 @@ fn read_trimmed(path: &str) -> String {
     std::fs::read_to_string(path).unwrap().trim().to_owned()
 }
 
+fn relative_file_paths(root: &std::path::Path) -> std::collections::BTreeSet<std::path::PathBuf> {
+    let mut found = std::collections::BTreeSet::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.insert(path.strip_prefix(root).unwrap().to_path_buf());
+            }
+        }
+    }
+    found
+}
+
 fn assert_regular_file(path: &str) {
     let metadata = std::fs::symlink_metadata(path).unwrap();
     assert!(
@@ -150,6 +166,34 @@ fn packaged_codex_plugin_matches_repo_sources() {
             std::fs::read_to_string(source).unwrap(),
             std::fs::read_to_string(packaged).unwrap(),
             "{packaged} must match {source}"
+        );
+    }
+
+    let source = std::path::Path::new("skills");
+    let packaged = std::path::Path::new("plugins/pgs/skills");
+
+    assert!(
+        !std::fs::symlink_metadata(source)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "skills must be a real directory: Gemini CLI copies extensions with fs.cp and \
+         Windows checkouts without developer mode turn symlinks into text files"
+    );
+    let source_files = relative_file_paths(source);
+    assert_eq!(
+        source_files,
+        relative_file_paths(packaged),
+        "skills and plugins/pgs/skills must hold the same set of files"
+    );
+    assert!(!source_files.is_empty());
+    for relative in &source_files {
+        assert_eq!(
+            std::fs::read(source.join(relative)).unwrap(),
+            std::fs::read(packaged.join(relative)).unwrap(),
+            "plugins/pgs/skills/{} must match skills/{}",
+            relative.display(),
+            relative.display()
         );
     }
 }
