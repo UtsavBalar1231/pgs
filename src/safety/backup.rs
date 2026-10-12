@@ -111,6 +111,21 @@ fn prune_backups(backup_dir: &Path, keep_id: &str) -> Result<(), PgsError> {
     first_error.map_or(Ok(()), Err)
 }
 
+/// Restore `backup_id` after `error` aborted a mutation, and return the error to report.
+///
+/// That is `error` itself when the restore succeeds, and `RestoreFailed` carrying both
+/// failures when it does not, since the index may then be inconsistent.
+pub fn rollback(repo: &Repository, backup_id: &str, error: PgsError) -> PgsError {
+    match restore_backup(repo, backup_id) {
+        Ok(()) => error,
+        Err(restore_error) => PgsError::RestoreFailed {
+            backup_id: backup_id.to_owned(),
+            op_error: error.to_string(),
+            restore_error: restore_error.to_string(),
+        },
+    }
+}
+
 /// Restore the git index from a previously created backup.
 ///
 /// The working tree is not modified; only the index file is overwritten.

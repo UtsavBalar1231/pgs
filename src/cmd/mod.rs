@@ -12,6 +12,7 @@ pub mod split;
 mod stage;
 mod status;
 mod unstage;
+mod work_plan;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 

@@ -1,17 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use clap::Args;
+use git2::Repository;
 
+use crate::cmd::work_plan::{self, WorkPlan};
 use crate::error::PgsError;
 use crate::git::staging::{line_selection_for, workdir_line_count};
 use crate::git::{diff, read_head_mode, repo, staging};
 use crate::models::{
-    FileStatus, OperationPreview, OperationStatus, ResolvedSelection, SelectionSpec,
+    FileStatus, OperationPreview, OperationStatus, ResolvedSelection, ScanResult, SelectionSpec,
     format_selection,
 };
-use crate::output::view::{CommandOutput, OperationItemView, OperationOutput, OutputCommand};
+use crate::output::view::{CommandOutput, OperationOutput, OutputCommand};
 use crate::safety::{backup, lock};
-use crate::selection::{parse, resolve};
+use crate::selection::resolve;
 
 #[derive(Args)]
 pub struct StageArgs {
@@ -41,176 +43,97 @@ pub struct StageArgs {
     pub expect: Vec<String>,
 }
 
+/// A stage call in typed form, as the CLI, the MCP server and `commit` build it.
+#[derive(Debug, Clone, Default)]
+pub struct StageRequest {
+    /// Selections to stage.
+    pub selections: Vec<String>,
+    /// Selections to leave out.
+    pub exclude: Vec<String>,
+    /// Validate without modifying the index.
+    pub dry_run: bool,
+    /// Include exact per-file preview lines; requires `dry_run`.
+    pub explain: bool,
+    /// Per-file preview cap (`0` = unlimited).
+    pub limit: u32,
+    /// Per-file SHA-256 each workdir file must still have (path to checksum).
+    pub expected_checksums: HashMap<String, String>,
+}
+
+impl TryFrom<StageArgs> for StageRequest {
+    type Error = PgsError;
+
+    fn try_from(args: StageArgs) -> Result<Self, Self::Error> {
+        Ok(Self {
+            expected_checksums: parse_expect_pairs(&args.expect)?,
+            selections: args.selections,
+            exclude: args.exclude,
+            dry_run: args.dry_run,
+            explain: args.explain,
+            limit: args.limit,
+        })
+    }
+}
+
+/// Run `pgs stage` from parsed CLI arguments.
+///
+/// # Errors
+///
+/// See [`run`]; also `InvalidSelection` for a malformed or duplicate `--expect`.
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
 pub fn execute(
     repo_path: Option<&str>,
     context: u32,
     args: StageArgs,
 ) -> Result<CommandOutput, PgsError> {
-    // 0. --explain requires --dry-run
     if args.explain && !args.dry_run {
         return Err(PgsError::ExplainWithoutDryRun);
     }
+    run(repo_path, context, &StageRequest::try_from(args)?)
+}
 
-    // Parse --expect pairs early; fail fast on format errors before any I/O.
-    let expected_checksums = parse_expect_pairs(&args.expect)?;
-
-    // 1. Open repo
+/// Stage `request` in the repository at `repo_path`.
+///
+/// # Errors
+///
+/// `ExplainWithoutDryRun`, repository and selection errors, `StaleScan` when a
+/// file changed since the caller's scan, and any staging failure (the index is
+/// restored from its backup first).
+pub fn run(
+    repo_path: Option<&str>,
+    context: u32,
+    request: &StageRequest,
+) -> Result<CommandOutput, PgsError> {
+    if request.explain && !request.dry_run {
+        return Err(PgsError::ExplainWithoutDryRun);
+    }
     let repository = repo::open(repo_path)?;
+    apply(&repository, context, request).map(Into::into)
+}
 
-    // 2. Wait for index lock
-    lock::wait_for_lock_release(&repository, 5)?;
-
-    // 3-4. Compute diff and build scan result
-    let d = diff::diff_index_to_workdir(&repository, context)?;
-    let scan = diff::build_scan_result(&repository, &d, None)?;
-
-    // 5. Guard: no changes
+/// Stage `request` in an open repository. `request.explain` is not checked here.
+///
+/// # Errors
+///
+/// As [`run`], minus the explain check.
+pub fn apply(
+    repository: &Repository,
+    context: u32,
+    request: &StageRequest,
+) -> Result<OperationOutput, PgsError> {
+    lock::wait_for_lock_release(repository, 5)?;
+    let d = diff::diff_index_to_workdir(repository, context)?;
+    let scan = diff::build_scan_result(repository, &d, None)?;
     if scan.files.is_empty() {
         return Err(PgsError::NoChanges);
     }
 
-    // 6. Parse positional args
-    let specs: Vec<SelectionSpec> = args
-        .selections
-        .iter()
-        .map(|s| parse::detect_selection(s))
-        .collect::<Result<Vec<_>, _>>()?;
+    let line_count = |path: &str| workdir_line_count(repository, path);
+    let plan = work_plan::plan(&scan, &request.selections, &request.exclude, &line_count)?;
+    check_freshness(repository, &scan, &plan, &request.expected_checksums)?;
+    let items = work_plan::report_items(&scan, &plan, &line_count);
 
-    // 7. Guard: empty selections
-    if specs.is_empty() {
-        return Err(PgsError::SelectionEmpty);
-    }
-
-    // 8-9. Validate constraints
-    for spec in &specs {
-        resolve::validate_binary_constraints(&scan, spec)?;
-        resolve::validate_whole_file_constraints(&scan, spec)?;
-    }
-
-    // 10. Resolve each spec (keep paired with original spec)
-    let mut spec_resolved: Vec<(SelectionSpec, ResolvedSelection)> = Vec::new();
-    for spec in specs {
-        if let SelectionSpec::Directory { prefix } = &spec {
-            let resolved_list = resolve::resolve_directory(&scan, prefix)?;
-            for resolved in resolved_list {
-                let file_spec = SelectionSpec::File {
-                    path: resolved.file_path.clone(),
-                };
-                spec_resolved.push((file_spec, resolved));
-            }
-        } else {
-            let resolved = resolve::resolve_selection(&scan, &spec)?;
-            spec_resolved.push((spec, resolved));
-        }
-    }
-
-    // 11. Parse --exclude
-    let exclude_specs: Vec<SelectionSpec> = args
-        .exclude
-        .iter()
-        .map(|s| parse::detect_selection(s))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // 12. Build exclusion sets: per-hunk and per-file
-    let mut exclusion_set: HashSet<(String, usize)> = HashSet::new();
-    let mut excluded_files: HashSet<String> = HashSet::new();
-    for ex_spec in &exclude_specs {
-        if let SelectionSpec::Directory { prefix } = ex_spec {
-            if let Ok(ex_resolved_list) = resolve::resolve_directory(&scan, prefix) {
-                for ex_resolved in ex_resolved_list {
-                    if ex_resolved.hunk_indices.is_empty() {
-                        excluded_files.insert(ex_resolved.file_path.clone());
-                    }
-                    for &idx in &ex_resolved.hunk_indices {
-                        exclusion_set.insert((ex_resolved.file_path.clone(), idx));
-                    }
-                }
-            }
-        } else if let Ok(ex_resolved) = resolve::resolve_selection(&scan, ex_spec) {
-            if ex_resolved.hunk_indices.is_empty() {
-                // File has no hunks (binary/deleted/renamed) — exclude entire file
-                excluded_files.insert(ex_resolved.file_path.clone());
-            }
-            for &idx in &ex_resolved.hunk_indices {
-                exclusion_set.insert((ex_resolved.file_path.clone(), idx));
-            }
-        }
-    }
-
-    // 13. Filter: remove excluded hunks and fully-excluded files
-    spec_resolved.retain(|(_, resolved)| !excluded_files.contains(&resolved.file_path));
-    for (_spec, resolved) in &mut spec_resolved {
-        resolved
-            .hunk_indices
-            .retain(|&idx| !exclusion_set.contains(&(resolved.file_path.clone(), idx)));
-    }
-
-    reject_mixed_selector_kinds(&spec_resolved)?;
-
-    let reportable_items: Vec<(SelectionSpec, ResolvedSelection)> = spec_resolved
-        .iter()
-        .filter(|(_, resolved)| is_reportable_selection(&repository, &scan, resolved))
-        .cloned()
-        .collect();
-
-    let mut merged: HashMap<String, (SelectionSpec, ResolvedSelection)> = HashMap::new();
-    for (spec, resolved) in spec_resolved {
-        let entry = merged
-            .entry(resolved.file_path.clone())
-            .or_insert_with(|| (spec.clone(), resolved.clone()));
-        if entry.1.file_path == resolved.file_path {
-            // Merge hunk_indices (dedup)
-            for idx in &resolved.hunk_indices {
-                if !entry.1.hunk_indices.contains(idx) {
-                    entry.1.hunk_indices.push(*idx);
-                }
-            }
-            // Merge line_ranges
-            if let Some(new_ranges) = &resolved.line_ranges {
-                if let Some(existing) = &mut entry.1.line_ranges {
-                    existing.extend_from_slice(new_ranges);
-                } else {
-                    entry.1.line_ranges = Some(new_ranges.clone());
-                }
-            }
-        }
-    }
-
-    let mut work_items: Vec<(SelectionSpec, ResolvedSelection)> = merged.into_values().collect();
-    work_items.retain(|(_, r)| is_reportable_selection(&repository, &scan, r));
-    if work_items.is_empty() {
-        return Err(PgsError::SelectionEmpty);
-    }
-
-    // Reject --expect paths that name a file not in the resolved selection.
-    let resolved_paths: HashSet<&str> = work_items
-        .iter()
-        .map(|(_, r)| r.file_path.as_str())
-        .collect();
-    for path in expected_checksums.keys() {
-        if !resolved_paths.contains(path.as_str()) {
-            return Err(PgsError::InvalidSelection {
-                detail: format!("--expect path '{path}' is not part of the staging selection"),
-            });
-        }
-    }
-
-    for (_, resolved) in &work_items {
-        let expected = expected_checksums
-            .get(&resolved.file_path)
-            .map(String::as_str);
-        resolve::validate_freshness(&repository, &scan, &resolved.file_path, expected)?;
-    }
-
-    if args.dry_run {
-        let items: Vec<OperationItemView> = reportable_items
-            .iter()
-            .map(|(spec, resolved)| {
-                operation_item(format_selection(spec), estimate_lines(&scan, resolved))
-            })
-            .collect();
-
+    if request.dry_run {
         let output = OperationOutput::new(
             OutputCommand::Stage,
             OperationStatus::DryRun,
@@ -218,94 +141,21 @@ pub fn execute(
             vec![],
             None,
         );
-        if args.explain {
-            let previews = compute_previews(&repository, &scan, &work_items, args.limit)?;
-            return Ok(output.with_previews(previews).into());
+        if request.explain {
+            let previews = compute_previews(repository, &scan, &plan.per_file, request.limit)?;
+            return Ok(output.with_previews(previews));
         }
-        return Ok(output.into());
+        return Ok(output);
     }
 
-    let backup_id = backup::create_backup(&repository)?;
-
-    let mut actual_lines_by_file: HashMap<String, u32> = HashMap::new();
-    let mut warnings: Vec<String> = Vec::new();
-
-    for (spec, resolved) in &work_items {
-        let file_path = &resolved.file_path;
-        let file_info = scan
-            .files
-            .iter()
-            .find(|f| f.path == *file_path)
-            .ok_or_else(|| PgsError::FileNotInDiff {
-                path: file_path.clone(),
-            })?;
-
-        // Detect symlinks: check the scan's new_mode, or fall back to HEAD mode for
-        // untracked symlinks that haven't been committed yet.
-        let is_symlink = file_info.new_mode == 0o120_000
-            || read_head_mode(&repository, file_path).ok() == Some(0o120_000);
-
-        if is_symlink {
-            let is_hunk = matches!(spec, SelectionSpec::Hunk { .. });
-            if is_hunk || resolved.line_ranges.is_some() {
-                warnings.push(format!(
-                    "symlink '{file_path}' staged whole; line/hunk selection ignored"
-                ));
-            }
-        }
-
-        let stage_result = execute_single_stage(
-            &repository,
-            &scan,
-            spec,
-            resolved,
-            &file_info.status,
-            file_path,
-            file_info.is_binary,
-        );
-
-        match stage_result {
-            Ok(lines_affected) => {
-                actual_lines_by_file.insert(file_path.clone(), lines_affected);
-            }
-            Err(e) => {
-                if let Err(restore_err) = backup::restore_backup(&repository, &backup_id) {
-                    return Err(PgsError::RestoreFailed {
-                        backup_id: backup_id.clone(),
-                        op_error: e.to_string(),
-                        restore_error: restore_err.to_string(),
-                    });
-                }
-                return Err(e);
-            }
+    let backup_id = backup::create_backup(repository)?;
+    let mut warnings = Vec::new();
+    for (spec, resolved) in &plan.per_file {
+        warnings.extend(symlink_warning(repository, &scan, spec, resolved));
+        if let Err(error) = execute_single_stage(repository, &scan, spec, resolved) {
+            return Err(backup::rollback(repository, &backup_id, error));
         }
     }
-
-    let mut selection_count_by_file: HashMap<String, usize> = HashMap::new();
-    for (_spec, resolved) in &reportable_items {
-        *selection_count_by_file
-            .entry(resolved.file_path.clone())
-            .or_insert(0) += 1;
-    }
-
-    let items: Vec<OperationItemView> = reportable_items
-        .iter()
-        .map(|(spec, resolved)| {
-            let file_selection_count = selection_count_by_file
-                .get(&resolved.file_path)
-                .copied()
-                .unwrap_or(0);
-            let lines_affected = if file_selection_count == 1 {
-                actual_lines_by_file
-                    .get(&resolved.file_path)
-                    .copied()
-                    .unwrap_or_else(|| estimate_lines(&scan, resolved))
-            } else {
-                estimate_lines(&scan, resolved)
-            };
-            operation_item(format_selection(spec), lines_affected)
-        })
-        .collect();
 
     Ok(OperationOutput::new(
         OutputCommand::Stage,
@@ -313,12 +163,49 @@ pub fn execute(
         items,
         warnings,
         Some(backup_id),
-    )
-    .into())
+    ))
 }
 
-const fn operation_item(selection: String, lines_affected: u32) -> OperationItemView {
-    OperationItemView::new(selection, lines_affected)
+/// Refuse to stage a file that changed since the caller's scan.
+fn check_freshness(
+    repository: &Repository,
+    scan: &ScanResult,
+    plan: &WorkPlan,
+    expected: &HashMap<String, String>,
+) -> Result<(), PgsError> {
+    for path in expected.keys() {
+        if !plan.per_file.iter().any(|(_, r)| r.file_path == *path) {
+            return Err(PgsError::InvalidSelection {
+                detail: format!("--expect path '{path}' is not part of the staging selection"),
+            });
+        }
+    }
+    for (_, resolved) in &plan.per_file {
+        let expected_sha = expected.get(&resolved.file_path).map(String::as_str);
+        resolve::validate_freshness(repository, scan, &resolved.file_path, expected_sha)?;
+    }
+    Ok(())
+}
+
+/// A symlink has one line (its target), so a hunk or line selector on it stages it whole.
+fn symlink_warning(
+    repository: &Repository,
+    scan: &ScanResult,
+    spec: &SelectionSpec,
+    resolved: &ResolvedSelection,
+) -> Option<String> {
+    let granular = matches!(spec, SelectionSpec::Hunk { .. }) || resolved.line_ranges.is_some();
+    if !granular {
+        return None;
+    }
+    let path = &resolved.file_path;
+    // An untracked symlink has no index mode yet; HEAD may still record one.
+    let is_symlink = scan
+        .files
+        .iter()
+        .any(|f| f.path == *path && f.new_mode == 0o120_000)
+        || read_head_mode(repository, path).ok() == Some(0o120_000);
+    is_symlink.then(|| format!("symlink '{path}' staged whole; line/hunk selection ignored"))
 }
 
 /// Build per-file `OperationPreview` entries for `--dry-run --explain`.
@@ -342,146 +229,45 @@ fn compute_previews(
     Ok(previews)
 }
 
-/// Execute staging for a single resolved selection based on file status and selection type.
+/// Stage one file's merged selection, choosing the write its status needs.
 fn execute_single_stage(
-    repo: &git2::Repository,
-    scan: &crate::models::ScanResult,
+    repo: &Repository,
+    scan: &ScanResult,
     spec: &SelectionSpec,
     resolved: &ResolvedSelection,
-    file_status: &FileStatus,
-    file_path: &str,
-    is_binary: bool,
-) -> Result<u32, PgsError> {
-    // Determine selection type:
-    // - If resolved.line_ranges is Some → lines selection
-    // - Else if original spec is Hunk → hunk-level staging
-    // - Else → file-level staging
-    let is_lines = resolved.line_ranges.is_some();
-    let is_hunk = matches!(spec, SelectionSpec::Hunk { .. });
-
-    match (file_status, is_lines, is_hunk, is_binary) {
-        // Deleted files: stage_deletion
-        (FileStatus::Deleted, _, _, _) => {
-            staging::stage_deletion(repo, file_path)?;
-            Ok(0)
-        }
-
-        // Renamed files: stage_rename
-        (FileStatus::Renamed { old_path }, _, _, _) => {
-            let file_info = scan.files.iter().find(|f| f.path == file_path);
-            let mode_override = file_info.map(|fi| fi.new_mode);
-            staging::stage_rename(repo, old_path, file_path, mode_override)?;
-            Ok(0)
-        }
-
-        // Modified + lines selection
-        (FileStatus::Modified, true, _, false) => {
-            let sel = line_selection_for(scan, resolved, workdir_line_count(repo, file_path));
-            let mode_override = scan
-                .files
-                .iter()
-                .find(|f| f.path == file_path)
-                .filter(|fi| fi.old_mode != fi.new_mode)
-                .map(|fi| fi.new_mode);
-            staging::stage_lines(repo, file_path, &sel, mode_override)
-        }
-
-        // Modified + hunk selection (or file selection with excluded hunks)
-        (FileStatus::Modified, false, true | false, false) => {
-            // If this is a file-level spec with ALL hunks present, stage the whole file.
-            let file_info = scan.files.iter().find(|f| f.path == file_path);
-            let all_hunks_present =
-                file_info.is_some_and(|fi| resolved.hunk_indices.len() == fi.hunks.len());
-
-            if !is_hunk && all_hunks_present {
-                let mode_override = file_info
-                    .filter(|fi| fi.old_mode != fi.new_mode)
-                    .map(|fi| fi.new_mode);
-                return staging::stage_file(repo, file_path, mode_override);
-            }
-
-            // Collect selected lines across hunks via line_selection_for, then
-            // make a single stage_lines call (avoids overwriting index per-hunk).
-            let sel = line_selection_for(scan, resolved, workdir_line_count(repo, file_path));
-            let mode_override = file_info
-                .filter(|fi| fi.old_mode != fi.new_mode)
-                .map(|fi| fi.new_mode);
-            staging::stage_lines(repo, file_path, &sel, mode_override)
-        }
-
-        // Binary, Added, or type-changed: stage the whole file under its new mode
-        (_, _, _, true) | (FileStatus::Added | FileStatus::TypeChanged, _, _, _) => {
-            let file_info = scan.files.iter().find(|f| f.path == file_path);
-            let mode_override = file_info.map(|fi| fi.new_mode);
-            staging::stage_file(repo, file_path, mode_override)
-        }
-    }
-}
-
-/// Reject a same-file mix of a line-range selector with a file or hunk selector.
-///
-/// Per-file selections merge into one [`ResolvedSelection`], and that merge is lossy
-/// across kinds: resolving a line range also fills `hunk_indices` with the hunks the
-/// range incidentally intersects, so the staging layer cannot tell an explicit hunk
-/// pick from a range-incidental one and stages only the ranges. Rejecting here, where
-/// the per-spec kinds still exist, keeps a dropped selection from being reported staged.
-///
-/// # Errors
-///
-/// [`PgsError::InvalidSelection`] when one file carries both selector kinds.
-pub fn reject_mixed_selector_kinds(
-    items: &[(SelectionSpec, ResolvedSelection)],
 ) -> Result<(), PgsError> {
-    let mut kind_by_path: HashMap<&str, bool> = HashMap::new();
-    for (spec, resolved) in items {
-        let is_lines = matches!(spec, SelectionSpec::Lines { .. });
-        if let Some(previous) = kind_by_path.insert(resolved.file_path.as_str(), is_lines)
-            && previous != is_lines
-        {
-            return Err(PgsError::InvalidSelection {
-                detail: format!(
-                    "file '{}' mixes a line-range selector with a file or hunk selector; \
-                     use one selector kind per file, or issue them as separate calls",
-                    resolved.file_path
-                ),
-            });
+    let path = resolved.file_path.as_str();
+    let file =
+        scan.files
+            .iter()
+            .find(|f| f.path == path)
+            .ok_or_else(|| PgsError::FileNotInDiff {
+                path: path.to_owned(),
+            })?;
+    let mode_change = (file.old_mode != file.new_mode).then_some(file.new_mode);
+
+    match &file.status {
+        FileStatus::Deleted => staging::stage_deletion(repo, path),
+        FileStatus::Renamed { old_path } => {
+            staging::stage_rename(repo, old_path, path, Some(file.new_mode))
+        }
+        FileStatus::Added | FileStatus::TypeChanged => {
+            staging::stage_file(repo, path, Some(file.new_mode)).map(drop)
+        }
+        FileStatus::Modified if file.is_binary => {
+            staging::stage_file(repo, path, Some(file.new_mode)).map(drop)
+        }
+        FileStatus::Modified => {
+            let whole_file = resolved.line_ranges.is_none()
+                && !matches!(spec, SelectionSpec::Hunk { .. })
+                && resolved.hunk_indices.len() == file.hunks.len();
+            if whole_file {
+                return staging::stage_file(repo, path, mode_change).map(drop);
+            }
+            let sel = line_selection_for(scan, resolved, workdir_line_count(repo, path));
+            staging::stage_lines(repo, path, &sel, mode_change).map(drop)
         }
     }
-    Ok(())
-}
-
-/// Check if a file requires whole-file handling (binary, added, deleted, renamed, mode-only).
-fn is_whole_file_operation(scan: &crate::models::ScanResult, file_path: &str) -> bool {
-    scan.files.iter().any(|f| {
-        f.path == file_path
-            && (f.is_binary
-                || (f.old_mode != f.new_mode && f.hunks.is_empty())
-                || matches!(
-                    f.status,
-                    FileStatus::Added
-                        | FileStatus::Deleted
-                        | FileStatus::Renamed { .. }
-                        | FileStatus::TypeChanged
-                ))
-    })
-}
-
-/// A line range can overlap a hunk and still name nothing that changed. Calling
-/// that reportable would print `status: "ok"` for a silent no-op.
-fn is_reportable_selection(
-    repo: &git2::Repository,
-    scan: &crate::models::ScanResult,
-    resolved: &ResolvedSelection,
-) -> bool {
-    if is_whole_file_operation(scan, &resolved.file_path) {
-        return true;
-    }
-    if resolved.line_ranges.is_some() {
-        let total = workdir_line_count(repo, &resolved.file_path);
-        let sel = line_selection_for(scan, resolved, total);
-        return !sel.new_lines.is_empty() || !sel.old_lines.is_empty();
-    }
-    !resolved.hunk_indices.is_empty()
 }
 
 /// Parse `--expect PATH=SHA` pairs into a map, rejecting malformed or duplicate entries.
@@ -506,30 +292,6 @@ fn parse_expect_pairs(pairs: &[String]) -> Result<HashMap<String, String>, PgsEr
         }
     }
     Ok(map)
-}
-
-/// Estimate lines staged for dry-run reporting.
-fn estimate_lines(scan: &crate::models::ScanResult, resolved: &ResolvedSelection) -> u32 {
-    let file_info = scan.files.iter().find(|f| f.path == resolved.file_path);
-    let Some(fi) = file_info else { return 0 };
-
-    if let Some(ranges) = &resolved.line_ranges {
-        ranges.iter().map(|r| r.end - r.start + 1).sum()
-    } else {
-        resolved
-            .hunk_indices
-            .iter()
-            .filter_map(|&idx| fi.hunks.get(idx))
-            .map(|h| {
-                crate::saturating_u32(
-                    h.lines
-                        .iter()
-                        .filter(|l| l.origin == crate::models::LineOrigin::Addition)
-                        .count(),
-                )
-            })
-            .sum()
-    }
 }
 
 #[cfg(test)]

@@ -215,20 +215,16 @@ pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterEr
             request.full,
         )
         .map_err(|source| McpAdapterError::new(OutputCommand::Status, source)),
-        McpCommandRequest::Stage(request) => stage::execute(
+        McpCommandRequest::Stage(request) => stage::run(
             Some(request.repo_path.as_str()),
             request.context.max(1),
-            stage::StageArgs {
+            &stage::StageRequest {
                 selections: request.selections,
                 exclude: request.exclude,
                 dry_run: request.dry_run,
                 explain: request.explain,
                 limit: request.limit,
-                expect: request
-                    .expected_checksums
-                    .into_iter()
-                    .map(|(path, sha)| format!("{path}={sha}"))
-                    .collect(),
+                expected_checksums: request.expected_checksums,
             },
         )
         .map_err(|source| McpAdapterError::new(OutputCommand::Stage, source)),

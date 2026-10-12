@@ -931,3 +931,51 @@ fn stage_intent_to_add_file_makes_it_a_real_addition() {
         entry.flags_extended
     );
 }
+
+/// `lines_affected` for the one item a stage call reports.
+fn lines_affected_of(dir: &Path, args: &[&str]) -> u64 {
+    let output = run_pgs(dir, args).success();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    json["items"][0]["lines_affected"].as_u64().unwrap()
+}
+
+#[test]
+fn lines_affected_counts_changed_lines_the_same_for_dry_run_and_real_run() {
+    let (dir, repo) = setup_repo();
+    let base: String = (1..=10)
+        .map(|n| format!("l{n}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    commit_file(&repo, dir.path(), "f.txt", &base, "init");
+    // One replaced line (one deletion, one addition) and two deleted lines: four changed lines.
+    let work = base
+        .replacen("l2\n", "L2\n", 1)
+        .replacen("l8\n", "", 1)
+        .replacen("l9\n", "", 1);
+    write_file(dir.path(), "f.txt", &work);
+
+    assert_eq!(
+        lines_affected_of(dir.path(), &["stage", "f.txt", "--dry-run"]),
+        4
+    );
+    assert_eq!(lines_affected_of(dir.path(), &["stage", "f.txt"]), 4);
+}
+
+#[test]
+fn lines_affected_counts_a_deletion_only_hunk() {
+    let (dir, repo) = setup_repo();
+    let base: String = (1..=10)
+        .map(|n| format!("l{n}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    commit_file(&repo, dir.path(), "f.txt", &base, "init");
+    write_file(dir.path(), "f.txt", &base.replacen("l5\n", "", 1));
+    let scan = run_pgs(dir.path(), &["scan"]).success();
+    let scan: serde_json::Value = serde_json::from_slice(&scan.get_output().stdout).unwrap();
+    let hunk_id = scan["files"][0]["hunks"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    assert_eq!(lines_affected_of(dir.path(), &["stage", &hunk_id]), 1);
+}

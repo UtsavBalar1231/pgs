@@ -211,6 +211,11 @@ Text record kinds:
 - stage: `stage.begin`, `item`, `warning`, `stage.preview.begin`, `stage.preview.line`, `stage.preview.end`, `stage.end`
 - unstage: `unstage.begin`, `item`, `warning`, `unstage.end`
 
+`items[*].lines_affected` counts the changed lines a selection moves into the
+index (`stage`) or out of it (`unstage`): its additions plus the deletions it
+carries. It is computed from the selection, so a dry run and the real call
+report the same number. Binary and mode-only changes count 0.
+
 #### `--dry-run --explain` preview (stage only)
 
 `pgs stage --dry-run --explain` adds an optional `previews` array to the
