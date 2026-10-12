@@ -157,8 +157,9 @@ pub struct CommitToolInput {
     pub repo_path: String,
     /// Inline commit message. Supply exactly one of `message` or `message_file`.
     pub message: Option<String>,
-    /// Path to a file holding the commit message. Supply exactly one of `message`
-    /// or `message_file`. `-` is rejected: an MCP request has no stdin to read.
+    /// Absolute path to a file holding the commit message; a relative path resolves
+    /// against the server's working directory, not `repo_path`. Supply exactly one
+    /// of `message` or `message_file`. `-` is rejected: an MCP request has no stdin.
     pub message_file: Option<String>,
     /// Replace the current HEAD commit instead of creating a new child commit.
     pub amend: Option<bool>,
