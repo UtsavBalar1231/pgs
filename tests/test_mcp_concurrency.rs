@@ -1,161 +1,78 @@
 //! Per-repo mutation serialization for the `pgs-mcp` server.
 //!
-//! Mutating tools share one index per repository, so the server funnels them
-//! through a per-repo lane in request order. These tests dispatch overlapping
-//! `tools/call` requests without waiting for the first response and assert the
-//! lane held: ordering is enforced by the server, not by the client's pacing.
+//! Mutating tools share one index per repository, so the server runs them one
+//! at a time per repository. Each stage is a read-modify-write of the whole
+//! index: two running at once would each write an index missing the other's
+//! entry. These tests dispatch overlapping `tools/call` requests without waiting
+//! for any response and assert no update was lost.
 //!
-//! `PGS_MCP_TEST_STAGE_DELAY_MS` widens the window a queued request must wait
-//! on. Without it the first mutation usually finishes before the second
-//! arrives, and the lane is never exercised.
+//! Cancellation while queued is covered by unit tests in `src/mcp/runtime.rs`,
+//! where the lock can be held deterministically.
 
 mod common;
 
 use common::{
-    collect_responses, commit_file, open_session, run_pgs, send_tool_call, setup_repo,
-    shutdown_child, spawn_mcp_stdio_with_env, write_file, write_json_line,
+    collect_responses, commit_file, open_session, send_tool_call, setup_repo, shutdown_child,
+    spawn_mcp_stdio, write_file, write_json_line,
 };
-use serde_json::{Value, json};
+use serde_json::json;
+
+const CONCURRENT_STAGES: u64 = 8;
 
 #[test]
-fn mcp_mutating_requests_serialize_per_repo() {
+fn mcp_concurrent_stages_on_one_repo_keep_every_update() {
     let (dir, repo) = setup_repo();
-    commit_file(
-        &repo,
-        dir.path(),
-        "hello.txt",
-        "line1\nline2\n",
-        "add hello",
-    );
-    write_file(dir.path(), "hello.txt", "line1\nline2\nline3\n");
+    let paths: Vec<String> = (0..CONCURRENT_STAGES)
+        .map(|n| format!("file{n}.txt"))
+        .collect();
+    for path in &paths {
+        commit_file(&repo, dir.path(), path, "one\n", "add file");
+        write_file(dir.path(), path, "one\ntwo\n");
+    }
 
-    let (child, mut stdin, mut stdout) =
-        spawn_mcp_stdio_with_env(&[("PGS_MCP_TEST_STAGE_DELAY_MS", "200")]);
-    open_session(&mut stdin, &mut stdout);
-
-    send_tool_call(
-        &mut stdin,
-        2,
-        "pgs_stage",
-        &json!({
-            "repo_path": dir.path().display().to_string(),
-            "selections": ["hello.txt"]
-        }),
-    );
-    send_tool_call(
-        &mut stdin,
-        3,
-        "pgs_commit",
-        &json!({
-            "repo_path": repo.path().display().to_string(),
-            "message": "feat: serialized commit\n"
-        }),
-    );
-
-    let responses = collect_responses(&mut stdout, 2);
-    shutdown_child(child);
-
-    assert_eq!(
-        responses[&2]["result"]["structuredContent"]["outcome"],
-        "ok"
-    );
-    assert_eq!(
-        responses[&3]["result"]["structuredContent"]["outcome"],
-        "ok"
-    );
-    assert_eq!(
-        responses[&3]["result"]["structuredContent"]["pgs"]["message"],
-        "feat: serialized commit\n"
-    );
-
-    // The commit succeeds with content only if it ran after the stage released
-    // the lane; had it overtaken the stage, the index would have been empty.
-    let head = repo.head().unwrap().peel_to_commit().unwrap();
-    assert_eq!(head.summary(), Ok(Some("feat: serialized commit")));
-}
-
-#[test]
-fn mcp_cancelled_mutation_leaves_index_untouched() {
-    let (dir, repo) = setup_repo();
-    commit_file(&repo, dir.path(), "a.txt", "a1\na2\n", "add a");
-    commit_file(&repo, dir.path(), "b.txt", "b1\nb2\n", "add b");
-    write_file(dir.path(), "a.txt", "a1\na2\na3\n");
-    write_file(dir.path(), "b.txt", "b1\nb2\nb3\n");
-
-    let (child, mut stdin, mut stdout) =
-        spawn_mcp_stdio_with_env(&[("PGS_MCP_TEST_STAGE_DELAY_MS", "200")]);
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
     open_session(&mut stdin, &mut stdout);
 
     let repo_path = dir.path().display().to_string();
+    for (id, path) in (2..).zip(&paths) {
+        send_tool_call(
+            &mut stdin,
+            id,
+            "pgs_stage",
+            &json!({ "repo_path": repo_path, "selections": [path] }),
+        );
+    }
 
-    send_tool_call(
-        &mut stdin,
-        2,
-        "pgs_stage",
-        &json!({ "repo_path": repo_path, "selections": ["a.txt"] }),
-    );
-    send_tool_call(
-        &mut stdin,
-        3,
-        "pgs_stage",
-        &json!({ "repo_path": repo_path, "selections": ["b.txt"] }),
-    );
-
-    // Request 3 is queued behind request 2's delay, so this cancellation lands
-    // while it is still waiting on the lane.
-    write_json_line(
-        &mut stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/cancelled",
-            "params": {
-                "requestId": 3,
-                "reason": "cancelled by integration test"
-            }
-        }),
-    );
-
-    // A dry run is still a mutating tool, so it queues behind request 3 on the
-    // same lane. Its response is the barrier proving request 3 has left the
-    // lane -- without it there is no sleep-free way to know the cancellation
-    // resolved before the index is inspected. It also doubles as a probe: had
-    // request 3 run, b.txt would carry no unstaged diff and this would fail
-    // with `file_not_in_diff` instead of reporting `dry_run`.
-    send_tool_call(
-        &mut stdin,
-        4,
-        "pgs_stage",
-        &json!({ "repo_path": repo_path, "selections": ["b.txt"], "dry_run": true }),
-    );
-
-    let responses = collect_responses(&mut stdout, 2);
+    let responses = collect_responses(&mut stdout, paths.len());
     shutdown_child(child);
 
-    assert_eq!(
-        responses[&2]["result"]["structuredContent"]["outcome"],
-        "ok"
-    );
-    assert_eq!(
-        responses[&4]["result"]["structuredContent"]["pgs"]["status"],
-        "dry_run"
-    );
-    // MCP requires the receiver not to answer a cancelled request at all.
-    assert!(
-        !responses.contains_key(&3),
-        "cancelled request must not receive a response: {responses:?}"
-    );
+    for (id, response) in &responses {
+        assert_eq!(
+            response["result"]["structuredContent"]["outcome"], "ok",
+            "request {id}: {response}"
+        );
+    }
 
-    let status_output = run_pgs(dir.path(), &["status"]).success();
-    let status_stdout = String::from_utf8(status_output.get_output().stdout.clone()).unwrap();
-    let status_json: Value = serde_json::from_str(&status_stdout).unwrap();
-    let files = status_json["files"].as_array().unwrap();
-    assert_eq!(files.len(), 1, "cancelled stage must not touch the index");
-    assert_eq!(files[0]["path"], "a.txt");
+    let index = git2::Repository::open(dir.path())
+        .expect("reopen repo")
+        .index()
+        .expect("read index");
+    let head_tree = repo.head().unwrap().peel_to_tree().unwrap();
+    for path in &paths {
+        let entry = index
+            .get_path(std::path::Path::new(path), 0)
+            .expect("staged entry");
+        let head_entry = head_tree.get_name(path).expect("committed entry");
+        assert_ne!(
+            entry.id,
+            head_entry.id(),
+            "{path} lost its staged update to a concurrent stage"
+        );
+    }
 }
 
-// rmcp rejects some requests before `call_tool` runs, after the transport has
-// already reserved a lane slot for them. A slot nobody frees blocks every later
-// mutation on that repository until the server restarts.
+// rmcp rejects some requests before `call_tool` runs. Such a request must not
+// leave anything behind that blocks later mutations on the repository.
 #[test]
 fn mcp_mutation_rejected_before_dispatch_does_not_block_the_lane() {
     let (dir, repo) = setup_repo();
@@ -167,7 +84,7 @@ fn mcp_mutation_rejected_before_dispatch_does_not_block_the_lane() {
         "dry_run": true
     });
 
-    let (child, mut stdin, mut stdout) = spawn_mcp_stdio_with_env(&[]);
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
     write_json_line(
         &mut stdin,
         &json!({

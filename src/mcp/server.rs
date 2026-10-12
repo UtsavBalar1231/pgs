@@ -2,22 +2,18 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::sync::Arc;
 
-use serde::Deserialize;
-use serde::de::{DeserializeOwned, IntoDeserializer};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use rmcp::{
     ErrorData, ServerHandler,
     model::{
-        CacheScope, CallToolRequestParams, CallToolResponse, ClientRequest, Implementation,
-        ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerConfig,
-        Tool,
+        CacheScope, CallToolRequestParams, CallToolResponse, Implementation, ListToolsResult,
+        PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerConfig, Tool,
     },
     serve_server,
-    service::{
-        RequestContext, RoleServer, RxJsonRpcMessage, ServerInitializeError, TxJsonRpcMessage,
-    },
-    transport::{Transport, async_rw::AsyncRwTransport, stdio},
+    service::{RequestContext, RoleServer, ServerInitializeError},
+    transport::{async_rw::AsyncRwTransport, stdio},
 };
 
 use crate::{
@@ -65,25 +61,11 @@ impl ServerHandler for PgsMcpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let parsed_call = match parse_call(request) {
-            Ok(parsed_call) => parsed_call,
-            Err(error) => {
-                self.runtime.discard_preregistered_mutation(&context.id);
-                return Err(error);
-            }
-        };
-
-        let result = match parsed_call {
-            ParsedToolCall::Read { tool_name, command } => {
-                self.runtime.execute_command(tool_name, command).await
-            }
-            ParsedToolCall::Mutating {
-                tool_name,
-                repo_path,
-                command,
-            } => {
+        let result = match parse_call(request)? {
+            ParsedToolCall::Read(command) => self.runtime.execute_command(command).await,
+            ParsedToolCall::Mutating { repo_path, command } => {
                 self.runtime
-                    .execute_mutation(tool_name, &repo_path, command, context)
+                    .execute_mutation(&repo_path, command, context)
                     .await
             }
         };
@@ -124,12 +106,8 @@ impl ServerHandler for PgsMcpServer {
 }
 
 enum ParsedToolCall {
-    Read {
-        tool_name: &'static str,
-        command: McpCommandRequest,
-    },
+    Read(McpCommandRequest),
     Mutating {
-        tool_name: &'static str,
         repo_path: String,
         command: McpCommandRequest,
     },
@@ -139,23 +117,18 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
     match request.name.as_ref() {
         PGS_SCAN_TOOL => {
             let input: ScanToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_SCAN_TOOL,
-                command: McpCommandRequest::Scan(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::Scan(input.into())))
         }
         PGS_STATUS_TOOL => {
             let input: StatusToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_STATUS_TOOL,
-                command: McpCommandRequest::Status(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::Status(
+                input.into(),
+            )))
         }
         PGS_STAGE_TOOL => {
             let input: StageToolInput = parse_tool_input(request.arguments)?;
             let repo_path = input.repo_path.clone();
             Ok(ParsedToolCall::Mutating {
-                tool_name: PGS_STAGE_TOOL,
                 repo_path,
                 command: McpCommandRequest::Stage(input.into()),
             })
@@ -164,7 +137,6 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
             let input: UnstageToolInput = parse_tool_input(request.arguments)?;
             let repo_path = input.repo_path.clone();
             Ok(ParsedToolCall::Mutating {
-                tool_name: PGS_UNSTAGE_TOOL,
                 repo_path,
                 command: McpCommandRequest::Unstage(input.into()),
             })
@@ -176,54 +148,43 @@ fn parse_call(request: CallToolRequestParams) -> Result<ParsedToolCall, ErrorDat
 
             let repo_path = input.repo_path.clone();
             Ok(ParsedToolCall::Mutating {
-                tool_name: PGS_COMMIT_TOOL,
                 repo_path,
                 command: McpCommandRequest::Commit(input.into()),
             })
         }
         PGS_LOG_TOOL => {
             let input: LogToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_LOG_TOOL,
-                command: McpCommandRequest::Log(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::Log(input.into())))
         }
         PGS_OVERVIEW_TOOL => {
             let input: OverviewToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_OVERVIEW_TOOL,
-                command: McpCommandRequest::Overview(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::Overview(
+                input.into(),
+            )))
         }
         PGS_SPLIT_HUNK_TOOL => {
             let input: SplitHunkToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_SPLIT_HUNK_TOOL,
-                command: McpCommandRequest::SplitHunk(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::SplitHunk(
+                input.into(),
+            )))
         }
         PGS_PLAN_CHECK_TOOL => {
             let input: PlanCheckToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_PLAN_CHECK_TOOL,
-                command: McpCommandRequest::PlanCheck(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::PlanCheck(
+                input.into(),
+            )))
         }
         PGS_PLAN_DIFF_TOOL => {
             let input: PlanDiffToolInput = parse_tool_input(request.arguments)?;
-            Ok(ParsedToolCall::Read {
-                tool_name: PGS_PLAN_DIFF_TOOL,
-                command: McpCommandRequest::PlanDiff(input.into()),
-            })
+            Ok(ParsedToolCall::Read(McpCommandRequest::PlanDiff(
+                input.into(),
+            )))
         }
         _ => Err(ErrorData::invalid_params("tool not found", None)),
     }
 }
 
 /// Decide whether a `pgs_commit` request names exactly one usable message source.
-///
-/// Shared by the protocol-layer parameter check in [`parse_call`] and the
-/// transport-layer preregistration hook so the two cannot drift apart.
 fn check_commit_message_source(input: &CommitToolInput) -> Result<(), &'static str> {
     if input.message.as_ref().is_some_and(|m| m.trim().is_empty()) {
         return Err("message must be a non-empty string");
@@ -255,13 +216,9 @@ where
 /// Returns an error if stdio transport setup fails, protocol initialization fails,
 /// or the server loop exits with a transport/runtime error.
 pub async fn run_stdio() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let runtime = Arc::new(PgsMcpRuntime::default());
     let (stdin, stdout) = stdio();
-    let transport = RegistrationTransport {
-        inner: AsyncRwTransport::new_server(stdin, stdout),
-        runtime: Arc::clone(&runtime),
-    };
-    let server = match serve_server(PgsMcpServer { runtime }, transport).await {
+    let transport = AsyncRwTransport::new_server(stdin, stdout);
+    let server = match serve_server(PgsMcpServer::default(), transport).await {
         Ok(server) => server,
         // A 2026-07-28 client never sends `initialize`, and rmcp serves its whole
         // session while still waiting for one, so stdin closing here is that
@@ -274,81 +231,9 @@ pub async fn run_stdio() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct RegistrationTransport<T> {
-    inner: T,
-    runtime: Arc<PgsMcpRuntime>,
-}
-
-impl<T> Transport<RoleServer> for RegistrationTransport<T>
-where
-    T: Transport<RoleServer, Error = std::io::Error>,
-{
-    type Error = std::io::Error;
-
-    fn send(
-        &mut self,
-        item: TxJsonRpcMessage<RoleServer>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
-        // rmcp answers some requests with an error before `call_tool` ever runs,
-        // after `receive` reserved a lane slot for them. That error is the last
-        // point the slot can be freed; for a dispatched request it is a no-op.
-        if let rmcp::model::JsonRpcMessage::Error(error) = &item
-            && let Some(id) = &error.id
-        {
-            self.runtime.discard_preregistered_mutation(id);
-        }
-        self.inner.send(item)
-    }
-
-    fn receive(&mut self) -> impl Future<Output = Option<RxJsonRpcMessage<RoleServer>>> + Send {
-        let runtime = Arc::clone(&self.runtime);
-        let receive_future = self.inner.receive();
-        async move {
-            let message = receive_future.await;
-            if let Some(ref message) = message {
-                preregister_mutation_if_needed(&runtime, message);
-            }
-            message
-        }
-    }
-
-    fn close(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        self.inner.close()
-    }
-}
-
-fn preregister_mutation_if_needed(runtime: &PgsMcpRuntime, message: &RxJsonRpcMessage<RoleServer>) {
-    let rmcp::model::JsonRpcMessage::Request(request) = message else {
-        return;
-    };
-    let ClientRequest::CallToolRequest(call) = &request.request else {
-        return;
-    };
-    if let Some(repo_path) = preregistration_repo_path(&call.params) {
-        let _ = runtime.preregister_mutation(&request.id, repo_path);
-    }
-}
-
-fn preregistration_repo_path(params: &CallToolRequestParams) -> Option<&str> {
-    let arguments = params.arguments.as_ref()?;
-    let repo_path = arguments.get("repo_path")?.as_str()?;
-
-    match params.name.as_ref() {
-        PGS_STAGE_TOOL | PGS_UNSTAGE_TOOL => Some(repo_path),
-        // Only reserve a mutation lane for a request that can actually reach the
-        // commit handler, judged by the same predicate the dispatch path uses.
-        PGS_COMMIT_TOOL => {
-            let input = CommitToolInput::deserialize(arguments.into_deserializer()).ok()?;
-            check_commit_message_source(&input).ok().map(|()| repo_path)
-        }
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{PGS_COMMIT_TOOL, ParsedToolCall, parse_call, preregistration_repo_path};
+    use super::{PGS_COMMIT_TOOL, ParsedToolCall, parse_call};
     use rmcp::model::CallToolRequestParams;
     use serde_json::{Value, json};
 
@@ -357,11 +242,8 @@ mod tests {
         CallToolRequestParams::new(PGS_COMMIT_TOOL).with_arguments(object)
     }
 
-    /// The transport hook reserves a mutation lane only for a request the
-    /// dispatch path will accept. If these two disagree, a rejected request
-    /// either strands a lane slot or skips ordered admission.
     #[test]
-    fn preregistration_and_dispatch_agree_on_commit_message_source() {
+    fn parse_call_commit_message_source_dispatches_only_valid_sources() {
         let cases = [
             (
                 "message only",
@@ -407,14 +289,11 @@ mod tests {
         ];
 
         for (label, arguments, expected) in cases {
-            let params = commit_params(&arguments);
-            let preregisters = preregistration_repo_path(&params).is_some();
             let dispatches = matches!(
                 parse_call(commit_params(&arguments)),
                 Ok(ParsedToolCall::Mutating { .. })
             );
 
-            assert_eq!(preregisters, expected, "preregistration for {label}");
             assert_eq!(dispatches, expected, "dispatch for {label}");
         }
     }
