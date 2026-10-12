@@ -11,6 +11,23 @@ This document defines the output contract for `pgs` v1 markers and v1 JSON envel
 
 `--help` and `--version` remain clap-native text.
 
+## Global Options
+
+`--repo`, `--output`, `--json`, and `--context` are global: they are accepted
+before or after the subcommand and apply to every command.
+
+### `--context <N>`
+
+Number of unchanged context lines around each change when the diff is cut into
+hunks. The default is `3`. The CLI clamps the value to a minimum of `1`, so
+`--context 0` is treated as `1`.
+
+Context width changes hunk boundaries, and hunk IDs are content-addressed over
+the hunk's lines, so the same change gets a different ID under a different
+context. Pass the same value to every `scan`, `split-hunk`, `plan-check`,
+`plan-diff`, `stage`, and `unstage` call that shares hunk IDs. The MCP tools
+take an optional `context` field with the same default.
+
 ## Marker Grammar (Text Mode)
 
 Machine-significant text records use this exact syntax:
@@ -29,7 +46,7 @@ All parse and runtime failures use one envelope in both modes:
 ```json
 {
   "version": "v1",
-  "command": "cli|scan|stage|unstage|status|commit",
+  "command": "cli|scan|stage|unstage|status|commit|log|overview|split|plan-check|plan-diff",
   "phase": "parse|runtime",
   "code": "snake_case_error_code",
   "message": "human-readable detail",
@@ -44,6 +61,50 @@ Parse failures use:
 Runtime failures use:
 - resolved command name
 - `phase: "runtime"`
+
+The `command` value for `pgs split-hunk` is `split`, in errors and in the
+success envelope. The other commands use their subcommand name.
+
+### Error codes
+
+Runtime failures (`phase: "runtime"`) carry one of these `code` values. The
+exit code is fixed per code.
+
+| Code | Exit | Meaning |
+|------|------|---------|
+| `no_changes` | 1 | The diff the command reads is empty: no unstaged changes for `scan`, `stage`, and `split-hunk`; nothing staged for `unstage`; both sides empty for `overview`. |
+| `selection_empty` | 1 | The selection resolved to no changed lines, for example a line range naming only unchanged lines. The index is untouched. |
+| `invalid_selection` | 2 | A selector is malformed, or a call mixes a line range with a file or hunk selector for one file. |
+| `invalid_line_range` | 2 | A line range has `start` greater than `end`, or starts below 1. |
+| `unknown_hunk_id` | 2 | The 12-hex hunk ID is not in a fresh scan. IDs go stale after any edit to the file; re-run `scan`. |
+| `file_not_in_diff` | 2 | The named path has no changes in the diff the command reads. |
+| `binary_file_granular` | 2 | Hunk or line selection on a binary file. Stage the whole file. |
+| `granular_on_whole_file` | 2 | Hunk or line selection on an added, deleted, or renamed file. Stage the whole file. |
+| `empty_commit_message` | 2 | The commit message is empty or whitespace-only after normalization. Nothing is written. |
+| `invalid_arguments` | 2 | Arguments are missing or mutually exclusive, such as `commit` with neither `-m` nor `-F`. |
+| `input_file_unreadable` | 2 | A caller-supplied file (commit message file, plan file) is missing, unreadable, or not valid UTF-8. |
+| `not_a_repository` | 2 | The path (from `--repo` or the working directory) names no git repository. |
+| `explain_without_dry_run` | 2 | `--explain` was passed without `--dry-run`. |
+| `non_utf8_partial` | 2 | Hunk or line selection on a file that is not valid UTF-8. Stage the whole file. |
+| `crlf_mismatch` | 2 | Hunk or line selection where the index and working tree use different dominant line endings. Stage the whole file. |
+| `unterminated_interior_line` | 2 | The selection would place content after a file's unterminated last line. Stage the hunk or the whole file. |
+| `external_filter` | 2 | The path has a `filter=` gitattribute that runs an external program (for example git-lfs or git-crypt), which pgs cannot run. Stage it with git. |
+| `unsupported_entry` | 2 | The path is a submodule (gitlink), which pgs cannot stage. |
+| `stale_scan` | 3 | The file changed on disk since the scan, or its checksum differs from `--expect`. Re-run `scan` and retry. |
+| `index_locked` | 3 | Another process holds `index.lock`. Retry. |
+| `staging_failed` | 3 | Writing the staged content failed; the operation rolls back to the automatic backup. |
+| `restore_failed` | 4 | The operation failed and restoring the backup also failed. The index may be inconsistent; the error carries a `backup_id` for manual recovery from `.git/pgs/backups/`. |
+| `workdir_mismatch` | 4 | libgit2 resolved a different working directory than expected (non-standard `.git` layout). |
+| `git_error` | 4 | libgit2 returned an error not covered by a more specific code. |
+| `io_error` | 4 | A filesystem operation failed on a path pgs chose. |
+| `json_error` | 4 | JSON serialization or deserialization failed. |
+| `internal_error` | 4 | An unexpected internal failure. |
+
+Parse failures (`phase: "parse"`, `command: "cli"`) come from argument parsing
+and carry the clap error kind: `argument_conflict`, `unknown_argument`,
+`invalid_value`, `invalid_subcommand`, `missing_required_argument`, or
+`parse_error` for any other kind. They use the exit code clap reports, which is
+`2` for a usage error.
 
 ## Command Contracts
 
