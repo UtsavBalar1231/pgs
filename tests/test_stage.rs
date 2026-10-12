@@ -1,8 +1,29 @@
 mod common;
 
+use std::path::Path;
+
 use common::{commit_file, read_staged_blob, run_pgs, setup_repo, write_file};
 use pgs::git::diff::{build_scan_result, diff_index_to_workdir};
-use pgs::git::staging::stage_hunk;
+
+/// Hunk ids of every unstaged hunk, in scan order, via the CLI.
+fn scan_hunk_ids(dir: &Path) -> Vec<String> {
+    let output = run_pgs(dir, &["scan"]).success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| f["hunks"].as_array().unwrap())
+        .map(|h| h["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Index blob of `path` after an out-of-process `pgs` run (reopens the repository).
+fn staged_blob(dir: &Path, path: &str) -> String {
+    let reopened = git2::Repository::open(dir).unwrap();
+    read_staged_blob(&reopened, path)
+}
 
 #[test]
 fn stage_file_by_path() {
@@ -439,23 +460,18 @@ fn stage_hunk_by_id_does_not_leak_adjacent_hunk_when_old_line_aliases_new_line()
     };
     write_file(dir.path(), "f.txt", &workdir_content);
 
-    let diff = diff_index_to_workdir(&repo, 3).expect("diff_index_to_workdir should succeed");
-    let scan = build_scan_result(&repo, &diff, None).expect("build_scan_result should succeed");
-
-    assert_eq!(scan.files.len(), 1, "FIXTURE: expected 1 file in scan");
-    let file_info = &scan.files[0];
+    let hunk_ids = scan_hunk_ids(dir.path());
     assert_eq!(
-        file_info.hunks.len(),
+        hunk_ids.len(),
         2,
         "FIXTURE INVARIANT BROKEN: libgit2 fused the two hunks into {} \
          (need 2 distinct hunks to prove the bug — check gap between edits)",
-        file_info.hunks.len()
+        hunk_ids.len()
     );
 
-    let hunk_a = &file_info.hunks[0];
-    stage_hunk(&repo, "f.txt", hunk_a, None).expect("stage_hunk should succeed");
+    run_pgs(dir.path(), &["stage", &hunk_ids[0]]).success();
 
-    let staged = read_staged_blob(&repo, "f.txt");
+    let staged = staged_blob(dir.path(), "f.txt");
 
     for n in 5u32..=14 {
         let label = format!("L{n:02}");
@@ -471,6 +487,111 @@ fn stage_hunk_by_id_does_not_leak_adjacent_hunk_when_old_line_aliases_new_line()
         "LEAK: staged blob contains INSERTED from hunk B, which was not selected.\
          old-line 13 (hunk A deletion) aliases new-line 13 (hunk B addition);\
          blob:\n{staged}"
+    );
+
+    let expected = (1u32..=4)
+        .chain(15..=30)
+        .map(|n| format!("L{n:02}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    assert_eq!(staged, expected, "only hunk A's deletion may be staged");
+}
+
+/// Write `workdir` over a committed `head`, stage the single hunk by id through the CLI,
+/// and return the resulting index blob.
+fn stage_only_hunk_of(head: &str, workdir: &str) -> (tempfile::TempDir, String) {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "file.txt", head, "add file");
+    write_file(dir.path(), "file.txt", workdir);
+
+    let hunk_ids = scan_hunk_ids(dir.path());
+    assert_eq!(hunk_ids.len(), 1, "FIXTURE: expected exactly one hunk");
+    run_pgs(dir.path(), &["stage", &hunk_ids[0]]).success();
+
+    let staged = staged_blob(dir.path(), "file.txt");
+    (dir, staged)
+}
+
+#[test]
+fn stage_hunk_by_id_with_pure_deletion_removes_line() {
+    let head = "line1\nline2\nline3\nline4\nline5\n";
+    let workdir = "line1\nline2\nline3\nline4\n";
+
+    let (_dir, staged) = stage_only_hunk_of(head, workdir);
+
+    assert_eq!(
+        staged, workdir,
+        "index should match workdir after staging the deletion hunk"
+    );
+}
+
+#[test]
+fn stage_hunk_by_id_with_substitution_applies_both_halves() {
+    let head = "aaa\nbbb\nccc\n";
+    let workdir = "aaa\nBBB\nccc\n";
+
+    let (_dir, staged) = stage_only_hunk_of(head, workdir);
+
+    assert_eq!(
+        staged, workdir,
+        "index should match workdir after staging the substitution hunk"
+    );
+}
+
+#[test]
+fn stage_line_range_on_one_substitution_leaves_nearby_substitution_unstaged() {
+    // The two substitutions fuse into one hunk, so only a line range can pick the first.
+    let head = "aaa\nbbb\nccc\nddd\n";
+    let workdir = "aaa\nBBB\nccc\nDDD\n";
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "file.txt", head, "add file");
+    write_file(dir.path(), "file.txt", workdir);
+
+    run_pgs(dir.path(), &["stage", "file.txt:2-2"]).success();
+
+    assert_eq!(
+        staged_blob(dir.path(), "file.txt"),
+        "aaa\nBBB\nccc\nddd\n",
+        "BBB staged, ddd left as in HEAD because DDD was not selected"
+    );
+}
+
+#[test]
+fn stage_hunk_by_id_sequentially_with_commits_leaves_no_phantom_hunk() {
+    let head = (1..=30)
+        .map(|i| format!("line {i}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    // Hunk 0: substitution at line 1. Hunk 1: pure deletion of the last line.
+    let workdir = head
+        .replacen("line 1\n", "CHANGED 1\n", 1)
+        .replacen("line 30\n", "", 1);
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "multi.txt", &head, "add multi");
+    write_file(dir.path(), "multi.txt", &workdir);
+
+    let ids = scan_hunk_ids(dir.path());
+    assert_eq!(ids.len(), 2, "FIXTURE: expected 2 hunks initially");
+    run_pgs(dir.path(), &["stage", &ids[0]]).success();
+    run_pgs(dir.path(), &["commit", "-m", "stage hunk0"]).success();
+
+    let ids = scan_hunk_ids(dir.path());
+    assert_eq!(ids.len(), 1, "only the deletion hunk should remain");
+    run_pgs(dir.path(), &["stage", &ids[0]]).success();
+    run_pgs(dir.path(), &["commit", "-m", "stage deletion hunk"]).success();
+
+    let reopened = git2::Repository::open(dir.path()).unwrap();
+    let diff = diff_index_to_workdir(&reopened, 3).unwrap();
+    let scan = build_scan_result(&reopened, &diff, None).unwrap();
+    assert!(
+        scan.files.is_empty(),
+        "no unstaged change may remain after staging every hunk, got {:?}",
+        scan.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        staged_blob(dir.path(), "multi.txt"),
+        workdir,
+        "index should equal the workdir after both hunks are staged"
     );
 }
 

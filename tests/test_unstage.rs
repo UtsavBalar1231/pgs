@@ -154,12 +154,15 @@ fn unstage_directory_unstages_all_matching_files() {
     );
 }
 
-/// Read the current content of a path from the git index as a String.
-fn read_index_content(repo: &git2::Repository, path: &str) -> Option<String> {
-    let index = repo.index().expect("index");
-    let entry = index.get_path(Path::new(path), 0)?;
-    let blob = repo.find_blob(entry.id).expect("find blob");
-    Some(String::from_utf8_lossy(blob.content()).to_string())
+/// Ids of every staged (HEAD -> Index) hunk across the repository, in scan order.
+fn staged_hunk_ids(dir: &Path) -> Vec<String> {
+    let reopened = git2::Repository::open(dir).unwrap();
+    let diff = diff_head_to_index(&reopened, 3).unwrap();
+    let scan = build_scan_result(&reopened, &diff, None).unwrap();
+    scan.files
+        .iter()
+        .flat_map(|f| f.hunks.iter().map(|h| h.hunk_id.clone()))
+        .collect()
 }
 
 /// Write content to the workdir and stage it via `index.add_path` (direct libgit2 — does NOT invoke
@@ -191,10 +194,10 @@ fn unstage_hunk_by_id_does_not_leak_adjacent_hunk_when_head_old_line_aliases_ind
     //   Hunk A: pure Deletion of HEAD lines 5-14 (line_numbers 5..14 in HEAD-old-space)
     //   Hunk B: pure Addition of "INSERTED" at index-new-line 13
     //
-    // Bug reproduced by: unstage_hunk(hunk_a) puts {5..14} into `selected`.
-    // Then unstage_lines walks the HEAD→index diff and hits the Insert of
-    // "INSERTED" with new_line=13.  selected.contains(13) → true → the addition
-    // is silently dropped.  Index loses "INSERTED" even though only hunk A was
+    // Bug reproduced by: unstaging hunk A with its deletion line numbers {5..14} in
+    // the same set as the index-side additions.  The walk over the HEAD→index diff
+    // hits the Insert of "INSERTED" with new_line=13, `selected.contains(13)` is
+    // true, and the addition is silently dropped even though only hunk A was
     // requested.
     // -----------------------------------------------------------------------
 
@@ -266,41 +269,77 @@ fn unstage_hunk_by_id_does_not_leak_adjacent_hunk_when_head_old_line_aliases_ind
     assert!(hunk_b_has_additions, "hunks[1] should be the addition hunk");
 
     // ------------------------------------------------------------------
-    // Action: unstage only hunk A (the deletion)
+    // Action: unstage only hunk A (the deletion) through the CLI
     // ------------------------------------------------------------------
-    let affected =
-        pgs::git::unstaging::unstage_hunk(&repo, "f.txt", hunk_a).expect("unstage_hunk(hunk_a)");
-    assert!(
-        affected > 0,
-        "unstaging hunk A should affect at least one line"
-    );
+    let hunk_a_id = hunk_a.hunk_id.clone();
+    run_pgs(dir.path(), &["unstage", &hunk_a_id]).success();
 
     // ------------------------------------------------------------------
     // Assertion 2: hunk A's HEAD lines are restored (this passes even on buggy code).
     // The index should now contain HEAD lines L05-L14 back in positions 5-14.
     // ------------------------------------------------------------------
-    let index_after = read_index_content(&repo, "f.txt")
-        .expect("f.txt should still be in the index after unstage_hunk(A)");
+    let index_after = staged_blob(dir.path());
 
     for n in 5u32..=14 {
         assert!(
             index_after.contains(&format!("L{n:02}\n")),
-            "after unstage_hunk(A): index should contain L{n:02} (restored from HEAD) but got:\n{index_after}"
+            "after unstaging hunk A: index should contain L{n:02} (restored from HEAD) but got:\n{index_after}"
         );
     }
 
     // ------------------------------------------------------------------
     // Assertion 3 (the RED assertion): hunk B's addition must NOT have been
-    // touched.  Under the bug, unstage_hunk(A) puts HEAD-old-line 13 into
-    // `selected`, which aliases index-new-line 13 (where INSERTED lives), so
-    // unstage_lines drops the addition.
+    // touched.  Under the bug, HEAD-old-line 13 aliases index-new-line 13 (where
+    // INSERTED lives), so the addition is dropped.
     // ------------------------------------------------------------------
     assert!(
         index_after.contains("INSERTED\n"),
-        "LEAKED: unstage_hunk(A) incorrectly removed hunk B's addition — \
+        "LEAKED: unstaging hunk A incorrectly removed hunk B's addition — \
          HEAD-old-line 13 aliased index-new-line 13 in the shared HashSet. \
          Index after unstage:\n{index_after}"
     );
+
+    let expected: String = (1u32..=22)
+        .map(|n| format!("L{n:02}\n"))
+        .chain(["INSERTED\n".to_owned()])
+        .chain((23u32..=30).map(|n| format!("L{n:02}\n")))
+        .collect();
+    assert_eq!(index_after, expected, "only hunk A may be unstaged");
+}
+
+#[test]
+fn unstage_hunk_by_id_with_pure_deletion_restores_line() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "line1\nline2\nline3\n", "add f");
+    stage_content_direct(&repo, dir.path(), "f.txt", "line1\nline3\n");
+    assert_eq!(
+        staged_blob(dir.path()),
+        "line1\nline3\n",
+        "deletion is staged"
+    );
+
+    let hunk_ids = staged_hunk_ids(dir.path());
+    assert_eq!(hunk_ids.len(), 1, "FIXTURE: expected one staged hunk");
+    run_pgs(dir.path(), &["unstage", &hunk_ids[0]]).success();
+
+    assert_eq!(
+        staged_blob(dir.path()),
+        "line1\nline2\nline3\n",
+        "index should be restored to HEAD after unstaging the deletion hunk"
+    );
+}
+
+#[test]
+fn unstage_hunk_by_id_with_substitution_restores_head_content() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "f.txt", "alpha\nbeta\ngamma\n", "add h");
+    stage_content_direct(&repo, dir.path(), "f.txt", "alpha\nBETA\ngamma\n");
+
+    let hunk_ids = staged_hunk_ids(dir.path());
+    assert_eq!(hunk_ids.len(), 1, "FIXTURE: expected one staged hunk");
+    run_pgs(dir.path(), &["unstage", &hunk_ids[0]]).success();
+
+    assert_eq!(staged_blob(dir.path()), "alpha\nbeta\ngamma\n");
 }
 
 /// Stage a 40-line file with two separated modifications, then return the ids of the
