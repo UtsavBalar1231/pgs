@@ -96,6 +96,14 @@ pub struct McpCommitRequest {
     pub amend: bool,
     /// Whether to commit despite hooks pgs cannot run.
     pub no_verify: bool,
+    /// Selections to stage before committing; empty commits the index as it is.
+    pub selections: Vec<String>,
+    /// Selections to leave out when staging.
+    pub exclude: Vec<String>,
+    /// Per-file checksums checked before staging.
+    pub expected_checksums: std::collections::HashMap<String, String>,
+    /// Unified diff context lines used while resolving selections.
+    pub context: u32,
 }
 
 /// Typed MCP payload for `pgs_overview` requests.
@@ -240,13 +248,20 @@ pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterEr
             },
         )
         .map_err(|source| McpAdapterError::new(OutputCommand::Unstage, source)),
-        McpCommandRequest::Commit(request) => commit::execute(
+        McpCommandRequest::Commit(request) => commit::run(
             Some(request.repo_path.as_str()),
-            commit::CommitArgs {
+            request.context.max(1),
+            &commit::CommitRequest {
                 message: request.message,
                 message_file: request.message_file,
                 amend: request.amend,
                 no_verify: request.no_verify,
+                stage: (!request.selections.is_empty()).then(|| stage::StageRequest {
+                    selections: request.selections,
+                    exclude: request.exclude,
+                    expected_checksums: request.expected_checksums,
+                    ..stage::StageRequest::default()
+                }),
             },
             false,
         )

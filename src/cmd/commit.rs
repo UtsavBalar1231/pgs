@@ -1,17 +1,29 @@
 use std::io::Read as _;
 
 use clap::Args;
+use git2::Repository;
 
+use crate::cmd::stage::{self, StageRequest};
 use crate::error::PgsError;
 use crate::git::repo;
 use crate::models::CommitResult;
 use crate::output::view::{CommandOutput, CommitOutput};
+use crate::safety::backup;
 
 /// `message_file` value that means "read the message from stdin".
 const STDIN_SENTINEL: &str = "-";
 
 #[derive(Args)]
 pub struct CommitArgs {
+    /// Stage these selections first, then commit the index (file path, 12-hex
+    /// hunk ID, path:range). If the commit fails, the staging is rolled back.
+    pub selections: Vec<String>,
+    /// Selections to leave out when staging (same syntax).
+    #[arg(long, requires = "selections")]
+    pub exclude: Vec<String>,
+    /// Assert a file's SHA-256 from a prior scan before staging it (`PATH=SHA`).
+    #[arg(long = "expect", value_name = "PATH=SHA", requires = "selections")]
+    pub expect: Vec<String>,
     /// Commit message.
     #[arg(short, long, conflicts_with = "message_file")]
     pub message: Option<String>,
@@ -25,6 +37,45 @@ pub struct CommitArgs {
     /// exist; pgs cannot run them.
     #[arg(long)]
     pub no_verify: bool,
+}
+
+/// A commit call in typed form, as the CLI and the MCP server build it.
+#[derive(Debug, Clone, Default)]
+pub struct CommitRequest {
+    /// Inline message; exactly one of `message` and `message_file` is required.
+    pub message: Option<String>,
+    /// File holding the message (`-` reads stdin on the CLI).
+    pub message_file: Option<String>,
+    /// Replace HEAD instead of creating a child commit.
+    pub amend: bool,
+    /// Commit despite hooks pgs cannot run.
+    pub no_verify: bool,
+    /// Selections to stage before committing; `None` commits the index as it is.
+    pub stage: Option<StageRequest>,
+}
+
+impl TryFrom<CommitArgs> for CommitRequest {
+    type Error = PgsError;
+
+    fn try_from(args: CommitArgs) -> Result<Self, Self::Error> {
+        let stage = if args.selections.is_empty() {
+            None
+        } else {
+            Some(StageRequest {
+                expected_checksums: stage::parse_expect_pairs(&args.expect)?,
+                selections: args.selections,
+                exclude: args.exclude,
+                ..StageRequest::default()
+            })
+        };
+        Ok(Self {
+            message: args.message,
+            message_file: args.message_file,
+            amend: args.amend,
+            no_verify: args.no_verify,
+            stage,
+        })
+    }
 }
 
 /// Apply git's `--cleanup=whitespace` normalization to a raw commit message.
@@ -79,9 +130,9 @@ fn read_message_file(path: &str, allow_stdin: bool) -> Result<String, PgsError> 
 /// Resolve the commit message from exactly one of `-m` / `-F`, then normalize it.
 ///
 /// The invariant lives here rather than at the clap or MCP boundary because both
-/// front ends build [`CommitArgs`] and only one of them goes through clap.
-fn resolve_message(args: &CommitArgs, allow_stdin: bool) -> Result<String, PgsError> {
-    let raw = match (args.message.as_deref(), args.message_file.as_deref()) {
+/// front ends build a [`CommitRequest`] and only one of them goes through clap.
+fn resolve_message(request: &CommitRequest, allow_stdin: bool) -> Result<String, PgsError> {
+    let raw = match (request.message.as_deref(), request.message_file.as_deref()) {
         (Some(_), Some(_)) => {
             return Err(PgsError::InvalidArguments {
                 detail: "message and message_file are mutually exclusive; supply exactly one"
@@ -106,32 +157,75 @@ fn resolve_message(args: &CommitArgs, allow_stdin: bool) -> Result<String, PgsEr
     Ok(normalized)
 }
 
-/// Create or amend a commit from the current index.
+/// Run `pgs commit` from parsed CLI arguments.
+///
+/// # Errors
+///
+/// See [`run`]; also `InvalidSelection` for a malformed or duplicate `--expect`.
+#[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
+pub fn execute(
+    repo_path: Option<&str>,
+    context: u32,
+    args: CommitArgs,
+    allow_stdin: bool,
+) -> Result<CommandOutput, PgsError> {
+    run(
+        repo_path,
+        context,
+        &CommitRequest::try_from(args)?,
+        allow_stdin,
+    )
+}
+
+/// Create or amend a commit, optionally staging selections first.
 ///
 /// `allow_stdin` gates the `-F -` form: the CLI permits it, the MCP path does
-/// not, because an MCP request has no stdin of its own to consume.
+/// not, because an MCP request has no stdin of its own to consume. When the
+/// request stages selections and the commit then fails, the index is restored
+/// to what it was before the call.
 ///
 /// # Errors
 /// Returns [`PgsError::InvalidArguments`] when neither or both message sources
 /// are supplied, [`PgsError::InputFileUnreadable`] when `-F <path>` cannot be
 /// read, [`PgsError::EmptyCommitMessage`] when the normalized message is empty,
-/// and [`PgsError::NoChanges`] when a non-amend commit has nothing staged.
-#[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
-pub fn execute(
+/// [`PgsError::CommitHooksPresent`] when hooks pgs cannot run are active, any
+/// staging error, and [`PgsError::NoChanges`] when a non-amend commit has
+/// nothing staged.
+pub fn run(
     repo_path: Option<&str>,
-    args: CommitArgs,
+    context: u32,
+    request: &CommitRequest,
     allow_stdin: bool,
 ) -> Result<CommandOutput, PgsError> {
     // Resolved first so `--amend` cannot destroy the existing message before failing.
-    let message = resolve_message(&args, allow_stdin)?;
+    let message = resolve_message(request, allow_stdin)?;
 
     let repository = repo::open(repo_path)?;
-    if !args.no_verify {
+    if !request.no_verify {
         let hooks = repo::active_commit_hooks(&repository)?;
         if !hooks.is_empty() {
             return Err(PgsError::CommitHooksPresent { hooks });
         }
     }
+
+    let Some(stage_request) = &request.stage else {
+        let result = create_commit(&repository, message, request.amend)?;
+        return Ok(CommitOutput::from(result).into());
+    };
+    let staged = stage::apply(&repository, context, stage_request)?;
+    let backup_id = staged.backup_id.as_deref().unwrap_or_default();
+    match create_commit(&repository, message, request.amend) {
+        Ok(result) => Ok(CommitOutput::from(result).with_staged(staged.items).into()),
+        Err(error) => Err(backup::rollback(&repository, backup_id, error)),
+    }
+}
+
+/// Write the commit (or amend HEAD) from the index as it is now.
+fn create_commit(
+    repository: &Repository,
+    message: String,
+    amend: bool,
+) -> Result<CommitResult, PgsError> {
     let sig = repository.signature()?;
 
     let mut index = repository.index()?;
@@ -145,16 +239,16 @@ pub fn execute(
         Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
         Err(e) => return Err(e.into()),
     };
-    if args.amend && head_commit.is_none() {
+    if amend && head_commit.is_none() {
         return Err(PgsError::InvalidArguments {
             detail: "--amend needs an existing commit, but the branch has none yet".to_owned(),
         });
     }
-    let author = match (&head_commit, args.amend) {
+    let author = match (&head_commit, amend) {
         (Some(head), true) => head.author(),
         _ => sig.clone(),
     };
-    let parent_commits: Vec<git2::Commit<'_>> = match (&head_commit, args.amend) {
+    let parent_commits: Vec<git2::Commit<'_>> = match (&head_commit, amend) {
         (Some(head), true) => head.parents().collect(),
         (Some(head), false) => vec![repository.find_commit(head.id())?],
         (None, _) => Vec::new(),
@@ -169,11 +263,11 @@ pub fn execute(
     let nothing_staged = base_tree
         .as_ref()
         .map_or(tree.is_empty(), |parent| tree_oid == parent.id());
-    if !args.amend && nothing_staged {
+    if !amend && nothing_staged {
         return Err(PgsError::NoChanges);
     }
 
-    let commit_oid = if let (Some(head), true) = (&head_commit, args.amend) {
+    let commit_oid = if let (Some(head), true) = (&head_commit, amend) {
         head.amend(
             Some("HEAD"),
             None,
@@ -203,7 +297,7 @@ pub fn execute(
         deletions: crate::saturating_u32(stats.deletions()),
     };
 
-    Ok(CommitOutput::from(result).into())
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -268,12 +362,11 @@ mod tests {
         }
     }
 
-    fn args(message: Option<&str>, message_file: Option<&str>) -> CommitArgs {
-        CommitArgs {
+    fn args(message: Option<&str>, message_file: Option<&str>) -> CommitRequest {
+        CommitRequest {
             message: message.map(ToOwned::to_owned),
             message_file: message_file.map(ToOwned::to_owned),
-            amend: false,
-            no_verify: false,
+            ..CommitRequest::default()
         }
     }
 

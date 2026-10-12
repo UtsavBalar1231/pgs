@@ -356,6 +356,19 @@ each `status.file` record's JSON.
 and message; message-only amend is allowed when the index already matches
 `HEAD`.
 
+#### Stage and commit in one call
+
+`pgs commit -m <msg> <selections>...` stages the selections exactly as
+`pgs stage` would (same selectors, `--exclude`, and `--expect`), then commits
+the index. Anything already staged is committed too. If the commit fails after
+the staging succeeded, the index is restored to what it was before the call, so
+a failed call leaves nothing half done. The hook check runs before any staging.
+MCP: `pgs_commit` with `selections` (plus optional `exclude`,
+`expected_checksums`, `context`).
+
+The JSON envelope gains a `staged` array, one `{selection, lines_affected}` item
+per selection, when selections were given.
+
 #### Message sources
 
 The message comes from exactly one of two flags:

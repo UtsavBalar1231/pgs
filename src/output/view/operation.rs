@@ -19,6 +19,18 @@ pub struct CommitOutput {
     pub files_changed: usize,
     pub insertions: u32,
     pub deletions: u32,
+    /// What `commit <selections>` staged before committing, one item per selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staged: Option<Vec<OperationItemView>>,
+}
+
+impl CommitOutput {
+    /// Record the selections this commit staged first.
+    #[must_use]
+    pub fn with_staged(mut self, items: Vec<OperationItemView>) -> Self {
+        self.staged = Some(items);
+        self
+    }
 }
 
 impl From<CommitResult> for CommitOutput {
@@ -32,6 +44,7 @@ impl From<CommitResult> for CommitOutput {
             files_changed: result.files_changed,
             insertions: result.insertions,
             deletions: result.deletions,
+            staged: None,
         }
     }
 }

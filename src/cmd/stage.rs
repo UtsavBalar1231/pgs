@@ -275,7 +275,7 @@ fn execute_single_stage(
 /// # Errors
 ///
 /// [`PgsError::InvalidSelection`] on missing `=` separator or duplicate path.
-fn parse_expect_pairs(pairs: &[String]) -> Result<HashMap<String, String>, PgsError> {
+pub fn parse_expect_pairs(pairs: &[String]) -> Result<HashMap<String, String>, PgsError> {
     let mut map = HashMap::new();
     for pair in pairs {
         // rsplit_once: SHA is hex (no '='), so split on the LAST '=' to handle

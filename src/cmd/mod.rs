@@ -243,7 +243,7 @@ pub fn run(parsed: ParsedCli) -> Result<CommandOutput, PgsError> {
         Command::Stage(args) => stage::execute(repo.as_deref(), context, args),
         Command::Unstage(args) => unstage::execute(repo.as_deref(), context, args),
         Command::Status(args) => status::execute(repo.as_deref(), context, args.full),
-        Command::Commit(args) => commit::execute(repo.as_deref(), args, true),
+        Command::Commit(args) => commit::execute(repo.as_deref(), context, args, true),
         Command::Log(args) => log::execute(repo.as_deref(), args),
         Command::Overview => overview::execute(repo.as_deref(), context),
         Command::SplitHunk(args) => split::execute(repo.as_deref(), context, args),

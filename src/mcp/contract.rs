@@ -170,6 +170,15 @@ pub struct CommitToolInput {
     /// Commit even though the repository has pre-commit, prepare-commit-msg or
     /// commit-msg hooks, which pgs cannot run.
     pub no_verify: Option<bool>,
+    /// Stage these selections first, then commit; if the commit fails the staging
+    /// is rolled back. Same selectors as `pgs_stage`.
+    pub selections: Option<Vec<String>>,
+    /// Selections to leave out when staging.
+    pub exclude: Option<Vec<String>>,
+    /// Per-file checksums from a prior scan (path → SHA-256), checked before staging.
+    pub expected_checksums: Option<std::collections::HashMap<String, String>>,
+    /// Optional diff context override used while resolving selections.
+    pub context: Option<u32>,
 }
 
 impl From<CommitToolInput> for McpCommitRequest {
@@ -180,6 +189,10 @@ impl From<CommitToolInput> for McpCommitRequest {
             message_file: value.message_file,
             amend: value.amend.unwrap_or(false),
             no_verify: value.no_verify.unwrap_or(false),
+            selections: value.selections.unwrap_or_default(),
+            exclude: value.exclude.unwrap_or_default(),
+            expected_checksums: value.expected_checksums.unwrap_or_default(),
+            context: value.context.unwrap_or(DEFAULT_CONTEXT),
         }
     }
 }

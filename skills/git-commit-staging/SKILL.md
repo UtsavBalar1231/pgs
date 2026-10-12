@@ -57,7 +57,9 @@ Bash, raw git, or the pgs CLI.
    before writing a range over one.
 5. To preview exact staged content without mutating the index, call
    `pgs_stage(dry_run=true, explain=true, limit=200, ...)`.
-6. Verify the result with `pgs_status` before every `pgs_commit`.
+6. Verify the result with `pgs_status` before every `pgs_commit`. When one
+   commit's selections are already settled, `pgs_commit(message=..., selections=[...])`
+   stages and commits in one call and rolls the staging back if the commit fails.
 7. After any commit, unstage, file edit, or index change, re-read state before
    reusing hunk IDs — they go stale.
 
