@@ -62,7 +62,7 @@ Notable variants added for staging safety (see `src/error.rs` for full enum):
 | `NonUtf8Partial` | `non_utf8_partial` | 2 | Granular staging on a non-UTF-8 file; use whole-file staging |
 | `CrlfMismatch` | `crlf_mismatch` | 2 | Cross-ending partial staging (LF base vs CRLF workdir or vice versa) |
 | `ExternalFilter` | `external_filter` | 2 | Path's `filter=` attribute names a configured driver (git-lfs, git-crypt) libgit2 cannot run |
-| `UnsupportedEntry` | `unsupported_entry` | 2 | Path is a submodule or other non-file entry |
+| `UnsupportedEntry` | `unsupported_entry` | 2 | Path is a socket, fifo, or other entry that is not a file, symlink, or tracked submodule |
 | `NotARepository` | `not_a_repository` | 2 | `--repo` / `repo_path` names no git repository |
 | `RestoreFailed` | `restore_failed` | 4 | Staging op failed AND automatic rollback failed; index may be inconsistent; `backup_id` in error for manual recovery from `.git/pgs/backups/` |
 
