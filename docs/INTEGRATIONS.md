@@ -284,24 +284,32 @@ before the release assets are collected. Pick the bundle whose `<target>`
 matches your machine; the `universal-apple-darwin` bundle covers Intel and
 Apple Silicon Macs.
 
-`server.json` still lists no `packages`, so pgs is not published to the MCP
-Registry. Publishing the bundles would take:
+### MCP Registry
 
-1. A published GitHub release, since the registry accepts MCPB artifacts
-   hosted on GitHub or GitLab releases.
-2. One `packages` entry per bundle in `server.json`, with `registryType`
-   `"mcpb"`, the bundle's release download URL as `identifier` (it must contain
-   "mcp", which `pgs-mcp-<target>.mcpb` does), `transport` of `stdio`, and
-   `fileSha256` set to the bundle's SHA-256, which is its line in
-   `SHA256SUMS`. The registry does not check the hash; clients do before they
-   install.
-3. `mcp-publisher publish`, authenticated as the owner of the
-   `io.github.UtsavBalar1231` namespace.
+The `server.json` in the repository is a template with no `packages`. Each
+release carries a rendered, registry-ready copy as the `server.json` release
+asset. The release workflow builds it from `SHA256SUMS` with
+`packaging/render-server-json.py`: `version` is the tag without its `v`, and
+`packages` holds one `mcpb` entry for each of `universal-apple-darwin`,
+`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`,
+`x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`, with the bundle's
+release download URL as `identifier` and its `SHA256SUMS` hash as
+`fileSha256`. The workflow checks the file with `mcp-publisher validate` on
+every run, pull request rehearsals included.
 
-The fields are from the registry's
-[package types](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/package-types.mdx)
-page. That page says nothing about how a client chooses between several `mcpb`
-entries for different platforms, so check that before listing all seven.
+Setting the repository variable `MCP_REGISTRY_PUBLISH` to `true` makes tag
+builds publish that file to the registry through GitHub OIDC, after the release
+assets exist (the registry fetches each bundle URL when it publishes). Without
+the variable nothing is published. To publish by hand, download `server.json`
+from the release and run:
+
+```bash
+mcp-publisher login github && mcp-publisher publish server.json
+```
+
+The registry has no platform field, so the five bundles are told apart only by
+the target in their file name. Only the `universal-apple-darwin` bundle is
+listed for macOS; the per-architecture macOS bundles are not.
 
 ## The agent skill
 
