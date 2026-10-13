@@ -262,18 +262,33 @@ fn apply_one(
     let repository = repo::open(repo_path)?;
     let d = diff::diff_index_to_workdir(&repository, context)?;
     let scan = diff::build_scan_result(&repository, &d, None)?;
+    let selections = current_selectors(&planned.selections, &scan, pins)?;
+    let re_resolved: HashMap<String, &String> = selections
+        .iter()
+        .zip(&planned.selections)
+        .filter(|(now, planned)| now != planned)
+        .map(|(now, planned)| (now.clone(), planned))
+        .collect();
     let request = CommitRequest {
         message: planned.message.clone(),
         // Hooks were checked once before the first commit.
         no_verify: true,
         stage: Some(StageRequest {
-            selections: current_selectors(&planned.selections, &scan, pins)?,
+            selections,
             exclude: current_excludes(&planned.exclude, &scan, pins),
             ..StageRequest::default()
         }),
         ..CommitRequest::default()
     };
-    commit::commit(repo_path, context, &request, false)
+    let mut created = commit::commit(repo_path, context, &request, false)?;
+    // Report each item under the selector the plan named, so callers can match
+    // items to their plan.
+    for item in created.staged.iter_mut().flatten() {
+        if let Some(planned) = re_resolved.get(&item.selection) {
+            item.selection.clone_from(planned);
+        }
+    }
+    Ok(created)
 }
 
 /// Rewrite planned hunk ids to the ids the same hunks carry in `scan`.

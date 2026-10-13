@@ -129,6 +129,10 @@ fn plan_apply_follows_a_hunk_id_shifted_by_an_earlier_commit() {
     assert!(file_at(dir.path(), "HEAD~1", "f.txt").contains("new1\nnew2\n"));
     assert!(file_at(dir.path(), "HEAD~1", "f.txt").contains("l18\n"));
     assert_eq!(file_at(dir.path(), "HEAD", "f.txt"), edited);
+    assert_eq!(
+        out["commits"][1]["staged"][0]["selection"], ids[1],
+        "report names the plan's selector, not the id it was re-resolved to"
+    );
 }
 
 #[test]

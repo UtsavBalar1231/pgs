@@ -276,12 +276,57 @@ impl PlanApplyOutput {
         }
     }
 
-    /// The failed step's exit code, which the whole run exits with.
+    /// The exit code a partial run exits with: the failed step's, except that
+    /// a run which created commits never exits 1, the "no effect" code.
     #[must_use]
     pub const fn failure_exit_code(&self) -> Option<i32> {
         match &self.failed {
+            Some(failure) if !self.commits.is_empty() && failure.exit_code < 2 => Some(2),
             Some(failure) => Some(failure.exit_code),
             None => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failure(exit_code: i32) -> PlanApplyFailure {
+        PlanApplyFailure {
+            id: "c2".to_owned(),
+            code: "selection_empty",
+            message: "nothing selected".to_owned(),
+            exit_code,
+        }
+    }
+
+    fn created() -> PlanAppliedCommit {
+        PlanAppliedCommit {
+            id: "c1".to_owned(),
+            message: "feat: a\n".to_owned(),
+            commit_hash: Some("0".repeat(40)),
+            staged: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn partial_run_that_created_commits_never_exits_no_effect() {
+        let output =
+            PlanApplyOutput::new(PlanApplyStatus::Partial, vec![created()], Some(failure(1)));
+        assert_eq!(output.failure_exit_code(), Some(2));
+    }
+
+    #[test]
+    fn partial_run_keeps_a_failed_steps_code_above_no_effect() {
+        let output =
+            PlanApplyOutput::new(PlanApplyStatus::Partial, vec![created()], Some(failure(3)));
+        assert_eq!(output.failure_exit_code(), Some(3));
+    }
+
+    #[test]
+    fn failure_before_any_commit_keeps_its_own_code() {
+        let output = PlanApplyOutput::new(PlanApplyStatus::Partial, Vec::new(), Some(failure(1)));
+        assert_eq!(output.failure_exit_code(), Some(1));
     }
 }

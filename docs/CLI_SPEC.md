@@ -824,7 +824,8 @@ nothing.
 A planned commit that fails after earlier ones were created stops the run. Its
 own staging is rolled back, so the index is empty again; the earlier commits
 stay. The envelope reports them, with `status: "partial"` and `failed`, and the
-command exits with the failed step's exit code.
+command exits with the failed step's exit code, raised to 2 when earlier
+commits were created, since exit 1 means the call had no effect.
 
 JSON envelope:
 
@@ -851,7 +852,9 @@ JSON envelope:
 ```
 
 `id` is the planned commit's `id`, or `#<n>` (1-based) when it has none.
-`failed` is present only when `status` is `partial`.
+`staged` items name each selection as the plan wrote it, including a hunk id
+that was re-resolved before its commit. `failed` is present only when `status`
+is `partial`.
 
 Text record kinds:
 - `plan.apply.begin`, one `plan.apply.commit` per commit, `plan.apply.failed`
@@ -860,7 +863,8 @@ Text record kinds:
 
 Exit codes:
 - `0` when every planned commit was created, or on a successful dry run.
-- the failed step's exit code on a partial run.
+- on a partial run, the failed step's exit code, or 2 when that code is 1 and
+  earlier commits were created.
 - `1`/`2` when the run is refused before writing, as listed above.
 
 MCP tool: `pgs_plan_apply` — mutating. Input schema requires `repo_path` and
