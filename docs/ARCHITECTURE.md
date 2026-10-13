@@ -174,8 +174,18 @@ the index unchanged:
   A filter attribute with no driver configured is skipped by `git add` too, so it
   stages normally.
 
-- **Non-file entries** (`UnsupportedEntry`, exit 2): a submodule records a commit,
-  not content, so there is no blob to build. Sockets and fifos take the same path.
+- **Non-file entries** (`UnsupportedEntry`, exit 2): a socket or fifo has no
+  content to build a blob from.
+
+- **Submodule pointers are whole-path only**: a gitlink (mode `0o160000`)
+  records a commit in the submodule's own repository, not content. Staging the
+  path records the commit the submodule checkout is on, opened through its
+  gitfile if it has one, as `git add <submodule>` does; unstaging restores the
+  commit HEAD records, or removes a pointer HEAD does not have. The hunk scan
+  reports for it is the `Subproject commit <id>` text git renders, so hunk and
+  line selectors return `GranularOnWholeFile`. libgit2 does not report a new,
+  untracked nested repository at all; adding one is `git submodule add`'s job,
+  since it also writes `.gitmodules`.
 
 - **Mode changes propagate through partial staging**: `stage_lines` and `stage_file`
   accept `mode_override: Option<u32>`, which flows into `build_index_entry`. A file

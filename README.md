@@ -287,8 +287,8 @@ Staging applies git's clean filters the way `git add` does: `core.autocrlf`,
 `text` and `eol` attributes, and `ident`. A path whose `filter=` attribute runs
 an external program, such as git-lfs or git-crypt, is refused rather than staged
 unfiltered. The error code is `external_filter` (exit 2); stage those paths with
-`git add`. Submodules are refused the same way (`unsupported_entry`). Both are
-new in 0.8.0.
+`git add`. A moved submodule pointer stages by path, like `git add <submodule>`;
+hunk and line selectors on it are refused.
 
 The plugin launcher downloads `pgs-mcp` on first start for Linux (x86_64,
 aarch64), macOS, and Windows (x86_64, ARM64). It is a POSIX `sh` script, so on

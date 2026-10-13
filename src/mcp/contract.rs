@@ -1017,7 +1017,8 @@ fn error_guidance(error: &PgsError) -> String {
             "Stage this path with git, which runs the filter driver; pgs cannot.".to_owned()
         }
         PgsError::UnsupportedEntry { .. } => {
-            "Stage submodules and other non-file entries with git.".to_owned()
+            "Stage this entry with git; pgs stages files, symlinks and submodule pointers."
+                .to_owned()
         }
         PgsError::StaleScan { .. } => {
             "Re-run pgs_scan to refresh checksums and hunk IDs, then retry.".to_owned()

@@ -54,6 +54,21 @@ pub fn stage_file(
     Ok(count_lines(&content))
 }
 
+/// Stage a moved submodule pointer: record the commit its checkout is on.
+///
+/// # Errors
+///
+/// `Git` when the submodule checkout cannot be opened or has no commit, or
+/// the index write fails.
+pub fn stage_gitlink(repo: &Repository, file_path: &str) -> Result<(), PgsError> {
+    let commit = super::submodule_head(repo, file_path)?;
+    let mut index = repo.index()?;
+    let entry = build_index_entry(&index, file_path, commit, Some(super::GITLINK_MODE));
+    index.add(&entry)?;
+    index.write()?;
+    Ok(())
+}
+
 /// Count logical lines in a byte slice — mirrors `unstaging::count_lines`.
 ///
 /// Uses `str::lines()` so trailing-newline and no-trailing-newline files
@@ -208,7 +223,16 @@ pub fn preview_stage(
     let resolved_ranges = resolved_ranges_for(scan, resolved);
 
     let file_info = scan.files.iter().find(|f| f.path == file_path);
-    if file_info.is_some_and(|f| f.is_binary) {
+    let no_lines = file_info.and_then(|f| {
+        if f.is_binary {
+            Some("binary")
+        } else if crate::selection::resolve::is_gitlink(f) {
+            Some("submodule")
+        } else {
+            None
+        }
+    });
+    if let Some(reason) = no_lines {
         return Ok(OperationPreview {
             selection: selection.to_owned(),
             file_path,
@@ -216,7 +240,7 @@ pub fn preview_stage(
             preview_lines: Vec::new(),
             truncated: false,
             limit_applied: limit,
-            reason: Some("binary".to_owned()),
+            reason: Some(reason.to_owned()),
         });
     }
 

@@ -6,7 +6,7 @@ use git2::Repository;
 use crate::cmd::work_plan::{self, WorkPlan};
 use crate::error::PgsError;
 use crate::git::staging::{line_selection_for, workdir_line_count};
-use crate::git::{diff, read_head_mode, repo, staging};
+use crate::git::{GITLINK_MODE, diff, read_head_mode, repo, staging};
 use crate::models::{
     FileStatus, OperationPreview, OperationStatus, ResolvedSelection, ScanResult, SelectionSpec,
     format_selection,
@@ -248,6 +248,7 @@ fn execute_single_stage(
 
     match &file.status {
         FileStatus::Deleted => staging::stage_deletion(repo, path),
+        FileStatus::Modified if file.new_mode == GITLINK_MODE => staging::stage_gitlink(repo, path),
         FileStatus::Renamed { old_path } => {
             staging::stage_rename(repo, old_path, path, Some(file.new_mode))
         }

@@ -8,6 +8,31 @@ use git2::Repository;
 
 use crate::error::PgsError;
 
+/// Index mode of a gitlink: the commit a submodule is recorded at.
+pub const GITLINK_MODE: u32 = 0o160_000;
+
+/// The commit a submodule's checkout is on, which is what staging its path
+/// records, as `git add <submodule>` does.
+///
+/// # Errors
+///
+/// `Git` when the path is not a repository (including a gitfile that points
+/// nowhere) or its HEAD has no commit yet.
+pub fn submodule_head(repo: &Repository, file_path: &str) -> Result<git2::Oid, PgsError> {
+    let checkout = Repository::open(repo::workdir(repo)?.join(file_path))?;
+    Ok(checkout.head()?.peel_to_commit()?.id())
+}
+
+/// The commit HEAD records for `file_path` when that path is a gitlink.
+///
+/// `None` when there is no HEAD, the path is absent from it, or it is not a
+/// gitlink.
+pub fn head_gitlink(repo: &Repository, file_path: &str) -> Option<git2::Oid> {
+    let tree = repo.head().ok()?.peel_to_tree().ok()?;
+    let entry = tree.get_path(std::path::Path::new(file_path)).ok()?;
+    (u32::try_from(entry.filemode()).ok() == Some(GITLINK_MODE)).then(|| entry.id())
+}
+
 /// Classification of the workdir entry behind a path, for blob construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkdirFileType {

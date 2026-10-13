@@ -128,7 +128,8 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
   them.
 - `pgs_scan` reads Index→Workdir; `pgs_status` and `pgs_unstage` read
   HEAD→Index. Do not reuse hunk IDs across those two bases.
-- Added, deleted, renamed, and binary files require whole-file staging.
+- Added, deleted, renamed, and binary files, and submodule pointers, require
+  whole-file staging.
 - `whitespace_only` is metadata; you still decide whether the change belongs in
   the commit.
 - `pgs_split_hunk` is descriptive, not a staging plan; `pgs_plan_check` and

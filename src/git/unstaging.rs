@@ -30,8 +30,24 @@ use crate::saturating_u32;
 ///
 /// Returns `PgsError::Git` if libgit2 operations fail.
 pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<u32, PgsError> {
-    let head_result = read_head_blob(repo, file_path);
     let mut index = repo.index()?;
+    // A gitlink names a commit in the submodule's own repository, so there is
+    // no blob to read back: restore HEAD's entry as recorded.
+    if let Some(commit) = super::head_gitlink(repo, file_path) {
+        let entry = build_index_entry(&index, file_path, commit, Some(super::GITLINK_MODE));
+        index.add(&entry)?;
+        index.write()?;
+        return Ok(0);
+    }
+    let staged_gitlink = index
+        .get_path(std::path::Path::new(file_path), 0)
+        .is_some_and(|entry| entry.mode == super::GITLINK_MODE);
+    if staged_gitlink {
+        index.remove_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        return Ok(0);
+    }
+    let head_result = read_head_blob(repo, file_path);
     let in_index = index.get_path(std::path::Path::new(file_path), 0).is_some();
 
     match (head_result, in_index) {

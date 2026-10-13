@@ -3,7 +3,10 @@
 use sha2::{Digest, Sha256};
 
 use crate::error::PgsError;
-use crate::models::{FileStatus, LineRange, ResolvedSelection, ScanResult, SelectionSpec};
+use crate::git::GITLINK_MODE;
+use crate::models::{
+    FileInfo, FileStatus, LineRange, ResolvedSelection, ScanResult, SelectionSpec,
+};
 
 /// Resolve a [`SelectionSpec`] against the provided scan result.
 ///
@@ -194,7 +197,15 @@ pub fn validate_binary_constraints(
     Ok(())
 }
 
-/// Reject granular (hunk/lines) selections on added, deleted, or renamed files.
+/// Whether a scanned path is a submodule pointer on either side of the diff.
+/// Its "lines" are `Subproject commit <id>` text git renders, not content, so
+/// it is staged and unstaged whole.
+pub const fn is_gitlink(file: &FileInfo) -> bool {
+    file.old_mode == GITLINK_MODE || file.new_mode == GITLINK_MODE
+}
+
+/// Reject granular (hunk/lines) selections on files that only move whole:
+/// added, deleted, renamed, type-changed, or a submodule pointer.
 ///
 /// Such files can only be staged at file level because the entire file must be
 /// moved in or out of the index atomically.
@@ -202,7 +213,7 @@ pub fn validate_binary_constraints(
 /// # Errors
 ///
 /// Returns [`PgsError::GranularOnWholeFile`] when a hunk or lines
-/// selection targets an added, deleted, or renamed file.
+/// selection targets one of them.
 pub fn validate_whole_file_constraints(
     scan: &ScanResult,
     spec: &SelectionSpec,
@@ -224,7 +235,7 @@ pub fn validate_whole_file_constraints(
     if let Some(p) = target_path
         && let Some(file) = scan.files.iter().find(|f| f.path == p)
     {
-        if file.status == FileStatus::TypeChanged {
+        if file.status == FileStatus::TypeChanged || is_gitlink(file) {
             return Err(PgsError::GranularOnWholeFile { path: p.to_owned() });
         }
         // Symlinks (mode 0o120_000) have no line granularity but a granular

@@ -79,7 +79,7 @@ exit code is fixed per code.
 | `unknown_hunk_id` | 2 | The 12-hex hunk ID is not in a fresh scan. IDs go stale after any edit to the file; re-run `scan`. |
 | `file_not_in_diff` | 2 | The named path has no changes in the diff the command reads. |
 | `binary_file_granular` | 2 | Hunk or line selection on a binary file. Stage the whole file. |
-| `granular_on_whole_file` | 2 | Hunk or line selection on an added, deleted, or renamed file. Stage the whole file. |
+| `granular_on_whole_file` | 2 | Hunk or line selection on an added, deleted, renamed, or type-changed file, or a submodule pointer. Stage the whole path. |
 | `empty_commit_message` | 2 | The commit message is empty or whitespace-only after normalization. Nothing is written. |
 | `invalid_arguments` | 2 | Arguments are missing or mutually exclusive, such as `commit` with neither `-m` nor `-F`. |
 | `input_file_unreadable` | 2 | A caller-supplied file (commit message file, plan file) is missing, unreadable, or not valid UTF-8. |
@@ -90,7 +90,7 @@ exit code is fixed per code.
 | `crlf_mismatch` | 2 | Hunk or line selection where the index and working tree use different dominant line endings. Stage the whole file. |
 | `unterminated_interior_line` | 2 | The selection would place content after a file's unterminated last line. Stage the hunk or the whole file. |
 | `external_filter` | 2 | The path has a `filter=` gitattribute that runs an external program (for example git-lfs or git-crypt), which pgs cannot run. Stage it with git. |
-| `unsupported_entry` | 2 | The path is a submodule (gitlink), which pgs cannot stage. |
+| `unsupported_entry` | 2 | The path is neither a file, a symlink, nor a tracked submodule (for example a socket or fifo), so there is no content to stage. |
 | `stale_scan` | 3 | The file changed on disk since the scan, or its checksum differs from `--expect`. Re-run `scan` and retry. |
 | `index_locked` | 3 | Another process holds `index.lock`. Retry. |
 | `restore_failed` | 4 | The operation failed and restoring the backup also failed. The index may be inconsistent; the error carries a `backup_id` for manual recovery from `.git/pgs/backups/`, which keeps the newest 50 backups. |
@@ -168,6 +168,14 @@ Text record kinds:
 symlink. A `TypeChanged` path is staged and unstaged whole, under its new mode;
 hunk and line selectors on it return `granular_on_whole_file`. It counts toward
 `modified` in the summary.
+
+A submodule whose checkout moved to another commit is a `Modified` entry whose
+one hunk shows the old and new `Subproject commit <id>` lines, with an empty
+file `checksum`. Stage it by path: the index records the commit the submodule
+checkout is on, as `git add <submodule>` does. Hunk and line selectors on it
+return `granular_on_whole_file`, and `unstage` restores the commit HEAD records.
+A new nested repository does not appear in `scan`; add it with
+`git submodule add`.
 
 Hunk payload notes:
 - `id` (`hunk_id`) — position-DEPENDENT addressing key: `sha256(path:old_start:new_start:content)[..12]`, where `content` is every hunk line prefixed with its origin marker (` ` context, `+` addition, `-` deletion) and terminated with `\n`. The marker makes replacing a line and keeping it beside an addition hash differently. Shifts when an earlier hunk changes the line count. Use to select a hunk when the scan is fresh.

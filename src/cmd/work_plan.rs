@@ -113,11 +113,12 @@ pub fn changed_lines(
 }
 
 /// Whether a file can only be staged or unstaged whole: binary, added, deleted,
-/// renamed, type-changed, or a mode-only change.
+/// renamed, type-changed, a submodule pointer, or a mode-only change.
 pub fn is_whole_file_operation(scan: &ScanResult, file_path: &str) -> bool {
     scan.files.iter().any(|f| {
         f.path == file_path
             && (f.is_binary
+                || resolve::is_gitlink(f)
                 || (f.old_mode != f.new_mode && f.hunks.is_empty())
                 || matches!(
                     f.status,

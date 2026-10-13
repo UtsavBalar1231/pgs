@@ -114,11 +114,9 @@ pub enum PgsError {
         driver: String,
     },
 
-    /// The path is neither a regular file nor a symlink, such as a submodule.
-    ///
-    /// A submodule (gitlink) records a commit, not file content, so there is no
-    /// blob to build. Stage it with git.
-    #[error("{path} is not a regular file or symlink (a submodule?); pgs cannot stage it")]
+    /// The path is neither a regular file, a symlink, nor a tracked submodule,
+    /// such as a socket or fifo: there is no content to build a blob from.
+    #[error("{path} is not a regular file, symlink, or submodule; pgs cannot stage it")]
     UnsupportedEntry {
         /// The workdir path of the entry.
         path: PathBuf,
