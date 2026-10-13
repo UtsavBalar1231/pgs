@@ -69,7 +69,7 @@ skills/                byte-identical copy of plugins/pgs/skills/ (root Codex pl
 .codex-plugin/         root Codex plugin manifest (mirrored in plugins/pgs/)
 .agents/plugins/       Codex-native marketplace
 gemini-extension.json  Gemini CLI extension (same inline launcher as .mcp.json)
-server.json            MCP Registry draft (not published)
+server.json            MCP Registry template; each release renders its packages (packaging/render-server-json.py)
 glama.json             Glama directory ownership
 ```
 

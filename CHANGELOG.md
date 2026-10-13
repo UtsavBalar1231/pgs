@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.10.0 - 2026-10-13
+
+### Added
+
+- A moved submodule pointer stages and unstages by path, as
+  `git add <submodule>` does: the index records the commit the submodule
+  checkout is on, through its gitfile when it has one. Hunk and line selectors
+  on it return `granular_on_whole_file`, and a dry-run preview reports reason
+  `"submodule"`. New nested repositories are still `git submodule add`'s job.
+- Each release carries a registry-ready `server.json` listing the MCP Bundles,
+  validated with `mcp-publisher` on every release run. Setting the repository
+  variable `MCP_REGISTRY_PUBLISH=true` publishes it to the MCP Registry from
+  tag builds through GitHub OIDC.
+
+### Changed
+
+- `plan-check` and `plan-apply` accept disjoint line ranges of one hunk in
+  different planned commits, so one mixed hunk can be split across commits.
+  Intersecting ranges, or a range beside a file or hunk selector on the same
+  hunk, still overlap.
+- A partial `plan-apply` that created commits exits 2 when the failed step's
+  code was 1, since exit 1 means no effect.
+- `plan-apply` reports each `staged` item under the selector the plan wrote,
+  not the hunk id it was re-resolved to.
+
+### Fixed
+
+- Unstaging a submodule failed with `git_error`.
+- Restoring an index backup after a failed stage or unstage writes through
+  `index.lock`, as git does, instead of overwriting `.git/index` unlocked.
+
 ## 0.9.0 - 2026-10-13
 
 ### Breaking
