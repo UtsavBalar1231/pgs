@@ -74,8 +74,8 @@ pub fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
         }
     }
 
-    // hunk_id -> commit_ids that cover it (uses BTreeSet to keep output stable).
-    let mut coverage: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // hunk_id -> what each commit claims of it.
+    let mut coverage: BTreeMap<String, Vec<(String, Claim)>> = BTreeMap::new();
     let mut unsafe_selectors: Vec<UnsafeSelector> = Vec::new();
     let mut unknown_paths: BTreeSet<String> = BTreeSet::new();
     let mut unknown_hunk_ids: Vec<UnknownHunkId> = Vec::new();
@@ -96,10 +96,12 @@ pub fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
 
     let overlaps: Vec<PlanOverlap> = coverage
         .iter()
-        .filter(|(_, commits)| commits.len() >= 2)
-        .map(|(hunk_id, commits)| PlanOverlap {
-            hunk_id: hunk_id.clone(),
-            commits: commits.iter().cloned().collect(),
+        .filter_map(|(hunk_id, claims)| {
+            let commits = overlapping_commits(claims);
+            (!commits.is_empty()).then(|| PlanOverlap {
+                hunk_id: hunk_id.clone(),
+                commits: commits.into_iter().collect(),
+            })
         })
         .collect();
 
@@ -122,6 +124,42 @@ pub fn check_plan(plan: &CommitPlan, scan: &ScanResult) -> PlanCheckOutput {
     )
 }
 
+/// What one planned commit takes of a hunk.
+enum Claim {
+    /// A file or hunk selector: every change in the hunk.
+    Whole,
+    /// Line ranges, in workdir coordinates.
+    Lines(Vec<LineRange>),
+}
+
+/// Commits whose claims on one hunk could take the same change.
+///
+/// Disjoint line ranges never can: a replaced line goes with the addition that
+/// replaces it, and a pure deletion needs one range covering the surviving
+/// lines on both sides of it. Only intersecting ranges, or a whole-hunk claim
+/// against anything, can.
+fn overlapping_commits(claims: &[(String, Claim)]) -> BTreeSet<String> {
+    let mut overlapping = BTreeSet::new();
+    for (i, (a, a_claim)) in claims.iter().enumerate() {
+        for (b, b_claim) in &claims[i + 1..] {
+            if a != b && claims_intersect(a_claim, b_claim) {
+                overlapping.insert(a.clone());
+                overlapping.insert(b.clone());
+            }
+        }
+    }
+    overlapping
+}
+
+fn claims_intersect(a: &Claim, b: &Claim) -> bool {
+    match (a, b) {
+        (Claim::Lines(a), Claim::Lines(b)) => a
+            .iter()
+            .any(|r| b.iter().any(|s| r.start <= s.end && s.start <= r.end)),
+        _ => true,
+    }
+}
+
 fn commit_label(commit: &PlannedCommit, index: usize) -> String {
     commit
         .id
@@ -135,7 +173,7 @@ fn analyze_commit(
     commit_label: &str,
     scan: &ScanResult,
     scan_paths: &BTreeSet<String>,
-    coverage: &mut BTreeMap<String, BTreeSet<String>>,
+    coverage: &mut BTreeMap<String, Vec<(String, Claim)>>,
     unsafe_selectors: &mut Vec<UnsafeSelector>,
     unknown_paths: &mut BTreeSet<String>,
     unknown_hunk_ids: &mut Vec<UnknownHunkId>,
@@ -182,10 +220,14 @@ fn analyze_commit(
                     if let Some(hunk) = file.hunks.get(*idx)
                         && !excluded.contains(&hunk.hunk_id)
                     {
+                        let claim = match &spec {
+                            SelectionSpec::Lines { ranges, .. } => Claim::Lines(ranges.clone()),
+                            _ => Claim::Whole,
+                        };
                         coverage
                             .entry(hunk.hunk_id.clone())
                             .or_default()
-                            .insert(commit_label.to_owned());
+                            .push((commit_label.to_owned(), claim));
                     }
                 }
             }

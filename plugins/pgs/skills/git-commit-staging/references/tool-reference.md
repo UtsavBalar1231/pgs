@@ -137,4 +137,5 @@ stage, unstage, or commit. `pgs_plan_apply` does both, one planned commit at a
 time, in order. Hunk IDs in the plan come from the scan the plan was built on;
 `pgs_plan_apply` follows each one across the earlier commits of the same run, so
 an earlier commit in the same file does not strand a later hunk ID. Line ranges
-name workdir lines, which committing does not move.
+name workdir lines, which committing does not move, so disjoint ranges can split
+one hunk across planned commits; ranges that intersect count as an overlap.

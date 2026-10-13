@@ -132,6 +132,29 @@ fn plan_apply_follows_a_hunk_id_shifted_by_an_earlier_commit() {
 }
 
 #[test]
+fn plan_apply_splits_one_hunk_across_commits_by_line_range() {
+    let (dir, repo) = setup_repo();
+    let base = (1..=20).fold(String::new(), |base, n| base + &format!("l{n}\n"));
+    commit_file(&repo, dir.path(), "f.txt", &base, "add f");
+    let edited = base.replace("l4\n", "l4\nA\n").replace("l6\n", "l6\nB\n");
+    write_file(dir.path(), "f.txt", &edited);
+    assert_eq!(hunk_ids(dir.path()).len(), 1, "fixture must be one hunk");
+    let plan = json!({"commits": [
+        {"selections": ["f.txt:5-5"], "message": "feat: a"},
+        {"selections": ["f.txt:8-8"], "message": "feat: b"}
+    ]});
+
+    let (code, out) = apply(dir.path(), &plan, &[]);
+
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(
+        file_at(dir.path(), "HEAD~1", "f.txt"),
+        base.replace("l4\n", "l4\nA\n")
+    );
+    assert_eq!(file_at(dir.path(), "HEAD", "f.txt"), edited);
+}
+
+#[test]
 fn plan_apply_ignores_an_exclude_whose_hunk_an_earlier_commit_took() {
     let (dir, _repo, edited) = two_hunk_file();
     let ids = hunk_ids(dir.path());

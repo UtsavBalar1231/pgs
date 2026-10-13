@@ -659,6 +659,14 @@ JSON envelope:
 }
 ```
 
+`overlaps` lists hunks that two planned commits could both take. A file or
+hunk selector claims every change in a hunk; a line range claims only the
+workdir lines it names. Disjoint line ranges in one hunk never overlap — a
+replaced line goes with the addition that replaces it, and a pure deletion
+needs one range covering the surviving lines on both sides — so splitting one
+hunk across commits is a set of disjoint ranges. Ranges that intersect, or a
+range and a file or hunk selector on the same hunk, overlap.
+
 `unsafe_selectors[*].reason` values currently emitted:
 - `spans_hunk_boundary` — a `path:A-B` range intersects two or more hunks.
 - `invalid_selection` — the selector failed positional auto-detection.

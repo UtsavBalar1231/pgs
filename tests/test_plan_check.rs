@@ -778,3 +778,56 @@ fn plan_check_subtracts_excluded_hunks_from_a_commits_coverage() {
 
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 }
+
+/// Twenty lines with additions after lines 4 and 6: one hunk, two changes.
+fn one_hunk_two_additions(dir: &std::path::Path, repo: &git2::Repository) {
+    let base: String = (1..=20).fold(String::new(), |mut s, n| {
+        let _ = writeln!(s, "l{n}");
+        s
+    });
+    commit_file(repo, dir, "f.rs", &base, "initial");
+    write_file(
+        dir,
+        "f.rs",
+        &base.replace("l4\n", "l4\nA\n").replace("l6\n", "l6\nB\n"),
+    );
+}
+
+/// Line ranges split a hunk between commits. Disjoint ranges cannot claim the
+/// same change, so they do not overlap even though they share the hunk.
+#[test]
+fn plan_check_accepts_disjoint_line_ranges_in_one_hunk() {
+    let (dir, repo) = setup_repo();
+    one_hunk_two_additions(dir.path(), &repo);
+    assert_eq!(scan_hunk_count(dir.path()), 1, "fixture must be one hunk");
+    let plan = json!({"commits": [
+        {"id": "a", "selections": ["f.rs:5-5"]},
+        {"id": "b", "selections": ["f.rs:8-8"]}
+    ]});
+
+    let (code, stdout, stderr) = run_plan_check_stdin(dir.path(), &plan.to_string(), &[]);
+
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+}
+
+#[test]
+fn plan_check_reports_intersecting_line_ranges_in_one_hunk() {
+    let (dir, repo) = setup_repo();
+    one_hunk_two_additions(dir.path(), &repo);
+    let plan = json!({"commits": [
+        {"id": "a", "selections": ["f.rs:5-6"]},
+        {"id": "b", "selections": ["f.rs:6-8"]}
+    ]});
+
+    let (code, stdout, _) = run_plan_check_stdin(dir.path(), &plan.to_string(), &[]);
+    let out: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(out["overlaps"][0]["commits"], json!(["a", "b"]));
+}
+
+fn scan_hunk_count(dir: &std::path::Path) -> usize {
+    let scan = run_pgs(dir, &["scan"]).success();
+    let scan: Value = serde_json::from_slice(&scan.get_output().stdout).unwrap();
+    scan["files"][0]["hunks"].as_array().unwrap().len()
+}
