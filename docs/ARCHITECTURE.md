@@ -434,24 +434,17 @@ Ids have the form `backup-<UTC YYYYmmddTHHMMSS>-<micros>-<pid>-<seq>` and sort i
 order. The per-process sequence number keeps backups taken in the same microsecond distinct
 and ordered; the pid keeps concurrent pgs processes apart.
 
+**Restore.** `restore_backup` writes through `index.lock`, as git and libgit2 do for
+every index write: it waits for a held lock like a mutation does, creates the lock file
+exclusively, writes and syncs the snapshot into it, and renames it over `index`. A restore
+that cannot take the lock fails with `IndexLocked`, which `rollback` reports as
+`RestoreFailed` with the backup id, leaving the other writer's lock in place.
+
 **Retention.** After a backup is written, `prune_backups` keeps the newest
 `BACKUPS_RETAINED` (50) `backup-*.index` files and deletes the rest, along with any
 `backup-*.json` sidecars written by older pgs versions. The backup just taken is never
 pruned. Pruning is best-effort: a failure to delete an old file is ignored and does not fail
 the staging operation.
-
-## Deferred / future work
-
-The following are known gaps that are **not** addressed in the current codebase. They are
-recorded here so they are not forgotten and so maintainers can make informed decisions before
-enabling concurrent or long-running use cases.
-
-**Index lock during restore** — `backup::restore_backup` (`src/safety/backup.rs`) writes
-the restored index via a plain `fs::write` with no lock file. A concurrent git process could
-read or write `index` while the restore is in progress. Full atomicity would require acquiring
-`index.lock` for the duration of the restore write, then releasing it — matching the protocol
-libgit2 and git itself use. `PgsError::RestoreFailed` (`src/error.rs`) now surfaces restore
-errors to the caller, but the lock-during-restore protocol is not yet implemented.
 
 ## Verification Expectations
 

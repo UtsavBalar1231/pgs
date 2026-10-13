@@ -1,7 +1,9 @@
 use crate::error::PgsError;
+use crate::safety::lock;
 use chrono::Utc;
 use git2::Repository;
 use std::fs;
+use std::io::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -143,15 +145,39 @@ pub fn restore_backup(repo: &Repository, backup_id: &str) -> Result<(), PgsError
 
     let backup_content = fs::read(&backup_file).map_err(|e| PgsError::io(&backup_file, e))?;
     let index_path = repo.path().join("index");
-    if backup_content.is_empty() {
-        return match fs::remove_file(&index_path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(PgsError::io(&index_path, e)),
-            _ => Ok(()),
-        };
-    }
-    fs::write(&index_path, backup_content).map_err(|e| PgsError::io(&index_path, e))?;
+    let lock_path = repo.path().join("index.lock");
+    // Take the lock git and libgit2 take for every index write, so no other
+    // writer interleaves with the restore and no reader sees a partial index.
+    lock::wait_for_lock_release(repo, 5)?;
+    let mut lock_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => PgsError::IndexLocked,
+            _ => PgsError::io(&lock_path, e),
+        })?;
 
-    Ok(())
+    let written = if backup_content.is_empty() {
+        drop(lock_file);
+        match fs::remove_file(&index_path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(PgsError::io(&index_path, e)),
+            _ => fs::remove_file(&lock_path).map_err(|e| PgsError::io(&lock_path, e)),
+        }
+    } else {
+        lock_file
+            .write_all(&backup_content)
+            .and_then(|()| lock_file.sync_all())
+            .map_err(|e| PgsError::io(&lock_path, e))
+            .and_then(|()| {
+                drop(lock_file);
+                fs::rename(&lock_path, &index_path).map_err(|e| PgsError::io(&index_path, e))
+            })
+    };
+    if written.is_err() {
+        let _ = fs::remove_file(&lock_path);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -241,6 +267,32 @@ mod tests {
         restore_backup(&repo, &info).expect("restore_backup failed");
         let restored = fs::read(&index_path).unwrap();
         assert_eq!(restored, original, "restored index must match original");
+    }
+
+    #[test]
+    fn restore_backup_refuses_while_another_writer_holds_the_index_lock() {
+        let (_temp, repo) = setup_test_repo();
+        let index_path = repo.path().join("index");
+        let lock_path = repo.path().join("index.lock");
+        let backup = create_backup(&repo).unwrap();
+        fs::write(&index_path, b"written by a failed stage").unwrap();
+        fs::write(&lock_path, b"held by git").unwrap();
+
+        let err = restore_backup(&repo, &backup).unwrap_err();
+
+        assert!(matches!(err, PgsError::IndexLocked), "got: {err}");
+        assert_eq!(fs::read(&index_path).unwrap(), b"written by a failed stage");
+        assert_eq!(fs::read(&lock_path).unwrap(), b"held by git");
+    }
+
+    #[test]
+    fn restore_backup_releases_the_index_lock_it_takes() {
+        let (_temp, repo) = setup_test_repo();
+        let backup = create_backup(&repo).unwrap();
+
+        restore_backup(&repo, &backup).unwrap();
+
+        assert!(!repo.path().join("index.lock").exists());
     }
 
     #[test]
