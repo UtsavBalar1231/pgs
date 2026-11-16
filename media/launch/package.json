@@ -1,0 +1,41 @@
+{
+  "name": "pgs-launch",
+  "version": "1.0.0",
+  "description": "The editable pgs launch film and presentation assets",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/UtsavBalar1231/pgs.git",
+    "directory": "media/launch"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "private": true,
+  "dependencies": {
+    "@primer/octicons-react": "19.42.0",
+    "@remotion/cli": "4.0.544",
+    "@remotion/fonts": "4.0.544",
+    "@remotion/media": "4.0.544",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.544"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@types/react": "19.3.0",
+    "@types/web": "0.0.166",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio --no-open --port 3210",
+    "build": "remotion bundle",
+    "check": "biome check . && tsc --noEmit",
+    "audio": "node scripts/score.mjs && ffmpeg -y -hide_banner -loglevel error -i out/score.wav -af volume=0.72 -c:a aac -b:a 192k public/score.m4a",
+    "render": "remotion render src/index.ts PgsLaunch out/pgs-launch.mp4 --codec h264 --pixel-format yuv420p --crf 18",
+    "poster": "remotion still src/index.ts PgsLaunch ../../docs/assets/launch-poster.png --frame 435",
+    "social": "remotion still src/index.ts SocialCard ../../docs/assets/social-card.png",
+    "social-video": "remotion render src/index.ts PgsSocial out/pgs-social.mp4 --codec h264 --pixel-format yuv420p --crf 18",
+    "verify-demo": "node scripts/verify-demo.mjs"
+  }
+}

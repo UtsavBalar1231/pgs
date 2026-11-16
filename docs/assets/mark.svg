@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 80 80" fill="none">
+  <title>pgs — selected changes become a focused commit</title>
+  <rect width="80" height="80" rx="12" fill="#0d1117"/>
+  <g transform="translate(5 5) scale(.875)">
+    <path d="M8 18H30L52 40H66M8 40H66M8 62H30L52 40" stroke="#4493f8" stroke-width="7"/>
+    <rect x="59" y="32" width="16" height="16" rx="3" fill="#4493f8"/>
+  </g>
+</svg>
