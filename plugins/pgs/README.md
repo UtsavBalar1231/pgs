@@ -1,12 +1,35 @@
 # pgs
 
-pgs stages git changes at file, hunk, and line granularity without a TTY, so an
-AI agent can build clean, atomic commits from a messy working tree. `git add -p`
-needs an interactive terminal; pgs gives every change a content-addressed hunk ID
-and stages it directly into the index, with an automatic backup that is restored
-if an operation fails.
+**Big ideas. Small commits.**
+
+Precise Git staging for coding agents. pgs helps your agent turn a mixed working
+tree into focused commits, selecting whole files, individual hunks, or exact
+lines. Preview a selection before staging it, check for file drift with scan
+checksums, and work through a local MCP server backed by libgit2.
 
 This plugin installs the `pgs-mcp` MCP server and the `git-commit-staging` skill.
+
+## Get started
+
+In Claude Code:
+
+```text
+/plugin marketplace add UtsavBalar1231/pgs
+/plugin install pgs@pgs-marketplace
+```
+
+In a terminal, for Codex:
+
+```bash
+codex plugin marketplace add UtsavBalar1231/pgs
+codex plugin add pgs@pgs-marketplace
+```
+
+Then ask: **“Use pgs to inspect my changes and propose focused commits.
+Show me the plan before committing.”**
+
+[Other agents and editors](https://github.com/UtsavBalar1231/pgs/blob/main/docs/INTEGRATIONS.md)
+· [CLI guide](https://github.com/UtsavBalar1231/pgs/blob/main/docs/USAGE.md)
 
 ## MCP tools
 
@@ -28,7 +51,7 @@ This plugin installs the `pgs-mcp` MCP server and the `git-commit-staging` skill
 
 `git-commit-staging` teaches the agent the scan, stage, and commit workflow, how
 to pick the narrowest selector, and how to write well-formed commit messages. It
-is preferred over raw `git add -p`, which an agent cannot drive.
+uses explicit selectors instead of positional answers to interactive prompts.
 
 ## First launch
 
