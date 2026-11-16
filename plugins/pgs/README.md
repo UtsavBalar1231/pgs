@@ -1,7 +1,5 @@
 # pgs
 
-**Big ideas. Small commits.**
-
 Precise Git staging for coding agents. pgs helps your agent turn a mixed working
 tree into focused commits, selecting whole files, individual hunks, or exact
 lines. Preview a selection before staging it, check for file drift with scan

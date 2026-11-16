@@ -8,7 +8,7 @@ export const Inspect = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   return (
-    <Stage label="01 / THE AGENT INSPECTS & PREVIEWS">
+    <Stage label="01 / PREVIEW">
       <div
         style={{
           position: "absolute",
@@ -25,8 +25,8 @@ export const Inspect = () => {
           ),
         }}
       >
-        The whole diff.{" "}
-        <span style={{ color: p.accent }}>One precise selection.</span>
+        The agent previews{" "}
+        <span style={{ color: p.accent }}>the auth fix.</span>
       </div>
       <Camera
         poses={[

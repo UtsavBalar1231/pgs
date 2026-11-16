@@ -31,10 +31,13 @@ Agent integrations are named in text.
 
 ## Other artwork and text
 
-The film's pgs mark is original vector artwork shared with `docs/assets/mark.svg`.
-The separate staged-patch icon and Lottie live in `docs/assets/pgs-icon/`;
-their geometry is also original. See that folder's README for motion references.
-Neither mark is an Octicon. Window controls and rules are simple CSS
+The film uses the approved staged-patch icon throughout. `public/pgs-mark.svg`
+and `docs/assets/mark.svg` contain its original geometry with a tighter viewBox
+for small placements. The full SVG and editable Lottie live in
+`docs/assets/pgs-icon/`. `public/pgs-icon-reveal.webp` is a lossless transparent
+animation made from native Skottie frame exports; the introduction plays it
+once and holds the final frame. See the icon kit's README for motion references.
+The pgs icon is not an Octicon. Window controls and rules are simple CSS
 geometry; they do not depend on font glyphs. Source diff prefixes and headers
 use literal ASCII `+`, `-`, and `@@`. The file-status `M` remains normal Git
 notation. Middle dots and the ellipsis are typography, not substitute icons.

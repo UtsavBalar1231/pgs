@@ -4,7 +4,7 @@ import { Camera } from "./Camera";
 import { StagingDesk } from "./StagingDesk";
 
 export const Select = () => (
-  <Stage label="02 / THE AGENT STAGES THE FIX">
+  <Stage label="02 / STAGE">
     <div
       style={{
         position: "absolute",
@@ -15,7 +15,7 @@ export const Select = () => (
         letterSpacing: -4,
       }}
     >
-      Only the fix <span style={{ color: p.green }}>goes in.</span>
+      The agent stages <span style={{ color: p.green }}>line 2.</span>
     </div>
     <Camera
       poses={[

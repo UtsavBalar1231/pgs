@@ -13,10 +13,11 @@ workspace, and camera moves that settle for reading.
 | [Square film](assets/pgs-social.mp4) | 12 seconds, 1080×1080. Social feeds and compact embeds. |
 | [Social card](assets/social-card.png) | 1280×640. GitHub social preview, link cards, README banner. |
 | [Poster](assets/launch-poster.png) | 1920×1080. Thumbnail showing the agent previewing the exact selected line. |
-| [Selection mark](assets/mark.svg) | Scalable project avatar and icon. |
+| [Staged-patch mark](assets/mark.svg) | Scalable project icon used throughout the films and artwork. |
 | [Staged-patch icon kit](assets/pgs-icon/README.md) | Orange illustrated icon, SVG, transparent PNG, editable Lottie, GIF and MP4 previews. |
 | [Editable source](../media/launch/README.md) | Remotion scenes, local fonts, original synthesized score. |
 | [Creative research](../media/launch/CREATIVE.md) | Sources, rationale, storyboard, and technical truth. |
+| [On-screen transcript](../media/launch/TRANSCRIPT.md) | Headlines and supporting copy for both cuts. |
 
 Both films have original sound and music, no voiceover, and readable on-screen
 copy. The screen layouts illustrate verified behavior; they are not a recording

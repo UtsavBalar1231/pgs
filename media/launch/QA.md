@@ -66,3 +66,17 @@ used for the PNG, GIF, and MP4. `node --check scripts/staged-patch.mjs` and
 The publication check rebuilt `pgs-mcp` from the current source and reran the
 MCP scenario against that executable. Its hunk ID is `d46b3c1640d6`; the film,
 poster, and social exports were regenerated after updating that displayed ID.
+
+## Final branding and copy
+
+The staged-patch icon appears in every film logo position, the poster, and the
+social card. The introduction plays its transparent Skottie frame export.
+Two independent renders of Meet frame 32 are byte-identical, including the
+moving patch. Both full exports decode without errors. Chromium plays the
+landscape MP4 at 1920×1080 for 35.008 seconds without a media error.
+
+The final contact sheets cover both cuts. Native-size opening and ending
+frames show the revised copy fitting its layouts. `TRANSCRIPT.md` records
+the on-screen wording; technical commands, selectors, and code retain their
+literal values. The score, six-scene timings, and workspace cameras are
+unchanged. `pnpm check`, Markdown link resolution, and `git diff --check` pass.

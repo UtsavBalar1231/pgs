@@ -4,7 +4,7 @@ import { AgentTui } from "./AgentTui";
 import { Camera } from "./Camera";
 
 export const Opening = () => (
-  <Stage label="YOUR AGENT HAS BEEN BUSY.">
+  <Stage label="AUTH FIX / src/auth.rs">
     <Camera
       poses={[
         { at: 0, x: 40, y: 70, zoom: 0.87, tilt: 11, yaw: -24, roll: 7 },
@@ -26,9 +26,9 @@ export const Opening = () => (
         letterSpacing: -8,
       }}
     >
-      <div>Big ideas.</div>
+      <div>That log</div>
       <Reveal delay={0.45}>
-        <span style={{ color: p.accent }}>Messy diff.</span>
+        <span style={{ color: p.accent }}>can wait.</span>
       </Reveal>
     </div>
     <div
@@ -41,9 +41,9 @@ export const Opening = () => (
         lineHeight: 1.6,
       }}
     >
-      Your agent fixed the bug.
+      The auth fix and a debug statement
       <br />
-      The debug line came along.
+      ended up in the same hunk.
     </div>
     <div
       style={{
@@ -55,7 +55,7 @@ export const Opening = () => (
         color: p.muted,
       }}
     >
-      1 FILE / 1 HUNK / 2 INTENTIONS
+      2 CHANGES IN THE SAME HUNK
     </div>
   </Stage>
 );

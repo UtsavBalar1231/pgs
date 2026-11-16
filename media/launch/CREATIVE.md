@@ -1,4 +1,4 @@
-# Big ideas. Small commits.
+# That log can wait.
 
 A 35-second, dark product film for a tool used by coding agents. The six-part
 edit follows the original launch film's pace and electronic score: a mixed diff,
@@ -14,7 +14,9 @@ The authored tokens match the fetched CSS: default `#0d1117`, muted surface
 `#151b23`, inset `#010409`, foreground `#f0f6fc`, muted foreground `#9198a1`,
 accent `#4493f8`, success `#3fb950`, danger `#f85149`, purple `#ab7df8`, and
 border `#3d444d`. The introduction and CTA use GitHub blue `#1f6feb`.
-Instrument Sans supplies the large type. JetBrains Mono supplies the workspace;
+The orange staged-patch icon appears in the headers, introduction, ending, and
+social card. Its approved animation plays in the introduction. Instrument Sans
+supplies the large type. JetBrains Mono supplies the workspace;
 code ligatures are disabled to preserve literal source and TUI alignment.
 
 This is an independent project's presentation. It does not claim GitHub
@@ -25,12 +27,12 @@ than a new graphical interface shipped by pgs.
 
 | Time | Scene | Camera and action |
 |------|-------|-------------------|
-| 0–4.5s | Big ideas. Messy diff. | Large type beside a drifting, angled agent workspace. |
-| 4.5–8s | Meet pgs. | Blue brand cut, large type, selection-to-commit mark. |
-| 8–15.5s | The agent inspects and previews | Oblique entry; settle face-on for reading; push into the exact selected line; pull back to the tool inspector. |
-| 15.5–22.5s | Only the fix goes in | Reverse-angle entry; selected line crosses from working tree to index; camera tracks the staged result, then returns wide. |
-| 22.5–28s | The agent checks the result | Pull out to committed and unstaged results side by side, plus a commit graph. |
-| 28–35s | Big ideas. Small commits. | Large type, blue CTA, agent integrations, repository URL. |
+| 0–4.5s | That log can wait. | The auth fix and debug log share a hunk; large type beside an angled workspace. |
+| 4.5–8s | pgs | Blue brand cut, staged-patch animation, Git staging for coding agents. |
+| 8–15.5s | The agent previews the auth fix. | Oblique entry; settle face-on for reading; push into the exact selected line; pull back to the tool inspector. |
+| 15.5–22.5s | The agent stages line 2. | Reverse-angle entry; selected line crosses from working tree to index; camera tracks the staged result, then returns wide. |
+| 22.5–28s | The auth fix is committed. | Pull out to committed and unstaged results side by side, plus a commit graph. |
+| 28–35s | Let your agent stage the fix. | Large type, approved patch icon, Install pgs CTA, agent integrations, repository URL. |
 
 Camera paths live on their scene components as explicit timed poses. The shared
 camera interpolates translation, zoom, tilt, yaw, and roll. It settles into
@@ -52,6 +54,13 @@ initializes a session and calls `pgs_scan`, `pgs_stage` with `dry_run` and
 `d46b3c1640d6`; line 2 is the fix and line 6 is the debug statement. Only the
 replacement is committed. The final scan contains only the debug addition.
 The film uses `/repo` as its illustrative repository path.
+
+## On-screen copy
+
+[TRANSCRIPT.md](TRANSCRIPT.md) records the headlines and supporting text for
+both cuts. The copy follows the auth-fix example through preview, staging, and
+commit. Technical tool names, source code, and selectors retain their literal
+values. There is no voiceover.
 
 ## Sound
 

@@ -14,7 +14,7 @@ export const Launch = () => {
       <Audio src={staticFile("score.m4a")} premountFor={fps} volume={1} />
       <Series>
         <Series.Sequence
-          name="Big ideas, messy diff"
+          name="Auth fix and debug log"
           durationInFrames={4.5 * fps}
           premountFor={fps}
         >

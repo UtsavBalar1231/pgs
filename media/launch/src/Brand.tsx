@@ -32,9 +32,9 @@ export const Brand = () => (
         letterSpacing: -6,
       }}
     >
-      Big ideas.
+      Let your agent
       <br />
-      <span style={{ color: p.green }}>Small commits.</span>
+      <span style={{ color: p.green }}>stage the fix.</span>
     </div>
     <div style={{ position: "absolute", right: 75, top: 202 }}>
       <Mark size={240} />
@@ -52,7 +52,9 @@ export const Brand = () => (
         alignItems: "center",
       }}
     >
-      <span style={{ fontSize: 25 }}>Precise Git tools for coding agents.</span>
+      <span style={{ fontSize: 25 }}>
+        File, hunk, and line staging over MCP.
+      </span>
       <span style={{ fontFamily: fonts.code, fontSize: 17, color: p.muted }}>
         MCP + AGENT SKILL
       </span>

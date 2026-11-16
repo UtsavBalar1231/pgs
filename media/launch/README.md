@@ -1,11 +1,13 @@
 # pgs launch film
 
-**Big ideas. Small commits.** A dark product film showing a coding agent
+A dark product film showing a coding agent
 using pgs MCP tools to commit a fix and leave a debug statement local.
 
 [Watch the 35-second film](../../docs/assets/pgs-launch.mp4) ·
 [12-second square cut](../../docs/assets/pgs-social.mp4) ·
 [Creative direction and research](CREATIVE.md)
+
+[On-screen transcript](TRANSCRIPT.md)
 
 ![The agent previews the selected fix in its workspace.](../../docs/assets/launch-poster.png)
 
@@ -60,3 +62,6 @@ SVG, transparent PNG, self-contained Lottie JSON, and playback previews.
 editable scene to `out/skottie-player/public/projects/pgs/scene-7/lottie.json`
 and an export copy under `out/staged-patch/`. The official Skottie player is
 installed separately under `out/skottie-player/` for previewing and color edits.
+The film plays `public/pgs-icon-reveal.webp`, exported from Skottie, in its
+introduction. Its other placements use `public/pgs-mark.svg`. Re-export these
+assets after editing the icon's geometry, palette, or animation.

@@ -188,7 +188,7 @@ export const AgentTui = ({ phase = "scan" }: { readonly phase?: Phase }) => (
         <div style={{ padding: "25px 24px", color: p.muted, fontSize: 16 }}>
           1 hunk ·
           {phase === "scan"
-            ? "2 intentions"
+            ? "auth fix + debug log"
             : "line 2 selected / debug excluded"}
         </div>
       </div>
@@ -205,13 +205,13 @@ export const AgentTui = ({ phase = "scan" }: { readonly phase?: Phase }) => (
         fontSize: 15,
       }}
     >
-      <span>pgs / structured tool results</span>
+      <span>pgs / local MCP server</span>
       <span style={{ color: p.accent }}>
         {phase === "scan"
           ? "INSPECT"
           : phase === "preview"
             ? "DRY RUN · INDEX UNCHANGED"
-            : "PRECISE SELECTION"}
+            : "LINE 2 SELECTED"}
       </span>
       <span>UTF-8 · Rust · LF</span>
     </div>

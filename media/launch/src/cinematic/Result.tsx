@@ -6,7 +6,7 @@ import { Indicator } from "./Indicator";
 import { TuiChrome } from "./TuiChrome";
 
 export const Result = () => (
-  <Stage label="03 / THE AGENT CHECKS THE RESULT">
+  <Stage label="03 / CHECK">
     <div
       style={{
         position: "absolute",
@@ -17,7 +17,7 @@ export const Result = () => (
         letterSpacing: -5,
       }}
     >
-      Clean commit. <span style={{ color: p.muted }}>Debug stays local.</span>
+      The auth fix is <span style={{ color: p.green }}>committed.</span>
     </div>
     <Camera
       poses={[
@@ -84,7 +84,7 @@ export const Result = () => (
                 pgs_scan / still unstaged
               </div>
               <div style={{ fontSize: 34, marginTop: 33, lineHeight: 1.5 }}>
-                The debug statement.
+                Debug line
               </div>
               <div
                 style={{
@@ -98,7 +98,7 @@ export const Result = () => (
                 + eprintln!("debug: auth check");
               </div>
               <div style={{ color: p.muted, fontSize: 18, marginTop: 24 }}>
-                Left in the working tree. Out of the commit.
+                Still unstaged in src/auth.rs.
               </div>
             </div>
           </div>
@@ -122,7 +122,7 @@ export const Result = () => (
       <span style={{ color: p.purple }}>main</span>
       <span style={{ width: 110, height: 2, background: p.rule }} />
       <GitCommitIcon size={29} fill={p.green} aria-hidden="true" />
-      <span>one intention / one commit</span>
+      <span>fix: reject blank tokens</span>
     </div>
   </Stage>
 );

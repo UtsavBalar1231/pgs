@@ -1,6 +1,6 @@
 # pgs
 
-![Big ideas. Small commits. Precise Git tools for coding agents.](docs/assets/social-card.png)
+![Let your agent stage the fix. Git staging over MCP.](docs/assets/social-card.png)
 
 [![CI](https://github.com/UtsavBalar1231/pgs/actions/workflows/ci.yml/badge.svg)](https://github.com/UtsavBalar1231/pgs/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/UtsavBalar1231/pgs)](https://github.com/UtsavBalar1231/pgs/releases/latest)

@@ -60,13 +60,12 @@ export const Social = () => {
               fontWeight: 700,
             }}
           >
-            Big ideas.
+            Let your agent
             <br />
-            <span style={{ color: p.green }}>
-              Small
-              <br />
-              commits.
-            </span>
+            <span style={{ color: p.green }}>stage the fix.</span>
+          </div>
+          <div style={{ position: "absolute", right: 70, top: 510 }}>
+            <Mark size={210} />
           </div>
           <div
             style={{
@@ -84,8 +83,7 @@ export const Social = () => {
               fontWeight: 600,
             }}
           >
-            Add pgs to your agent.{" "}
-            <ArrowUpRightIcon size={33} aria-hidden="true" />
+            Install pgs <ArrowUpRightIcon size={33} aria-hidden="true" />
           </div>
           <div
             style={{
@@ -114,15 +112,15 @@ export const Social = () => {
           >
             {scanning ? (
               <>
-                Big ideas.
+                That log
                 <br />
-                <span style={{ color: p.accent }}>Messy diff.</span>
+                <span style={{ color: p.accent }}>can wait.</span>
               </>
             ) : (
               <>
-                Your agent.
+                Stage the
                 <br />
-                <span style={{ color: p.accent }}>Precise Git.</span>
+                <span style={{ color: p.accent }}>auth fix.</span>
               </>
             )}
           </div>
@@ -161,17 +159,11 @@ export const Social = () => {
             }}
           >
             {scanning ? (
-              <>
-                <span>Your intent</span>
-                <ArrowRightIcon size={23} aria-hidden="true" />
-                <span>your agent</span>
-                <ArrowRightIcon size={23} aria-hidden="true" />
-                <span>pgs</span>
-              </>
+              <span>The auth fix and debug log share a hunk.</span>
             ) : staged ? (
               <>
                 <Indicator state="complete" size={25} />
-                <span>fix selected · debug stays local</span>
+                <span>Auth fix staged; debug line still unstaged.</span>
               </>
             ) : (
               <>

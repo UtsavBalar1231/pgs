@@ -11,7 +11,7 @@ export const StagingDesk = () => {
   const staged = progress === 1;
   return (
     <TuiChrome
-      title="agent / precise staging"
+      title="agent / staging"
       status={staged ? "SELECTION STAGED" : "PGS_STAGE"}
       state={staged ? "complete" : "running"}
     >
@@ -96,10 +96,10 @@ export const StagingDesk = () => {
               }}
             >
               <Indicator state="complete" size={25} />
-              One intention staged
+              Auth fix staged
             </div>
             <div style={{ color: p.muted, fontSize: 19, marginTop: 18 }}>
-              1 replacement / debug excluded
+              The debug line is still unstaged.
             </div>
           </div>
         </div>

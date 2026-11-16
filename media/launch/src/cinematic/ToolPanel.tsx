@@ -5,10 +5,10 @@ import { Indicator } from "./Indicator";
 export type Phase = keyof typeof agentCalls;
 const steps = { scan: 0, preview: 1, stage: 2, commit: 3 } as const;
 const labels = {
-  scan: "Inspect changes",
-  preview: "Preview the fix",
-  stage: "Stage one intention",
-  commit: "Create focused commit",
+  scan: "Read the diff",
+  preview: "Preview the auth fix",
+  stage: "Stage line 2",
+  commit: "Commit the auth fix",
 } as const;
 
 export const ToolPanel = ({ phase }: { readonly phase: Phase }) => (
@@ -35,7 +35,7 @@ export const ToolPanel = ({ phase }: { readonly phase: Phase }) => (
     >
       Commit the auth fix.
       <br />
-      Leave the debug unstaged.
+      Leave the debug line unstaged.
     </div>
     <div style={{ marginTop: 26 }}>
       {(["scan", "preview", "stage", "commit"] as const).map((step) => (

@@ -3,7 +3,7 @@ import { fonts, palette as p } from "../design";
 import { Mark, Reveal, Stage } from "../elements";
 
 export const End = () => (
-  <Stage label="GIT TOOLS FOR YOUR CODING AGENT">
+  <Stage label="GIT STAGING OVER MCP">
     <div
       style={{
         position: "absolute",
@@ -15,9 +15,9 @@ export const End = () => (
         lineHeight: 1.05,
       }}
     >
-      <Reveal>Big ideas.</Reveal>
+      <Reveal>Let your agent</Reveal>
       <Reveal delay={0.15}>
-        <span style={{ color: p.green }}>Small commits.</span>
+        <span style={{ color: p.green }}>stage the fix.</span>
       </Reveal>
     </div>
     <div style={{ position: "absolute", right: 130, top: 235 }}>
@@ -32,7 +32,7 @@ export const End = () => (
         color: p.muted,
       }}
     >
-      Give your agent precise Git tools. Keep every commit focused.
+      pgs can stage a single line from a mixed diff.
     </div>
     <div style={{ position: "absolute", top: 711, left: 88, right: 88 }}>
       <div
@@ -48,8 +48,7 @@ export const End = () => (
           gap: 18,
         }}
       >
-        Add pgs to your coding agent.{" "}
-        <ArrowUpRightIcon size={40} aria-hidden="true" />
+        Install pgs <ArrowUpRightIcon size={40} aria-hidden="true" />
       </div>
       <div
         style={{

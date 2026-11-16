@@ -1,34 +1,23 @@
 import type { CSSProperties, ReactNode } from "react";
 import {
   AbsoluteFill,
+  CanvasImage,
   interpolate,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 import { fonts, motion, palette as p } from "./design";
 
-export const Mark = ({
-  size = 56,
-  color = p.accent,
-}: {
-  readonly size?: number;
-  readonly color?: string;
-}) => (
-  <svg
+export const Mark = ({ size = 56 }: { readonly size?: number }) => (
+  <CanvasImage
+    src={staticFile("pgs-mark.svg")}
+    aria-label="pgs staged-patch icon"
     width={size}
     height={size}
-    viewBox="0 0 80 80"
-    fill="none"
-    aria-label="pgs selection mark"
-  >
-    <title>Selected changes become a focused commit</title>
-    <path
-      d="M8 18H30L52 40H66M8 40H66M8 62H30L52 40"
-      stroke={color}
-      strokeWidth="7"
-    />
-    <rect x="59" y="32" width="16" height="16" rx="3" fill={color} />
-  </svg>
+    fit="contain"
+    style={{ width: size, height: size }}
+  />
 );
 
 export const Stage = ({

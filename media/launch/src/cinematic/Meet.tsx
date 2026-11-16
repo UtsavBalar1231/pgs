@@ -1,14 +1,13 @@
 import {
   AbsoluteFill,
-  interpolate,
-  useCurrentFrame,
+  AnimatedImage,
+  staticFile,
   useVideoConfig,
 } from "remotion";
-import { fonts, motion, palette as p } from "../design";
-import { Mark, Reveal } from "../elements";
+import { fonts, palette as p } from "../design";
+import { Reveal } from "../elements";
 
 export const Meet = () => {
-  const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   return (
     <AbsoluteFill
@@ -23,7 +22,7 @@ export const Meet = () => {
           fontSize: 20,
         }}
       >
-        PRECISE GIT TOOLS FOR CODING AGENTS
+        LOCAL MCP SERVER
       </div>
       <div
         style={{
@@ -36,18 +35,23 @@ export const Meet = () => {
           lineHeight: 1,
         }}
       >
-        <Reveal>meet pgs.</Reveal>
+        <Reveal>pgs</Reveal>
       </div>
       <div
         style={{
           position: "absolute",
           right: 110,
-          top: 243,
-          scale: interpolate(frame, [0, 0.7 * fps], [0.3, 1], motion),
-          rotate: `${interpolate(frame, [0, 0.7 * fps], [-15, 0], motion)}deg`,
+          top: 160,
         }}
       >
-        <Mark size={280} color={p.paper} />
+        <AnimatedImage
+          src={staticFile("pgs-icon-reveal.webp")}
+          width={460}
+          height={460}
+          style={{ width: 460, height: 460 }}
+          premountFor={fps}
+          loopBehavior="pause-after-finish"
+        />
       </div>
       <div
         style={{
@@ -59,12 +63,12 @@ export const Meet = () => {
           letterSpacing: -4,
         }}
       >
-        <Reveal delay={0.25}>Inspect. Select. Commit.</Reveal>
+        <Reveal delay={0.25}>Git staging for coding agents.</Reveal>
       </div>
       <div
         style={{ position: "absolute", left: 96, bottom: 136, fontSize: 31 }}
       >
-        Your agent gets precise control. You get focused commits.
+        Select a file, a hunk, or individual lines.
       </div>
       <div
         style={{
@@ -75,7 +79,7 @@ export const Meet = () => {
           fontSize: 18,
         }}
       >
-        FILES / HUNKS / LINES
+        pgs-mcp
       </div>
     </AbsoluteFill>
   );
