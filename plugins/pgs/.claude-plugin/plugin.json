@@ -2,7 +2,7 @@
   "name": "pgs",
   "displayName": "pgs",
   "version": "0.10.0",
-  "description": "Non-interactive git staging at file, hunk, and line granularity. MCP server + skill for structured commit workflows.",
+  "description": "Precise Git staging for coding agents. Select files, hunks, or exact lines through a local MCP server and an included workflow skill.",
   "author": {
     "name": "UtsavBalar1231",
     "url": "https://github.com/UtsavBalar1231"

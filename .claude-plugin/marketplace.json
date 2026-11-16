@@ -3,12 +3,12 @@
   "owner": {
     "name": "UtsavBalar1231"
   },
-  "description": "pgs - non-interactive git staging plugin for Claude Code",
+  "description": "Precise Git staging for coding agents. MCP server and workflow skill.",
   "plugins": [
     {
       "name": "pgs",
       "source": "./plugins/pgs",
-      "description": "Non-interactive git staging at file, hunk, and line granularity",
+      "description": "Precise Git staging for coding agents, by file, hunk, or line.",
       "version": "0.10.0",
       "author": {
         "name": "UtsavBalar1231",

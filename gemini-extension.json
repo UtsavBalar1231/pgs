@@ -1,7 +1,7 @@
 {
   "name": "pgs",
   "version": "0.10.0",
-  "description": "Non-interactive git staging at file, hunk, and line granularity",
+  "description": "Precise Git staging for coding agents, by file, hunk, or line.",
   "mcpServers": {
     "pgs": {
       "command": "sh",
