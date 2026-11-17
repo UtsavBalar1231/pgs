@@ -9,8 +9,8 @@ workspace, and camera moves that settle for reading.
 
 | Asset | Use |
 |-------|-----|
-| [Launch film](https://github.com/user-attachments/assets/b5857677-9546-4bdc-925d-8ab0b2f0b629) | 35 seconds, 1280×720, 2.38 MB. Project launches, talks, release announcements. |
-| [Square film](https://github.com/user-attachments/assets/ee51b137-6307-4a8f-aeb8-b6f4cadf6cae) | 12 seconds, 720×720, 0.52 MB. Social feeds and compact embeds. |
+| [Launch film](assets/pgs-launch.mp4) | 35 seconds, 1280×720, 2.38 MB. Project launches, talks, release announcements. |
+| [Square film](assets/pgs-social.mp4) | 12 seconds, 720×720, 0.52 MB. Social feeds and compact embeds. |
 | [Social card](assets/social-card.png) | 1280×640. GitHub social preview, link cards, README banner. |
 | [Poster](assets/launch-poster.png) | 1920×1080. Thumbnail showing the agent previewing the exact selected line. |
 | [Staged-patch mark](assets/mark.svg) | Scalable project icon used throughout the films and artwork. |

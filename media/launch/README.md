@@ -5,7 +5,13 @@ using pgs MCP tools to commit a fix and leave a debug statement local.
 
 https://github.com/user-attachments/assets/b5857677-9546-4bdc-925d-8ab0b2f0b629
 
-[12-second square cut](https://github.com/user-attachments/assets/ee51b137-6307-4a8f-aeb8-b6f4cadf6cae) ·
+<details>
+<summary>12-second square cut</summary>
+
+https://github.com/user-attachments/assets/ee51b137-6307-4a8f-aeb8-b6f4cadf6cae
+
+</details>
+
 [Creative direction and research](CREATIVE.md)
 
 [On-screen transcript](TRANSCRIPT.md)
