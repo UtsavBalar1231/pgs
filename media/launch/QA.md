@@ -12,8 +12,8 @@ CLI typing or shell installation commands.
 | Original sound | PASS | AAC recovered directly from `out/pgs-launch-v1.mp4`, played at unity gain. Final mean -23.2 dB and peak -6.6 dB match the original mix. |
 | Type and lint | PASS | `pnpm check`: Biome and strict `tsc --noEmit`. |
 | Packaging | PASS | `cargo test --test test_codex_plugin`: 8 passed; Codex manifest mirrors match. |
-| Main export | PASS | H.264, 1920×1080, 30 fps, 35 seconds, AAC audio. |
-| Social export | PASS | H.264, 1080×1080, 30 fps, 12 seconds, AAC audio. |
+| Main export | PASS | Web: H.264, 1280×720, 30 fps, 35 seconds, AAC audio. Local master: 1920×1080. |
+| Social export | PASS | Web: H.264, 720×720, 30 fps, 12 seconds, AAC audio. Local master: 1080×1080. |
 | Visual review | PASS | Final one-second contact sheets cover both films; full-size inspector, selected-line macro, staging transfer, result, ending, poster, and social card checked. |
 | Reading views | PASS | Camera settles face-on at native scale; tool arguments fit inside their sidebar; the title clears the macro shot. |
 | Motion | PASS | Wide oblique opening, frontal inspection, selected-line push-in, reverse staging view, tracked index, pullback, result reveal. |
@@ -80,3 +80,23 @@ frames show the revised copy fitting its layouts. `TRANSCRIPT.md` records
 the on-screen wording; technical commands, selectors, and code retain their
 literal values. The score, six-scene timings, and workspace cameras are
 unchanged. `pnpm check`, Markdown link resolution, and `git diff --check` pass.
+
+## Web delivery
+
+`pnpm web` exports the launch film at 2,380,272 bytes (previously 5,471,050)
+and the square cut at 523,918 bytes (previously 1,274,827). Both use H.264 Main
+Level 3.1, yuv420p, 30 fps, a maximum two-second keyframe interval, and AAC
+at 96 kb/s. The MP4 index precedes the media data. The existing masters remain
+in `out/`; rendering and web export are separate commands.
+
+Both complete exports decode without errors. The landscape export has SSIM
+0.9983 against the master resized to the same dimensions. The native 720p
+inspection frame was visually checked for readable code and UI labels.
+GitHub's Markdown API renders the bare attachment URL as a native video
+player with controls. Its signed media URL returns HTTP 206 for byte ranges.
+The initial MP4s already had fast-start metadata; the repository-file README
+link was the cause of opening the file viewer instead of an inline player.
+
+`out/evidence/web-delivery/` records export logs, metadata, comparison frames,
+Markdown rendering, and browser playback evidence. `pnpm check`, shell syntax,
+and `git diff --check` pass. No animation, copy, logo, or score was changed.

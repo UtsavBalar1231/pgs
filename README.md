@@ -24,8 +24,10 @@ src/auth.rs                         What belongs in this commit?
 + eprintln!("debug: auth check");    stays local
 ```
 
-[Watch the 35-second example](docs/assets/pgs-launch.mp4) ·
-[12-second social cut](docs/assets/pgs-social.mp4)
+https://github.com/user-attachments/assets/b5857677-9546-4bdc-925d-8ab0b2f0b629
+
+35-second walkthrough. Sound optional.
+[12-second square cut](https://github.com/user-attachments/assets/ee51b137-6307-4a8f-aeb8-b6f4cadf6cae)
 
 ## Install
 

@@ -36,6 +36,7 @@
     "poster": "remotion still src/index.ts PgsLaunch ../../docs/assets/launch-poster.png --frame 435",
     "social": "remotion still src/index.ts SocialCard ../../docs/assets/social-card.png",
     "social-video": "remotion render src/index.ts PgsSocial out/pgs-social.mp4 --codec h264 --pixel-format yuv420p --crf 18",
+    "web": "sh scripts/export-web.sh",
     "verify-demo": "node scripts/verify-demo.mjs"
   }
 }
