@@ -321,3 +321,162 @@ fn scan_distinguishes_replacing_a_line_from_keeping_it_and_adding_another() {
     assert_ne!(replaced["id"], appended["id"]);
     assert_ne!(replaced["checksum"], appended["checksum"]);
 }
+
+#[test]
+fn scan_nested_ignore_exception_lists_only_reincluded_files() {
+    let (dir, repo) = setup_repo();
+    write_file(dir.path(), ".git/info/exclude", "");
+    repo.config()
+        .unwrap()
+        .set_str(
+            "core.excludesFile",
+            repo.path().join("info/exclude").to_str().unwrap(),
+        )
+        .unwrap();
+
+    commit_file(&repo, dir.path(), ".gitignore", "dist/\n", "ignore dist");
+    commit_file(
+        &repo,
+        dir.path(),
+        "gui/.gitignore",
+        "!/dist/\n",
+        "reinclude the GUI bundle",
+    );
+    write_file(dir.path(), "gui/dist/app.js", "bundle\n");
+    write_file(dir.path(), "other/dist/app.js", "ignored sibling\n");
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let paths: Vec<_> = out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["gui/dist/app.js"], "{out}");
+}
+
+#[test]
+fn scan_reports_skipped_paths_and_can_include_ignored_files_in_scope() {
+    let (dir, repo) = setup_repo();
+    write_file(dir.path(), ".gitignore", "*.generated\n/dist/\n/outside/\n");
+    write_file(dir.path(), "a.generated", "ignored\n");
+    write_file(dir.path(), "dist/app[1].js", "bundle\n");
+    write_file(dir.path(), "dist/app1.js", "different bundle\n");
+    write_file(dir.path(), "outside/secret.txt", "outside the scope\n");
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(out["summary"]["total_files"], 1);
+    assert_eq!(
+        out["skipped"],
+        serde_json::json!([
+            {"path": "a.generated", "reason": "ignored"},
+            {"path": "dist/", "reason": "ignored"},
+            {"path": "outside/", "reason": "ignored"}
+        ])
+    );
+
+    let output = run_pgs(dir.path(), &["scan", "dist/app[1].js"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(out["summary"]["total_files"], 0);
+    assert_eq!(out["skipped"][0]["path"], "dist/");
+    common::run_pgs_raw(dir.path(), &["scan", "dist"])
+        .success()
+        .stdout(predicates::str::contains(
+            r#"@@pgs:v1 scan.skipped {"path":"dist/","reason":"ignored"}"#,
+        ));
+
+    let output = run_pgs(
+        dir.path(),
+        &["scan", "--full", "--include-ignored", "dist/app[1].js"],
+    )
+    .success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(out["summary"]["total_files"], 1);
+    assert_eq!(out["files"][0]["path"], "dist/app[1].js");
+    assert_eq!(out["files"][0]["hunks"][0]["lines"][0]["content"], "bundle");
+    assert!(out.get("skipped").is_none(), "{out}");
+
+    let output = run_pgs(dir.path(), &["scan", "--include-ignored", "dist/"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(out["summary"]["total_files"], 2);
+    assert_eq!(out["files"][0]["path"], "dist/app1.js");
+    assert_eq!(out["files"][1]["path"], "dist/app[1].js");
+
+    run_pgs(dir.path(), &["scan", "--include-ignored"]).code(2);
+    run_pgs(dir.path(), &["scan", "--include-ignored", "../outside"]).code(2);
+    run_pgs(dir.path(), &["stage", "--force", "dist/"]).code(2);
+    run_pgs(dir.path(), &["stage", "dist/app[1].js"]).failure();
+    run_pgs(
+        dir.path(),
+        &["stage", "--force", "--dry-run", "dist/app[1].js"],
+    )
+    .success();
+    assert!(repo.index().unwrap().is_empty());
+    run_pgs(dir.path(), &["stage", "--force", "dist/app[1].js"]).success();
+    repo.index().unwrap().read(true).unwrap();
+    assert_eq!(
+        common::read_staged_blob(&repo, "dist/app[1].js"),
+        "bundle\n"
+    );
+    assert_eq!(repo.index().unwrap().len(), 1);
+}
+
+#[test]
+fn scan_reports_nested_repository_without_selecting_its_contents() {
+    let (dir, _repo) = setup_repo();
+    git2::Repository::init(dir.path().join("nested")).unwrap();
+    write_file(dir.path(), "nested/content.txt", "nested worktree\n");
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(out["summary"]["total_files"], 0);
+    assert_eq!(
+        out["skipped"],
+        serde_json::json!([
+            {"path": "nested/", "reason": "nested_repository"}
+        ])
+    );
+
+    run_pgs(dir.path(), &["stage", "--force", "nested/content.txt"]).failure();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn scan_reports_ignored_non_utf8_paths_without_hiding_selectable_files() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let (dir, _repo) = setup_repo();
+    write_file(dir.path(), ".gitignore", "*.generated\n");
+    std::fs::write(
+        dir.path()
+            .join(std::ffi::OsStr::from_bytes(b"bad\xff.generated")),
+        "ignored\n",
+    )
+    .unwrap();
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(out["files"][0]["path"], ".gitignore");
+    assert_eq!(out["skipped"][0]["path"], "bad\u{fffd}.generated");
+    assert_eq!(out["skipped"][0]["reason"], "ignored");
+}
+
+#[cfg(unix)]
+#[test]
+fn stage_force_stages_a_symlink_without_following_it() {
+    use std::os::unix::fs::symlink;
+
+    let (dir, repo) = setup_repo();
+    write_file(dir.path(), ".gitignore", "/link\n/actual/\n");
+    write_file(dir.path(), "actual/file.txt", "target\n");
+    symlink("actual", dir.path().join("link")).unwrap();
+
+    run_pgs(dir.path(), &["stage", "--force", "link/file.txt"]).failure();
+    run_pgs(dir.path(), &["stage", "--force", ".git/config"]).failure();
+    run_pgs(dir.path(), &["stage", "--force", "link"]).success();
+    repo.index().unwrap().read(true).unwrap();
+    assert_eq!(common::read_staged_blob(&repo, "link"), "actual");
+    assert_eq!(repo.index().unwrap().len(), 1);
+}

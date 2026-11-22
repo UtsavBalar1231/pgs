@@ -9,7 +9,7 @@
       "name": "pgs",
       "source": "./plugins/pgs",
       "description": "Precise Git staging for coding agents, by file, hunk, or line.",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "author": {
         "name": "UtsavBalar1231",
         "url": "https://github.com/UtsavBalar1231"

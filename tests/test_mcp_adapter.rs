@@ -23,6 +23,7 @@ fn mcp_adapter_scan_reuses_typed_command_output() {
         context: 3,
         files: vec![],
         full: false,
+        include_ignored: false,
     });
 
     let output = execute(request).expect("scan should succeed");
@@ -50,6 +51,7 @@ fn mcp_adapter_preserves_pgs_error_metadata() {
         context: 3,
         files: vec![],
         full: false,
+        include_ignored: false,
     });
 
     let error = execute(request).expect_err("empty repo scan should return an error");
@@ -86,6 +88,7 @@ fn stage_via_mcp_adapter_on_symlink_produces_correct_blob() {
         repo_path: dir.path().display().to_string(),
         selections: vec!["link".into()],
         exclude: vec![],
+        force: false,
         dry_run: false,
         explain: false,
         limit: 200,

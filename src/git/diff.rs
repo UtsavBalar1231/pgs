@@ -1,12 +1,12 @@
 /// Diff engine — index-to-workdir and HEAD-to-index diffs for pgs.
 use sha2::{Digest, Sha256};
 
-use git2::{Delta, Diff, DiffOptions, Patch, Repository};
+use git2::{Delta, Diff, DiffOptions, FileMode, Patch, Repository};
 
 use crate::error::PgsError;
 use crate::models::{
     DiffLineInfo, FileInfo, FileStatus, HunkInfo, LineOrigin, OriginMix, ScanResult, ScanSummary,
-    StagedFileInfo, StatusReport, StatusSummary,
+    SkipReason, SkippedPath, StagedFileInfo, StatusReport, StatusSummary,
 };
 
 /// Compute a diff between the index and the working directory.
@@ -14,14 +14,107 @@ use crate::models::{
 /// This is the diff base for `scan`: it shows only unstaged changes,
 /// correctly excluding content that has already been staged.
 pub fn diff_index_to_workdir(repo: &Repository, context_lines: u32) -> Result<Diff<'_>, PgsError> {
+    Ok(repo.diff_index_to_workdir(None, Some(&mut workdir_options(context_lines)))?)
+}
+
+fn workdir_options(context_lines: u32) -> DiffOptions {
     let mut opts = DiffOptions::new();
-    opts.context_lines(context_lines);
-    opts.include_typechange(true);
-    opts.include_untracked(true);
-    opts.recurse_untracked_dirs(true);
-    opts.show_untracked_content(true);
+    opts.context_lines(context_lines)
+        .include_typechange(true)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true);
+    opts
+}
+
+pub(crate) fn scan_workdir(
+    repo: &Repository,
+    context: u32,
+    paths: &[String],
+    include_ignored: bool,
+) -> Result<(ScanResult, Vec<SkippedPath>), PgsError> {
+    let mut opts = workdir_options(context);
+    opts.include_ignored(true).include_unreadable(true);
+
+    let explicit_repo;
+    let repo = if include_ignored {
+        if paths.is_empty() {
+            return Err(PgsError::InvalidArguments {
+                detail: "including ignored files requires explicit repository-relative paths"
+                    .into(),
+            });
+        }
+        opts.disable_pathspec_match(true);
+        for path in paths {
+            if path.is_empty()
+                || path.contains('\0')
+                || path.split('/').any(|part| matches!(part, "." | ".."))
+                || std::path::Path::new(path)
+                    .components()
+                    .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            {
+                return Err(PgsError::InvalidSelection {
+                    detail: format!("expected a repository-relative path, got {path:?}"),
+                });
+            }
+            opts.pathspec(path.as_str());
+        }
+        explicit_repo = Repository::open(repo.path())?;
+        if explicit_repo.workdir() != repo.workdir() {
+            explicit_repo.set_workdir(super::repo::workdir(repo)?, false)?;
+        }
+        // Keep the override on a private handle so it cannot affect other scans.
+        explicit_repo.add_ignore_rule("!**")?;
+        &explicit_repo
+    } else {
+        repo
+    };
+
     let diff = repo.diff_index_to_workdir(None, Some(&mut opts))?;
-    Ok(diff)
+    let filter = (!paths.is_empty()).then_some(paths);
+    let result = build_scan_result(repo, &diff, filter)?;
+    let mut skipped = Vec::new();
+    for delta in diff.deltas() {
+        let Some(reason) = skip_reason(&delta) else {
+            continue;
+        };
+        let Some(path) = delta.new_file().path_bytes() else {
+            continue;
+        };
+        let path = String::from_utf8_lossy(path);
+        let is_dir = matches!(delta.new_file().mode(), FileMode::Tree | FileMode::Commit);
+        if filter.is_none_or(|paths| {
+            paths.iter().any(|filter| {
+                path_matches(&path, filter) || (is_dir && path_matches(filter, &path))
+            })
+        }) {
+            let mut path = path.into_owned();
+            if is_dir && !path.ends_with('/') {
+                path.push('/');
+            }
+            skipped.push(SkippedPath { path, reason });
+        }
+    }
+    Ok((result, skipped))
+}
+
+fn skip_reason(delta: &git2::DiffDelta<'_>) -> Option<SkipReason> {
+    match (delta.status(), delta.new_file().mode()) {
+        // With recursive untracked discovery enabled, a directory delta is
+        // how libgit2 reports a nested repository it won't descend into.
+        (Delta::Untracked, FileMode::Tree) | (Delta::Ignored, FileMode::Commit) => {
+            Some(SkipReason::NestedRepository)
+        }
+        (Delta::Ignored, _) => Some(SkipReason::Ignored),
+        (Delta::Unreadable, _) => Some(SkipReason::Unreadable),
+        _ => None,
+    }
+}
+
+fn path_matches(path: &str, filter: &str) -> bool {
+    let normalized = filter.strip_suffix('/').unwrap_or(filter);
+    path.strip_prefix(normalized)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// Compute a diff between HEAD and the index.
@@ -57,15 +150,14 @@ pub fn build_scan_result(
     let count = diff.deltas().count();
     for i in 0..count {
         let delta = diff.get_delta(i).expect("delta index in bounds");
+        if skip_reason(&delta).is_some() {
+            continue;
+        }
         let path = delta_path(&delta)?;
 
         // Apply file filter — support exact paths and directory prefixes
         if let Some(filter) = file_filter
-            && !filter.iter().any(|f| {
-                let f_normalized = f.strip_suffix('/').unwrap_or(f);
-                path.strip_prefix(f_normalized)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-            })
+            && !filter.iter().any(|f| path_matches(&path, f))
         {
             continue;
         }

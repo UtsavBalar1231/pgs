@@ -1,1 +1,2 @@
 * text=auto eol=lf
+vendor/libgit2-sys/** linguist-vendored

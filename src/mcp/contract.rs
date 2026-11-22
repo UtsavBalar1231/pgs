@@ -58,6 +58,8 @@ pub struct ScanToolInput {
     pub files: Option<Vec<String>>,
     /// Whether to return full line-level hunk content.
     pub full: Option<bool>,
+    /// Include ignored files under explicitly named paths in `files`.
+    pub include_ignored: Option<bool>,
 }
 
 impl From<ScanToolInput> for McpScanRequest {
@@ -67,6 +69,7 @@ impl From<ScanToolInput> for McpScanRequest {
             context: value.context.unwrap_or(DEFAULT_CONTEXT),
             files: value.files.unwrap_or_default(),
             full: value.full.unwrap_or(false),
+            include_ignored: value.include_ignored.unwrap_or(false),
         }
     }
 }
@@ -101,6 +104,8 @@ pub struct StageToolInput {
     pub selections: Vec<String>,
     /// Optional selections to exclude.
     pub exclude: Option<Vec<String>>,
+    /// Allow ignored files when all selections explicitly name whole files.
+    pub force: Option<bool>,
     /// Whether to validate without mutating the index.
     pub dry_run: Option<bool>,
     /// Whether to include exact per-file preview lines. Requires `dry_run`.
@@ -120,6 +125,7 @@ impl From<StageToolInput> for McpStageRequest {
             repo_path: value.repo_path,
             selections: value.selections,
             exclude: value.exclude.unwrap_or_default(),
+            force: value.force.unwrap_or(false),
             dry_run: value.dry_run.unwrap_or(false),
             explain: value.explain.unwrap_or(false),
             limit: value.limit.unwrap_or(200),
@@ -460,7 +466,7 @@ pub fn map_execution_result(
 fn scan_tool() -> Tool {
     Tool::new(
         PGS_SCAN_TOOL,
-        "Inspect unstaged working-tree changes for an explicit local repository path without mutating the repository.",
+        "Inspect unstaged working-tree changes and report skipped paths for an explicit local repository path. Set include_ignored with explicit file or directory filters to include ignored files in the scan.",
         serde_json::Map::new(),
     )
     .with_title("Scan repository changes")
@@ -557,7 +563,7 @@ fn status_tool() -> Tool {
 fn stage_tool() -> Tool {
     Tool::new(
         PGS_STAGE_TOOL,
-        "Stage file, hunk, or line-range selections into the git index for an explicit local repository path. With dry_run and explain, returns exact preview lines without mutating repository state. Without dry_run, this mutates repository state.",
+        "Stage file, hunk, or line-range selections into the git index for an explicit local repository path. Set force to include ignored files by exact whole-file path. With dry_run and explain, returns exact preview lines without mutating repository state. Without dry_run, this mutates repository state.",
         serde_json::Map::new(),
     )
     .with_title("Stage selections")
@@ -701,7 +707,7 @@ fn plan_diff_tool() -> Tool {
 fn plan_apply_tool() -> Tool {
     Tool::new(
         PGS_PLAN_APPLY_TOOL,
-        "Apply a CommitPlan in an explicit local repository path: for each planned commit, in order, stage its selections and commit with its message. Requires an empty index and a plan that pgs_plan_check accepts; stops at the first failure and reports the commits already created. With dry_run, resolves every commit without writing. This mutates repository history.",
+        "Apply a CommitPlan in an explicit local repository path: for each planned commit, in order, stage its selections and commit with its message. Requires an empty index and a plan that pgs_plan_check accepts; stops at the first failure and reports the commits already created. With dry_run, resolves every commit without writing and warns about active commit hooks. Otherwise, this mutates repository history.",
         serde_json::Map::new(),
     )
     .with_title("Apply commit plan")
@@ -718,10 +724,17 @@ fn plan_apply_tool() -> Tool {
 
 fn plan_apply_summary_text(output: &PlanApplyOutput) -> String {
     match (&output.status, &output.failed) {
-        (PlanApplyStatus::DryRun, _) => format!(
-            "Dry run: {} planned commit(s) resolved; nothing written.",
-            output.commits.len()
-        ),
+        (PlanApplyStatus::DryRun, _) => {
+            let mut summary = format!(
+                "Dry run: {} planned commit(s) resolved; nothing written.",
+                output.commits.len()
+            );
+            for warning in &output.warnings {
+                summary.push('\n');
+                summary.push_str(warning);
+            }
+            summary
+        }
         (_, Some(failed)) => format!(
             "Created {} commit(s); planned commit {} failed: {}",
             output.commits.len(),
@@ -876,10 +889,15 @@ const fn is_no_effect(error: &PgsError) -> bool {
 }
 
 fn scan_summary_text(scan: &ScanOutput) -> String {
-    format!(
+    let summary = format!(
         "Found {} unstaged file(s) across {} hunk(s).",
         scan.summary.total_files, scan.summary.total_hunks
-    )
+    );
+    if scan.skipped.is_empty() {
+        summary
+    } else {
+        format!("{summary} Skipped {} path(s).", scan.skipped.len())
+    }
 }
 
 fn operation_summary_text(operation: &OperationOutput) -> String {

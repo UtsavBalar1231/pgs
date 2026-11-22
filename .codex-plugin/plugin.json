@@ -1,6 +1,6 @@
 {
   "name": "pgs",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Precise Git staging for coding agents. Select files, hunks, or exact lines through a local MCP server and an included workflow skill.",
   "author": {
     "name": "UtsavBalar1231",

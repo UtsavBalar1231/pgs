@@ -23,6 +23,9 @@ pub struct McpScanRequest {
     pub files: Vec<String>,
     /// Whether the scan should include full line-level hunk content.
     pub full: bool,
+    /// Include ignored files under the explicitly named paths.
+    #[serde(default)]
+    pub include_ignored: bool,
 }
 
 /// Typed MCP payload for `pgs_status` requests.
@@ -45,6 +48,9 @@ pub struct McpStageRequest {
     pub selections: Vec<String>,
     /// Selections to exclude from the staging request.
     pub exclude: Vec<String>,
+    /// Allow explicitly named ignored files.
+    #[serde(default)]
+    pub force: bool,
     /// Whether to validate the request without mutating the index.
     pub dry_run: bool,
     /// Whether to include exact per-file preview lines. Requires `dry_run`.
@@ -235,6 +241,7 @@ pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterEr
             scan::ScanArgs {
                 files: request.files,
                 full: request.full,
+                include_ignored: request.include_ignored,
             },
         )
         .map_err(|source| McpAdapterError::new(OutputCommand::Scan, source)),
@@ -250,6 +257,7 @@ pub fn execute(request: McpCommandRequest) -> Result<CommandOutput, McpAdapterEr
             &stage::StageRequest {
                 selections: request.selections,
                 exclude: request.exclude,
+                force: request.force,
                 dry_run: request.dry_run,
                 explain: request.explain,
                 limit: request.limit,

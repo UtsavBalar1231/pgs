@@ -4,6 +4,51 @@ use common::{
     call_tool, commit_file, open_session, setup_repo, shutdown_child, spawn_mcp_stdio, write_file,
 };
 use serde_json::json;
+
+#[test]
+fn mcp_scan_and_stage_support_explicit_ignored_files() {
+    let (dir, repo) = setup_repo();
+    write_file(dir.path(), ".gitignore", "/dist/\n");
+    write_file(dir.path(), "dist/app.js", "bundle\n");
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    open_session(&mut stdin, &mut stdout);
+    let skipped = call_tool(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "pgs_scan",
+        &json!({"repo_path": dir.path(), "files": ["dist/"]}),
+    );
+    let included = call_tool(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "pgs_scan",
+        &json!({"repo_path": dir.path(), "files": ["dist/"], "include_ignored": true}),
+    );
+    let staged = call_tool(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "pgs_stage",
+        &json!({"repo_path": dir.path(), "selections": ["dist/app.js"], "force": true}),
+    );
+    shutdown_child(child);
+
+    assert_eq!(
+        skipped["result"]["structuredContent"]["pgs"]["skipped"][0]["reason"],
+        "ignored"
+    );
+    assert_eq!(
+        included["result"]["structuredContent"]["pgs"]["files"][0]["path"],
+        "dist/app.js"
+    );
+    assert_eq!(staged["result"]["isError"], false, "{staged}");
+    repo.index().unwrap().read(true).unwrap();
+    assert_eq!(common::read_staged_blob(&repo, "dist/app.js"), "bundle\n");
+}
+
 #[test]
 fn mcp_scan_tool_compact_matches_cli_contract() {
     let (dir, repo) = setup_repo();

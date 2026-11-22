@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::models::{
     CompactFileInfo, CompactHunkInfo, CompactScanResult, DiffLineInfo, FileInfo, FileStatus,
-    HunkInfo, LineOrigin, ScanResult, ScanSummary,
+    HunkInfo, LineOrigin, ScanResult, ScanSummary, SkippedPath,
 };
 
 use super::common::{LineOriginView, OUTPUT_VERSION, OutputCommand};
@@ -21,6 +21,9 @@ pub struct ScanOutput {
     pub command: OutputCommand,
     pub detail: ScanDetail,
     pub files: Vec<ScanFileView>,
+    /// Worktree paths omitted from the selectable changes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<SkippedPath>,
     pub summary: ScanSummaryView,
 }
 
@@ -33,6 +36,7 @@ impl ScanOutput {
             command: OutputCommand::Scan,
             detail: ScanDetail::Compact,
             files: files.into_iter().map(ScanFileView::from_compact).collect(),
+            skipped: Vec::new(),
             summary: summary.into(),
         }
     }
@@ -45,6 +49,7 @@ impl ScanOutput {
             command: OutputCommand::Scan,
             detail: ScanDetail::Full,
             files: files.into_iter().map(ScanFileView::from_full).collect(),
+            skipped: Vec::new(),
             summary: summary.into(),
         }
     }
