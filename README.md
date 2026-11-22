@@ -26,10 +26,8 @@ src/auth.rs                         What belongs in this commit?
 
 https://github.com/user-attachments/assets/b5857677-9546-4bdc-925d-8ab0b2f0b629
 
-35-second walkthrough. Sound optional.
-
 <details>
-<summary>12-second square cut</summary>
+<summary>Square video</summary>
 
 https://github.com/user-attachments/assets/ee51b137-6307-4a8f-aeb8-b6f4cadf6cae
 
