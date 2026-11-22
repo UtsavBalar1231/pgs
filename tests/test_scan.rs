@@ -321,3 +321,37 @@ fn scan_distinguishes_replacing_a_line_from_keeping_it_and_adding_another() {
     assert_ne!(replaced["id"], appended["id"]);
     assert_ne!(replaced["checksum"], appended["checksum"]);
 }
+
+#[test]
+fn scan_nested_ignore_exception_lists_only_reincluded_files() {
+    let (dir, repo) = setup_repo();
+    write_file(dir.path(), ".git/info/exclude", "");
+    repo.config()
+        .unwrap()
+        .set_str(
+            "core.excludesFile",
+            repo.path().join("info/exclude").to_str().unwrap(),
+        )
+        .unwrap();
+
+    commit_file(&repo, dir.path(), ".gitignore", "dist/\n", "ignore dist");
+    commit_file(
+        &repo,
+        dir.path(),
+        "gui/.gitignore",
+        "!/dist/\n",
+        "reinclude the GUI bundle",
+    );
+    write_file(dir.path(), "gui/dist/app.js", "bundle\n");
+    write_file(dir.path(), "other/dist/app.js", "ignored sibling\n");
+
+    let output = run_pgs(dir.path(), &["scan"]).success();
+    let out: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let paths: Vec<_> = out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["gui/dist/app.js"], "{out}");
+}
