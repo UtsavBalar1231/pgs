@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.10.1 - 2026-11-22
+
+### Added
+
+- CLI and MCP scans report skipped paths and why they were skipped.
+  Use `scan --include-ignored` to inspect named ignored paths and
+  `stage --force` to stage explicitly named whole files.
+
+### Fixed
+
+- The vendored libgit2 backport honors nested `.gitignore` exceptions
+  while preserving ignored parent directories.
+- `plan-apply --dry-run` previews plans when commit hooks are active
+  and reports the hooks as warnings. Real applies retain the hook guard.
+
 ## 0.10.0 - 2026-10-13
 
 ### Added
