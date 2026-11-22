@@ -24,8 +24,8 @@ allowed-tools: >-
 
 # Git Commit Staging with pgs
 
-Drive every read, staging action, and commit through the pgs MCP tools — never
-Bash, raw git, or the pgs CLI.
+Use the pgs MCP tools for inspection, staging, and ordinary commits. Use Git
+when commits require hooks, signing, or finishing a merge.
 
 ## Quick reference
 
@@ -40,16 +40,18 @@ Bash, raw git, or the pgs CLI.
 | Inspect what will be committed | `pgs_status` |
 | Create or amend a commit | `pgs_commit` |
 
-## Mandatory workflow
+## Workflow
+
+Only stage, unstage, commit, or amend when the user has authorized that action.
+For inspection, planning, and preview requests, use read-only operations such
+as `pgs_plan_check` and `pgs_stage(dry_run=true, ...)`.
 
 1. Read state with `pgs_overview`. Use `pgs_scan` when you only need fresh
-   unstaged hunk IDs or line-level detail.
-2. Plan commit groups by intent, not by filename, before staging anything.
-3. For multi-commit work, validate the grouping with `pgs_plan_check`. Once it
-   is clean, give every planned commit its `message` (after the message gate
-   below) and run `pgs_plan_apply` with `dry_run=true`, then without it: it
-   stages and commits each planned commit in order, from an empty index.
-4. Stage with the narrowest honest selector:
+   unstaged hunk IDs or line-level detail. Check `pgs.skipped` in scan output
+   when expected paths are missing.
+2. Group changes by intent before staging. For multiple commits, follow the
+   plan workflow below.
+3. Stage with the narrowest selector that covers the intended change:
    - whole file for added, deleted, renamed, binary, or single-intent files;
    - hunk ID for an independent hunk;
    - line range only when one hunk mixes intent — use `pgs_split_hunk` to see
@@ -59,13 +61,38 @@ Bash, raw git, or the pgs CLI.
    name and comes along only indirectly. Prefer a hunk ID whenever the change
    involves deletions; see `references/tool-reference.md` for the pairing rules
    before writing a range over one.
-5. To preview exact staged content without mutating the index, call
+4. To preview exact staged content without mutating the index, call
    `pgs_stage(dry_run=true, explain=true, limit=200, ...)`.
-6. Verify the result with `pgs_status` before every `pgs_commit`. When one
-   commit's selections are already settled, `pgs_commit(message=..., selections=[...])`
-   stages and commits in one call and rolls the staging back if the commit fails.
-7. After any commit, unstage, file edit, or index change, re-read state before
+5. Inspect all staged changes with `pgs_status(full=true)` before `pgs_commit`.
+   `pgs_commit(selections=[...], message=...)` adds the selections to the index
+   and commits everything staged. Use it only after reviewing the selections
+   and confirming all existing staged changes belong in the commit. If unrelated
+   changes are staged, leave them in place and resolve the scope with the user.
+6. After any commit, unstage, file edit, or index change, re-read state before
    reusing hunk IDs — they go stale.
+
+## Plan multiple commits
+
+1. Run `pgs_plan_check` and inspect `structuredContent.pgs` even when
+   `outcome="ok"`. Resolve `overlaps`, `unsafe_selectors`, `unknown_paths`, and
+   `unknown_hunk_ids`. Review `uncovered` hunks and leave them unstaged only if
+   that matches the intended scope.
+2. Draft a `message` for each commit using recent history. Run
+   `pgs_plan_apply(dry_run=true, ...)` and review its per-commit selections and
+   `pgs.warnings`. An active hook produces a warning during preview. Check the
+   draft messages against the preview using the message gate below.
+3. Apply the plan only after the user has authorized commits, the preview
+   matches the intended scope, and nothing is staged. If hooks or signing are
+   required, stage, verify, and commit each group in order using Git for the
+   commit. Refresh selectors between commits.
+
+## Include ignored files explicitly
+
+`pgs_scan` may report ignored files or directories in `structuredContent.pgs.skipped`.
+To inspect them, call `pgs_scan(files=["dist/"], include_ignored=true, ...)` with
+explicit file or directory paths. To stage an intentionally ignored file, use
+`pgs_stage(selections=["dist/app.js"], force=true, ...)` with exact whole-file
+paths. Preview with `dry_run=true` before staging.
 
 ## Guard against drift
 
@@ -82,13 +109,14 @@ A `StaleScan` error (retryable) means the file drifted — re-scan and re-plan.
 
 ## Message quality gate
 
-Before every `pgs_commit`:
+Before committing:
 
-1. Call `pgs_status` and summarize the staged files and line counts.
+1. Inspect `pgs_status(full=true)` for staged changes, or the plan preview for
+   planned commits. Summarize the files and line counts for each commit.
 2. Call `pgs_log(max_count=10)` and use repo style first.
 3. If recent history is unclear, use the Conventional Commits fallback —
    `<type>(<optional-scope>): <imperative subject>` plus a body.
-4. Confirm the subject and body match the staged content; rewrite if they do not.
+4. Confirm the subject and body match each commit's content.
 5. Body is required for non-trivial commits: 2+ files, 10+ affected lines,
    behavior or public-API changes, or any non-trivial amend.
 
@@ -119,8 +147,8 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 
 ## Constraints
 
-- Read results from JSON-RPC `structuredContent`; the `content` field is only a
-  human-readable summary.
+- Read command output from `structuredContent.pgs` and errors from
+  `structuredContent.pgs_error`. `content` is a human-readable summary.
 - `repo_path` is required on every call. If you set a custom `context`, use the
   same value for every scan, split, plan, stage, and unstage call in the session.
 - Hunk IDs are content-addressed and go stale after edits, commits, or index
@@ -135,19 +163,20 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
 - `pgs_split_hunk` is descriptive, not a staging plan; `pgs_plan_check` and
   `pgs_plan_diff` validate and reconcile but never stage; `pgs_overview` is
   read-only and does not replace a fresh scan once hunk IDs are stale.
-- `pgs_plan_apply` writes history. It refuses before writing anything when the
-  index is not empty, a planned commit has no message, or `pgs_plan_check`
-  would report overlaps, unsafe selectors, or unknown paths or hunk IDs.
-- A count-only dry run carries no preview lines — pass `explain=true`. Binary or
-  unsupported previews return empty preview lines with a reason.
+- Without `dry_run`, `pgs_plan_apply` writes history. It refuses before writing
+  when changes are already staged, a planned commit has no message, or
+  `pgs_plan_check` reports overlaps, unsafe selectors, or unknown paths or hunk IDs.
+- For exact lines in a stage preview, pass both `dry_run=true` and `explain=true`.
+  Binary or unsupported previews return empty preview lines with a reason.
 
 ## Recovery
 
-- `pgs_error.code="commit_hooks_present"`: the repository has commit hooks pgs
-  cannot run. The staging is done and still in the index; make the commit with
-  `git commit -m ...` so the hooks run (the one raw-git exception), or tell the
-  user if you cannot run git. Pass `no_verify: true` only when the user
-  explicitly asks to skip the hooks.
+- `pgs_error.code="commit_hooks_present"` or `"commit_signing_required"`: the
+  call refuses before staging. Inspect the index, stage and verify the intended
+  changes, then commit with Git so hooks or signing run. Preserve `--amend` when
+  the user requested an amend. `no_verify` skips hooks only, and requires an
+  explicit request to skip them.
+- `pgs_error.code="merge_in_progress"`: finish the merge with Git when authorized.
 
 - `pgs_plan_apply` returns `status="partial"` with `isError=true`: the
   `commits` it lists were created and stay; `failed` names the planned commit
@@ -174,5 +203,4 @@ Selectors, the `CommitPlan` shape, the drift guard, and worked examples:
   again.
 - Only the HEAD message is wrong and `pgs_status` is clean:
   `pgs_commit(amend=true, message=<full replacement message>)`.
-- For any history rewrite beyond a HEAD amend, stop and ask the user. Never use
-  raw git from this skill, except `git commit` when commit hooks must run.
+- For any history rewrite beyond a HEAD amend, stop and ask the user.

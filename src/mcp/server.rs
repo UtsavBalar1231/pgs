@@ -36,18 +36,18 @@ pgs stages git changes at file, hunk, and line granularity without a TTY.
 
 Every tool requires an explicit `repo_path`; nothing is inferred from a working directory.
 
-Workflow: call pgs_scan (unstaged changes) or pgs_overview (unstaged plus staged) first, then \
-pgs_stage with the narrowest selector that covers the intent, then pgs_commit. Selectors are \
-positional and auto-detected: `src/main.rs` (whole file), `abc123def456` (12-hex hunk id), \
-`src/main.rs:10-20` (line range).
+Start with pgs_scan (unstaged changes) or pgs_overview (unstaged plus staged). Stage or commit \
+only when authorized. Use pgs_status with full=true to inspect staged changes before committing. \
+Selectors are positional and auto-detected: `src/main.rs` (whole file), `abc123def456` \
+(12-hex hunk id), `src/main.rs:10-20` (line range).
 
 Hunk ids are content-addressed and go stale as soon as the file changes. Never reuse an id from \
 an earlier session or from before an edit; re-run pgs_scan and take the fresh id. Use \
 pgs_plan_diff to reconcile a saved plan against the current tree.
 
-For several commits, validate a CommitPlan with pgs_plan_check, then pgs_plan_apply stages and \
-commits each planned commit in order from an empty index, refusing before it writes anything \
-when the plan cannot finish.
+For several commits, inspect the diagnostics in structuredContent.pgs from pgs_plan_check. \
+Preview with pgs_plan_apply and dry_run=true, and check its warnings. Applying writes commits \
+in order and requires an index with no staged changes.
 
 Line-range staging is not drift-safe on its own. Pass `expected_checksums` (map of path → \
 file-level SHA-256 from a prior scan) so a workdir edit between scan and stage fails with \
