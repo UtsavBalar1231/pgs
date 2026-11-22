@@ -282,6 +282,74 @@ fn call_commit_tool(arguments: &serde_json::Value) -> serde_json::Value {
 }
 
 #[test]
+fn mcp_commit_tool_refuses_required_signing_before_staging() {
+    let (dir, repo) = setup_repo();
+    commit_file(&repo, dir.path(), "a.txt", "old\n", "seed");
+    write_file(dir.path(), "a.txt", "new\n");
+    repo.config()
+        .unwrap()
+        .set_bool("commit.gpgSign", true)
+        .unwrap();
+    let head = repo.head().unwrap().target();
+    let index_path = repo.path().join("index");
+    let index = std::fs::read(&index_path).unwrap();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": dir.path(),
+        "message": "test: update a",
+        "selections": ["a.txt"],
+        "no_verify": true
+    }));
+
+    let result = &response["result"];
+    assert_eq!(result["isError"], true, "{response}");
+    assert_eq!(
+        result["structuredContent"]["pgs_error"]["code"],
+        "commit_signing_required"
+    );
+    assert_eq!(repo.head().unwrap().target(), head);
+    assert_eq!(std::fs::read(index_path).unwrap(), index);
+}
+
+#[test]
+fn mcp_commit_tool_preserves_merge_in_progress() {
+    let (dir, repo) = setup_repo();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    let signature = repo.signature().unwrap();
+    let mut builder = repo.treebuilder(None).unwrap();
+    builder
+        .insert("feature.txt", repo.blob(b"feature\n").unwrap(), 0o100_644)
+        .unwrap();
+    let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+    let feature = repo
+        .commit(None, &signature, &signature, "feature", &tree, &[&head])
+        .unwrap();
+    let feature = repo.find_annotated_commit(feature).unwrap();
+    repo.merge(&[&feature], None, None).unwrap();
+    assert_eq!(repo.state(), git2::RepositoryState::Merge);
+    let index_path = repo.path().join("index");
+    let index = std::fs::read(&index_path).unwrap();
+    let merge_head_path = repo.path().join("MERGE_HEAD");
+    let merge_head = std::fs::read(&merge_head_path).unwrap();
+
+    let response = call_commit_tool(&json!({
+        "repo_path": dir.path(),
+        "message": "test: merge feature",
+        "no_verify": true
+    }));
+
+    let result = &response["result"];
+    assert_eq!(result["isError"], true, "{response}");
+    assert_eq!(
+        result["structuredContent"]["pgs_error"]["code"],
+        "merge_in_progress"
+    );
+    assert_eq!(repo.head().unwrap().target(), Some(head.id()));
+    assert_eq!(std::fs::read(index_path).unwrap(), index);
+    assert_eq!(std::fs::read(merge_head_path).unwrap(), merge_head);
+}
+
+#[test]
 fn mcp_commit_tool_message_file_commits_message_from_file() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "a.txt", "one\n", "seed");

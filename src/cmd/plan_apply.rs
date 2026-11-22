@@ -87,9 +87,10 @@ pub fn execute(
 /// # Errors
 ///
 /// Refuses before writing anything when a planned commit has no message, the
-/// plan has no commits, something is already staged, a real apply would skip
-/// active commit hooks without `no_verify`, or plan-check reports overlaps, unsafe selectors,
-/// unknown paths or unknown hunk ids. Repository errors propagate.
+/// plan has no commits, something is already staged, or plan-check reports
+/// overlaps, unsafe selectors, unknown paths or unknown hunk ids. A real apply
+/// also refuses during a merge, when signing is enabled, or when commit hooks
+/// are active without `no_verify`. Repository errors propagate.
 pub fn run_with_plan(
     repo_path: Option<&str>,
     context: u32,
@@ -193,6 +194,9 @@ fn check_preconditions(
                 detail: format!("planned commit {id} has no message; plan-apply needs one each"),
             });
         }
+    }
+    if !options.dry_run {
+        repo::ensure_commit_supported(repository)?;
     }
     let hooks = if options.dry_run || !options.no_verify {
         repo::active_commit_hooks(repository)?
