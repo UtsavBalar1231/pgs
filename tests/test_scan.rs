@@ -442,7 +442,7 @@ fn scan_reports_nested_repository_without_selecting_its_contents() {
     run_pgs(dir.path(), &["stage", "--force", "nested/content.txt"]).failure();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn scan_reports_ignored_non_utf8_paths_without_hiding_selectable_files() {
     use std::os::unix::ffi::OsStrExt;
