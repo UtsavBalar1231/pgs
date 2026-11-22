@@ -707,7 +707,7 @@ fn plan_diff_tool() -> Tool {
 fn plan_apply_tool() -> Tool {
     Tool::new(
         PGS_PLAN_APPLY_TOOL,
-        "Apply a CommitPlan in an explicit local repository path: for each planned commit, in order, stage its selections and commit with its message. Requires an empty index and a plan that pgs_plan_check accepts; stops at the first failure and reports the commits already created. With dry_run, resolves every commit without writing. This mutates repository history.",
+        "Apply a CommitPlan in an explicit local repository path: for each planned commit, in order, stage its selections and commit with its message. Requires an empty index and a plan that pgs_plan_check accepts; stops at the first failure and reports the commits already created. With dry_run, resolves every commit without writing and warns about active commit hooks. Otherwise, this mutates repository history.",
         serde_json::Map::new(),
     )
     .with_title("Apply commit plan")
@@ -724,10 +724,17 @@ fn plan_apply_tool() -> Tool {
 
 fn plan_apply_summary_text(output: &PlanApplyOutput) -> String {
     match (&output.status, &output.failed) {
-        (PlanApplyStatus::DryRun, _) => format!(
-            "Dry run: {} planned commit(s) resolved; nothing written.",
-            output.commits.len()
-        ),
+        (PlanApplyStatus::DryRun, _) => {
+            let mut summary = format!(
+                "Dry run: {} planned commit(s) resolved; nothing written.",
+                output.commits.len()
+            );
+            for warning in &output.warnings {
+                summary.push('\n');
+                summary.push_str(warning);
+            }
+            summary
+        }
         (_, Some(failed)) => format!(
             "Created {} commit(s); planned commit {} failed: {}",
             output.commits.len(),

@@ -547,6 +547,9 @@ fn render_plan_apply(output: &PlanApplyOutput) -> Result<String, PgsError> {
     };
     let mut lines = Vec::with_capacity(output.commits.len() + 3);
     lines.push(render_marker("plan.apply.begin", &boundary)?);
+    for warning in &output.warnings {
+        lines.push(render_marker("plan.apply.warning", &warning)?);
+    }
     for commit in &output.commits {
         lines.push(render_marker("plan.apply.commit", commit)?);
     }

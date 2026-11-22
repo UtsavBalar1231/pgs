@@ -87,8 +87,8 @@ pub fn execute(
 /// # Errors
 ///
 /// Refuses before writing anything when a planned commit has no message, the
-/// plan has no commits, something is already staged, commit hooks are active
-/// (without `no_verify`), or plan-check reports overlaps, unsafe selectors,
+/// plan has no commits, something is already staged, a real apply would skip
+/// active commit hooks without `no_verify`, or plan-check reports overlaps, unsafe selectors,
 /// unknown paths or unknown hunk ids. Repository errors propagate.
 pub fn run_with_plan(
     repo_path: Option<&str>,
@@ -97,7 +97,7 @@ pub fn run_with_plan(
     options: ApplyOptions,
 ) -> Result<CommandOutput, PgsError> {
     let repository = repo::open(repo_path)?;
-    let scan = check_preconditions(&repository, context, plan, options)?;
+    let (scan, hooks) = check_preconditions(&repository, context, plan, options)?;
     // Resolving every planned commit before the first one lands refuses a plan
     // with a selection that names nothing, rather than stopping partway.
     let previews = plan
@@ -118,7 +118,19 @@ pub fn run_with_plan(
                 staged,
             })
             .collect();
-        return Ok(PlanApplyOutput::new(PlanApplyStatus::DryRun, commits, None).into());
+        let mut output = PlanApplyOutput::new(PlanApplyStatus::DryRun, commits, None);
+        if !hooks.is_empty() {
+            let detail = if options.no_verify {
+                "Applying with --no-verify skips them."
+            } else {
+                "Use git to run them, or pass --no-verify to apply the plan without them."
+            };
+            output.warnings.push(format!(
+                "Active commit hooks: {}. {detail}",
+                hooks.join(", ")
+            ));
+        }
+        return Ok(output.into());
     }
 
     let pins = pin_hunks(&scan);
@@ -158,13 +170,13 @@ fn commit_label(planned: &PlannedCommit, index: usize) -> String {
 }
 
 /// Everything that must hold before the first commit, so a plan that cannot
-/// finish is refused before it starts. Returns the scan the plan was checked on.
+/// finish is refused before it starts. Returns the starting scan and active hooks.
 fn check_preconditions(
     repository: &Repository,
     context: u32,
     plan: &CommitPlan,
     options: ApplyOptions,
-) -> Result<ScanResult, PgsError> {
+) -> Result<(ScanResult, Vec<String>), PgsError> {
     if plan.commits.is_empty() {
         return Err(PgsError::InvalidArguments {
             detail: "the plan has no commits to apply".to_owned(),
@@ -182,11 +194,13 @@ fn check_preconditions(
             });
         }
     }
-    if !options.no_verify {
-        let hooks = repo::active_commit_hooks(repository)?;
-        if !hooks.is_empty() {
-            return Err(PgsError::CommitHooksPresent { hooks });
-        }
+    let hooks = if options.dry_run || !options.no_verify {
+        repo::active_commit_hooks(repository)?
+    } else {
+        Vec::new()
+    };
+    if !options.dry_run && !hooks.is_empty() {
+        return Err(PgsError::CommitHooksPresent { hooks });
     }
     let staged = diff::diff_head_to_index(repository, context)?
         .deltas()
@@ -222,7 +236,7 @@ fn check_preconditions(
             ),
         });
     }
-    Ok(scan)
+    Ok((scan, hooks))
 }
 
 fn pin_hunks(scan: &ScanResult) -> HashMap<String, HunkPin> {

@@ -252,10 +252,16 @@ fn plan_apply_refuses_a_selection_that_names_no_change_before_committing() {
 
 #[test]
 fn plan_apply_refuses_with_commit_hooks_unless_no_verify() {
-    let (dir, _repo) = two_files();
+    let (dir, repo) = two_files();
+    let before_head = head_messages(dir.path());
+    let before_index = std::fs::read(repo.path().join("index")).unwrap();
     let hooks = dir.path().join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
-    std::fs::write(hooks.join("pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::write(
+        hooks.join("pre-commit"),
+        "#!/bin/sh\ntouch hook-ran\nexit 1\n",
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -265,6 +271,46 @@ fn plan_apply_refuses_with_commit_hooks_unless_no_verify() {
         )
         .unwrap();
     }
+
+    let (code, out) = apply(dir.path(), &two_commit_plan(), &["--dry-run"]);
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(out["status"], "dry_run");
+    assert_eq!(out["commits"].as_array().unwrap().len(), 2);
+    assert!(out["warnings"][0].as_str().unwrap().contains("pre-commit"));
+    assert_eq!(head_messages(dir.path()), before_head);
+    assert_eq!(
+        std::fs::read(repo.path().join("index")).unwrap(),
+        before_index
+    );
+    assert!(!dir.path().join("hook-ran").exists());
+
+    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("pgs"))
+        .args([
+            "--repo",
+            dir.path().to_str().unwrap(),
+            "plan-apply",
+            "--dry-run",
+        ])
+        .write_stdin(two_commit_plan().to_string())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("@@pgs:v1 plan.apply.warning"));
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    open_session(&mut stdin, &mut stdout);
+    let response = call_tool(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "pgs_plan_apply",
+        &json!({"repo_path": dir.path(), "plan": two_commit_plan(), "dry_run": true}),
+    );
+    shutdown_child(child);
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["structuredContent"]["pgs"]["warnings"],
+        out["warnings"]
+    );
 
     let (code, out) = apply(dir.path(), &two_commit_plan(), &[]);
     assert_eq!(code, Some(2), "{out}");

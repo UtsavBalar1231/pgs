@@ -254,6 +254,9 @@ pub struct PlanApplyOutput {
     pub status: PlanApplyStatus,
     /// The planned commits created (or, on a dry run, resolved), in plan order.
     pub commits: Vec<PlanAppliedCommit>,
+    /// Apply-time requirements discovered during a dry run.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// The planned commit that stopped the run; present only when `status` is `partial`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed: Option<PlanApplyFailure>,
@@ -272,6 +275,7 @@ impl PlanApplyOutput {
             command: OutputCommand::PlanApply,
             status,
             commits,
+            warnings: Vec::new(),
             failed,
         }
     }

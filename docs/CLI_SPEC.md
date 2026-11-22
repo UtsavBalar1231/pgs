@@ -814,8 +814,8 @@ Before writing anything, plan-apply refuses the run (exit 2,
 `invalid_arguments` unless noted) when:
 
 - the plan has no commits, or a planned commit has no non-blank `message`;
-- the repository has active commit hooks (`commit_hooks_present`), unless
-  `--no-verify` is passed — the same rule as `commit`;
+- a real apply would skip active commit hooks (`commit_hooks_present`), unless
+  `--no-verify` is passed;
 - anything is already staged — the run starts from an empty index;
 - there are no unstaged changes (`no_changes`, exit 1);
 - `plan-check` would report overlaps, unsafe selectors, unknown paths, or
@@ -833,8 +833,9 @@ line and content checksum and re-resolves it before each commit. Line ranges
 and paths name workdir content, which committing does not change. An `exclude`
 whose hunk an earlier planned commit already took excludes nothing.
 
-`--dry-run` resolves every planned commit against the starting scan and writes
-nothing.
+`--dry-run` resolves every planned commit against the starting scan without
+writing. Active commit hooks appear in the optional `warnings` array. Real
+applies use the same hook guard as `commit`.
 
 A planned commit that fails after earlier ones were created stops the run. Its
 own staging is rolled back, so the index is empty again; the earlier commits
@@ -872,9 +873,9 @@ that was re-resolved before its commit. `failed` is present only when `status`
 is `partial`.
 
 Text record kinds:
-- `plan.apply.begin`, one `plan.apply.commit` per commit, `plan.apply.failed`
-  (partial only), `plan.apply.end`. Begin and end carry `status` and the commit
-  count.
+- `plan.apply.begin`, one `plan.apply.warning` per warning, one
+  `plan.apply.commit` per commit, `plan.apply.failed` (partial only),
+  `plan.apply.end`. Begin and end carry `status` and the commit count.
 
 Exit codes:
 - `0` when every planned commit was created, or on a successful dry run.
