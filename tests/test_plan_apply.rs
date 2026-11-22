@@ -322,6 +322,49 @@ fn plan_apply_refuses_with_commit_hooks_unless_no_verify() {
 }
 
 #[test]
+fn mcp_plan_apply_previews_but_refuses_writes_when_signing_is_required() {
+    let (dir, repo) = two_files();
+    repo.config()
+        .unwrap()
+        .set_bool("commit.gpgSign", true)
+        .unwrap();
+    let head = repo.head().unwrap().target();
+    let index_path = repo.path().join("index");
+    let index = std::fs::read(&index_path).unwrap();
+
+    let (child, mut stdin, mut stdout) = spawn_mcp_stdio();
+    open_session(&mut stdin, &mut stdout);
+    let preview = call_tool(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "pgs_plan_apply",
+        &json!({"repo_path": dir.path(), "plan": two_commit_plan(), "dry_run": true}),
+    );
+    let apply = call_tool(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "pgs_plan_apply",
+        &json!({"repo_path": dir.path(), "plan": two_commit_plan(), "no_verify": true}),
+    );
+    shutdown_child(child);
+
+    assert_eq!(preview["result"]["isError"], false, "{preview}");
+    assert_eq!(
+        preview["result"]["structuredContent"]["pgs"]["status"],
+        "dry_run"
+    );
+    assert_eq!(apply["result"]["isError"], true, "{apply}");
+    assert_eq!(
+        apply["result"]["structuredContent"]["pgs_error"]["code"],
+        "commit_signing_required"
+    );
+    assert_eq!(repo.head().unwrap().target(), head);
+    assert_eq!(std::fs::read(index_path).unwrap(), index);
+}
+
+#[test]
 fn plan_apply_failing_partway_keeps_earlier_commits_and_reports_them() {
     let (dir, repo) = setup_repo();
     commit_file(&repo, dir.path(), "a.txt", "a\n", "add a");

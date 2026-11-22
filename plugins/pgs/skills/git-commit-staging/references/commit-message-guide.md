@@ -47,12 +47,13 @@ normalized text, so read it back to see exactly what was stored.
 
 ## Gate Checklist
 
-Before `pgs_commit`:
+Before committing:
 
-1. Read `pgs_status`.
+1. Read `pgs_status(full=true)` for a staged commit or review the dry-run
+   preview for each planned commit.
 2. Read `pgs_log(max_count=10)`.
 3. Choose repo style first, or the Conventional Commits fallback.
-4. Verify the subject names the staged intent.
+4. Verify the subject names the intent of that commit.
 5. Verify the body explains what changed and why.
 6. Reject vague messages such as `update files`, `fix bug`, or `misc changes`.
 

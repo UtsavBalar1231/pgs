@@ -98,7 +98,9 @@ Tool payloads are unchanged: read the command envelope from
 
 ## Safety Notes
 
-- `pgs_stage`, `pgs_unstage`, and `pgs_commit` change repository state unless `dry_run` is true
+- `pgs_stage`, `pgs_unstage`, and `pgs_plan_apply` support `dry_run`; `pgs_commit` writes history on success
+- `pgs_commit` commits the entire index, including any changes staged before the call
+- `pgs_commit` and real `pgs_plan_apply` calls refuse before writing if `commit.gpgSign` is enabled or a merge is in progress
 - approve mutating tool use explicitly in any agent or automation policy before enabling them
 - same-repo mutating requests never run at the same time: each canonical repo path has one
   lock, and waiting requests are served in the order they arrived, so a `pgs_commit`

@@ -188,9 +188,10 @@ pub fn execute(
 /// Returns [`PgsError::InvalidArguments`] when neither or both message sources
 /// are supplied, [`PgsError::InputFileUnreadable`] when `-F <path>` cannot be
 /// read, [`PgsError::EmptyCommitMessage`] when the normalized message is empty,
-/// [`PgsError::CommitHooksPresent`] when hooks pgs cannot run are active, any
-/// staging error, and [`PgsError::NoChanges`] when a non-amend commit has
-/// nothing staged.
+/// [`PgsError::CommitHooksPresent`] when hooks pgs cannot run are active,
+/// [`PgsError::CommitSigningRequired`] when signing is enabled,
+/// [`PgsError::MergeInProgress`] during a merge, any staging error, and
+/// [`PgsError::NoChanges`] when a non-amend commit has nothing staged.
 pub fn run(
     repo_path: Option<&str>,
     context: u32,
@@ -215,6 +216,7 @@ pub fn commit(
     let message = resolve_message(request, allow_stdin)?;
 
     let repository = repo::open(repo_path)?;
+    repo::ensure_commit_supported(&repository)?;
     if !request.no_verify {
         let hooks = repo::active_commit_hooks(&repository)?;
         if !hooks.is_empty() {

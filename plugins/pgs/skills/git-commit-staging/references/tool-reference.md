@@ -2,7 +2,8 @@
 
 Workflow detail that the tool schemas do not capture. Every tool requires
 `repo_path`; if you set a custom `context`, keep the same value across the
-session. Read each result from `structuredContent`, not the `content` summary.
+session. Read output from `structuredContent.pgs` and errors from
+`structuredContent.pgs_error`.
 
 ## Selectors
 
@@ -71,7 +72,26 @@ pgs_stage(
 
 A plain `dry_run` (no `explain`) returns counts only, with no preview lines.
 
+## Skipped and ignored paths
+
+`pgs_scan` may report `skipped` entries with a `path` and `reason` under
+`structuredContent.pgs`. A directory entry ends in `/`. For `reason="ignored"`,
+inspect a specific file or directory with `files` and `include_ignored=true`:
+
+```text
+pgs_scan(repo_path="/path/to/repo", files=["dist/"], include_ignored=true)
+pgs_stage(repo_path="/path/to/repo", selections=["dist/app.js"], force=true, dry_run=true)
+```
+
+`force=true` requires exact whole-file paths. Use it only for ignored files
+the user intends to stage. Nested repositories and unreadable paths require
+separate handling.
+
 ## Commit and amend
+
+Use `pgs_status(full=true)` before committing. With `selections`, `pgs_commit`
+stages those changes first and commits the entire index. Review existing staged
+changes and the new selections together before using this shortcut.
 
 Supply the message through exactly one of `message` or `message_file`:
 
@@ -132,9 +152,17 @@ file, so it takes no path prefix. `message` is a preview that `pgs_plan_check`
 and `pgs_plan_diff` do not interpret; `pgs_plan_apply` requires it on every
 commit and commits with it.
 
-`pgs_plan_check` and `pgs_plan_diff` validate and reconcile a plan; they never
-stage, unstage, or commit. `pgs_plan_apply` does both, one planned commit at a
-time, in order. Hunk IDs in the plan come from the scan the plan was built on;
+`pgs_plan_check` and `pgs_plan_diff` validate and reconcile a plan. For
+`pgs_plan_check`, `outcome="ok"` means the check ran. Inspect `overlaps`,
+`unsafe_selectors`, `unknown_paths`, `unknown_hunk_ids`, and `uncovered` in
+`structuredContent.pgs` before previewing. Uncovered hunks stay unstaged.
+
+`pgs_plan_apply(dry_run=true, ...)` previews the resolved selections and reports
+active hooks in `pgs.warnings`. Apply an authorized plan only when nothing is
+staged. Active hooks, required signing, and an in-progress merge can prevent
+the write. Read the error and follow the recovery instructions in the skill.
+
+Hunk IDs in the plan come from the scan the plan was built on.
 `pgs_plan_apply` follows each one across the earlier commits of the same run, so
 an earlier commit in the same file does not strand a later hunk ID. Line ranges
 name workdir lines, which committing does not move, so disjoint ranges can split

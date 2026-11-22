@@ -26,6 +26,25 @@ pub fn open(path: Option<&str>) -> Result<Repository, PgsError> {
     Ok(repo)
 }
 
+/// Check whether pgs can create or amend commits in this repository.
+///
+/// # Errors
+///
+/// Returns `MergeInProgress` during a merge, `CommitSigningRequired` when
+/// `commit.gpgSign` is enabled, or `Git` if reading the configuration fails.
+pub(crate) fn ensure_commit_supported(repo: &Repository) -> Result<(), PgsError> {
+    if repo.state() == git2::RepositoryState::Merge {
+        return Err(PgsError::MergeInProgress);
+    }
+
+    match repo.config()?.get_bool("commit.gpgSign") {
+        Ok(true) => Err(PgsError::CommitSigningRequired),
+        Ok(false) => Ok(()),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// The hooks `git commit` would run that pgs cannot: active `pre-commit`,
 /// `prepare-commit-msg` and `commit-msg` hooks, in that order.
 ///

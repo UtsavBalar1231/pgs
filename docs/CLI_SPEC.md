@@ -85,6 +85,8 @@ exit code is fixed per code.
 | `input_file_unreadable` | 2 | A caller-supplied file (commit message file, plan file) is missing, unreadable, or not valid UTF-8. |
 | `not_a_repository` | 2 | The path (from `--repo` or the working directory) names no git repository. |
 | `commit_hooks_present` | 2 | `commit` found active `pre-commit`, `prepare-commit-msg` or `commit-msg` hooks, which pgs cannot run. Commit with git, or pass `--no-verify`. |
+| `commit_signing_required` | 2 | `commit.gpgSign` is enabled. Use Git to create or amend the signed commit. |
+| `merge_in_progress` | 2 | A merge is in progress. Use Git to finish it. |
 | `explain_without_dry_run` | 2 | `--explain` was passed without `--dry-run`. |
 | `non_utf8_partial` | 2 | Hunk or line selection on a file that is not valid UTF-8. Stage the whole file. |
 | `crlf_mismatch` | 2 | Hunk or line selection where the index and working tree use different dominant line endings. Stage the whole file. |
@@ -385,7 +387,8 @@ and message; message-only amend is allowed when the index already matches
 `pgs stage` would (same selectors, `--exclude`, and `--expect`), then commits
 the index. Anything already staged is committed too. If the commit fails after
 the staging succeeded, the index is restored to what it was before the call, so
-a failed call leaves nothing half done. The hook check runs before any staging.
+a failed call leaves nothing half done. The hook, signing, and merge checks run
+before any staging.
 MCP: `pgs_commit` with `selections` (plus optional `exclude`,
 `expected_checksums`, `context`).
 
@@ -455,9 +458,14 @@ against the working tree root) or else in `hooks/` of the common git directory;
 on Unix it must also be executable, as git requires. `*.sample` files never
 count.
 
-`--no-verify` (MCP: `no_verify: true`) commits anyway, as
-`git commit --no-verify` would. Otherwise stage with pgs and commit with `git
-commit`, which runs the hooks.
+Use `git commit` to run the hooks. `--no-verify` (MCP: `no_verify: true`)
+allows pgs to commit without running them.
+
+#### Required signing and in-progress merges
+
+When `commit.gpgSign` is enabled or a merge is in progress, pgs refuses before
+staging or creating a commit. This also applies to `--amend` and `--no-verify`.
+Use Git to sign the commit or finish the merge.
 
 #### Message validation
 
@@ -816,6 +824,8 @@ Before writing anything, plan-apply refuses the run (exit 2,
 - the plan has no commits, or a planned commit has no non-blank `message`;
 - a real apply would skip active commit hooks (`commit_hooks_present`), unless
   `--no-verify` is passed;
+- a real apply requires signing (`commit_signing_required`) or a merge is in
+  progress (`merge_in_progress`);
 - anything is already staged — the run starts from an empty index;
 - there are no unstaged changes (`no_changes`, exit 1);
 - `plan-check` would report overlaps, unsafe selectors, unknown paths, or

@@ -178,8 +178,9 @@ pub struct CommitToolInput {
     /// Commit even though the repository has pre-commit, prepare-commit-msg or
     /// commit-msg hooks, which pgs cannot run.
     pub no_verify: Option<bool>,
-    /// Stage these selections first, then commit; if the commit fails the staging
-    /// is rolled back. Same selectors as `pgs_stage`.
+    /// Stage these selections first, then commit the whole index, including any
+    /// previously staged changes. If the commit fails, staging is rolled back.
+    /// Same selectors as `pgs_stage`.
     pub selections: Option<Vec<String>>,
     /// Selections to leave out when staging.
     pub exclude: Option<Vec<String>>,
@@ -599,7 +600,7 @@ fn unstage_tool() -> Tool {
 fn commit_tool() -> Tool {
     Tool::new(
         PGS_COMMIT_TOOL,
-        "Create a git commit from currently staged changes, or amend the current HEAD when amend is true, in an explicit local repository path. This mutates repository history.",
+        "Commit the entire index, or amend HEAD when amend is true, in an explicit local repository path. Optional selections stage additional changes before committing. Use Git when signing is enabled or a merge is in progress. This mutates repository history.",
         serde_json::Map::new(),
     )
     .with_title("Create commit")
@@ -859,6 +860,8 @@ fn build_pgs_error(error: &McpAdapterError) -> PgsToolError {
         | PgsError::InputFileUnreadable { .. }
         | PgsError::NotARepository { .. }
         | PgsError::CommitHooksPresent { .. }
+        | PgsError::CommitSigningRequired
+        | PgsError::MergeInProgress
         | PgsError::ExternalFilter { .. }
         | PgsError::UnsupportedEntry { .. }
         | PgsError::ExplainWithoutDryRun
@@ -1031,6 +1034,8 @@ fn error_guidance(error: &PgsError) -> String {
             "Commit with git so the hooks run, or pass no_verify: true to commit without them."
                 .to_owned()
         }
+        PgsError::CommitSigningRequired => "Use git to create a signed commit.".to_owned(),
+        PgsError::MergeInProgress => "Use git to finish the current merge.".to_owned(),
         PgsError::ExternalFilter { .. } => {
             "Stage this path with git, which runs the filter driver; pgs cannot.".to_owned()
         }

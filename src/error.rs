@@ -136,6 +136,14 @@ pub enum PgsError {
         hooks: Vec<String>,
     },
 
+    /// The Git configuration enables commit signing, which pgs cannot perform.
+    #[error("commit.gpgSign is enabled; commit with git to sign the commit")]
+    CommitSigningRequired,
+
+    /// Git must finish the pending merge to record all merge parents.
+    #[error("a merge is in progress; finish the merge with git")]
+    MergeInProgress,
+
     /// The repository path names no git repository.
     ///
     /// libgit2 reports this as a generic not-found error. The path came from the
@@ -271,6 +279,8 @@ impl PgsError {
             Self::InputFileUnreadable { .. } => "input_file_unreadable",
             Self::NotARepository { .. } => "not_a_repository",
             Self::CommitHooksPresent { .. } => "commit_hooks_present",
+            Self::CommitSigningRequired => "commit_signing_required",
+            Self::MergeInProgress => "merge_in_progress",
             Self::ExternalFilter { .. } => "external_filter",
             Self::UnsupportedEntry { .. } => "unsupported_entry",
             Self::ExplainWithoutDryRun => "explain_without_dry_run",
@@ -304,6 +314,8 @@ impl PgsError {
             | Self::InputFileUnreadable { .. }
             | Self::NotARepository { .. }
             | Self::CommitHooksPresent { .. }
+            | Self::CommitSigningRequired
+            | Self::MergeInProgress
             | Self::ExternalFilter { .. }
             | Self::UnsupportedEntry { .. }
             | Self::ExplainWithoutDryRun
