@@ -13,6 +13,7 @@ pub fn execute(repo_path: Option<&str>, context: u32) -> Result<CommandOutput, P
         scan::ScanArgs {
             files: Vec::new(),
             full: false,
+            include_ignored: false,
         },
     ) {
         Ok(CommandOutput::Scan(scan_output)) => Some(scan_output),
@@ -36,7 +37,9 @@ pub fn execute(repo_path: Option<&str>, context: u32) -> Result<CommandOutput, P
         Err(other) => return Err(other),
     };
 
-    if unstaged.is_none() && staged_is_empty(staged.as_ref()) {
+    if unstaged.as_ref().is_none_or(|scan| scan.files.is_empty())
+        && staged_is_empty(staged.as_ref())
+    {
         return Err(PgsError::NoChanges);
     }
 

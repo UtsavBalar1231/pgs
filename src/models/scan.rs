@@ -14,6 +14,27 @@ pub struct ScanResult {
     pub summary: ScanSummary,
 }
 
+/// A worktree path that scan leaves out of the selectable changes.
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct SkippedPath {
+    /// Repository-relative path; directory entries end in `/`.
+    pub path: String,
+    /// Why the path is absent from the change list.
+    pub reason: SkipReason,
+}
+
+/// Reason a worktree path was omitted from the scan.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipReason {
+    /// Git's ignore rules excluded the untracked path.
+    Ignored,
+    /// The path is a separate repository outside the index.
+    NestedRepository,
+    /// libgit2 could not read the worktree entry.
+    Unreadable,
+}
+
 /// Per-file information in a scan result.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileInfo {

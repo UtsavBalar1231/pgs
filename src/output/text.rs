@@ -238,6 +238,10 @@ fn render_scan(output: &ScanOutput) -> Result<String, PgsError> {
         ScanDetail::Full => render_scan_full(&mut lines, output)?,
     }
 
+    for skipped in &output.skipped {
+        lines.push(render_marker("scan.skipped", skipped)?);
+    }
+
     lines.push(render_marker(
         "summary",
         &ScanSummaryRecord {

@@ -13,6 +13,7 @@ use crate::models::{
 };
 use crate::output::view::{CommandOutput, OperationOutput, OutputCommand};
 use crate::safety::{backup, lock};
+use crate::selection::parse::detect_selection;
 use crate::selection::resolve;
 
 #[derive(Args)]
@@ -23,6 +24,10 @@ pub struct StageArgs {
     /// Exclude selections (same auto-detect syntax).
     #[arg(long)]
     pub exclude: Vec<String>,
+
+    /// Allow ignored files. Requires explicitly named whole-file selections.
+    #[arg(long)]
+    pub force: bool,
 
     /// Validate without modifying the index.
     #[arg(long)]
@@ -50,6 +55,8 @@ pub struct StageRequest {
     pub selections: Vec<String>,
     /// Selections to leave out.
     pub exclude: Vec<String>,
+    /// Include ignored files for explicitly named whole-file selections.
+    pub force: bool,
     /// Validate without modifying the index.
     pub dry_run: bool,
     /// Include exact per-file preview lines; requires `dry_run`.
@@ -68,6 +75,7 @@ impl TryFrom<StageArgs> for StageRequest {
             expected_checksums: parse_expect_pairs(&args.expect)?,
             selections: args.selections,
             exclude: args.exclude,
+            force: args.force,
             dry_run: args.dry_run,
             explain: args.explain,
             limit: args.limit,
@@ -122,8 +130,21 @@ pub fn apply(
     request: &StageRequest,
 ) -> Result<OperationOutput, PgsError> {
     lock::wait_for_lock_release(repository, 5)?;
-    let d = diff::diff_index_to_workdir(repository, context)?;
-    let scan = diff::build_scan_result(repository, &d, None)?;
+    let scan = if request.force {
+        if request.selections.is_empty()
+            || request.selections.iter().any(|selector| {
+                !matches!(detect_selection(selector), Ok(SelectionSpec::File { .. }))
+            })
+        {
+            return Err(PgsError::InvalidSelection {
+                detail: "--force requires explicit whole-file selections".into(),
+            });
+        }
+        diff::scan_workdir(repository, context, &request.selections, true)?.0
+    } else {
+        let d = diff::diff_index_to_workdir(repository, context)?;
+        diff::build_scan_result(repository, &d, None)?
+    };
     if scan.files.is_empty() {
         return Err(PgsError::NoChanges);
     }

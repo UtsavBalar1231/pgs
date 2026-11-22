@@ -17,7 +17,7 @@ pub use plan::{CommitPlan, PlannedCommit};
 pub use preview::{OperationPreview, PreviewLine};
 pub use scan::{
     CompactFileInfo, CompactHunkInfo, CompactScanResult, DiffLineInfo, FileInfo, FileStatus,
-    HunkInfo, LineOrigin, OriginMix, ScanResult, ScanSummary,
+    HunkInfo, LineOrigin, OriginMix, ScanResult, ScanSummary, SkipReason, SkippedPath,
 };
 pub use selection::{LineRange, ResolvedSelection, SelectionSpec, format_selection};
 pub use status::{StagedFileInfo, StatusReport, StatusSummary};

@@ -160,8 +160,19 @@ JSON envelope:
 ```
 
 Text record kinds:
-- compact: `scan.begin`, `file`, `hunk`, `summary`, `scan.end`
-- full: `scan.begin`, `file.begin`, `hunk.begin`, raw diff body lines, `hunk.end`, `file.end`, `summary`, `scan.end`
+- compact: `scan.begin`, `file`, `hunk`, `scan.skipped`, `summary`, `scan.end`
+- full: `scan.begin`, `file.begin`, `hunk.begin`, raw diff body lines, `hunk.end`, `file.end`, `scan.skipped`, `summary`, `scan.end`
+
+An optional `skipped` array contains `{ "path": "dist/", "reason": "ignored" }`
+records. Other reasons are `nested_repository` and `unreadable`. A trailing slash
+marks a directory whose contents were omitted. Skipped paths have no hunks and
+are excluded from `files` and `summary`. A scan with only skipped paths still
+reports them and exits 0. Skipped names that contain invalid UTF-8 are shown
+with replacement characters.
+
+`pgs scan --include-ignored <path>...` includes ignored files under the named
+repository-relative file or directory paths. The MCP equivalent is
+`include_ignored: true` with explicit `files` on `pgs_scan`.
 
 `status.type` is one of `Added`, `Modified`, `Deleted`, `Renamed` (with
 `old_path`), or `TypeChanged`: the path switched between a regular file and a
@@ -174,8 +185,8 @@ one hunk shows the old and new `Subproject commit <id>` lines, with an empty
 file `checksum`. Stage it by path: the index records the commit the submodule
 checkout is on, as `git add <submodule>` does. Hunk and line selectors on it
 return `granular_on_whole_file`, and `unstage` restores the commit HEAD records.
-A new nested repository does not appear in `scan`; add it with
-`git submodule add`.
+A new nested repository appears under `skipped`. Use `git submodule add` to
+record it as a submodule.
 
 Hunk payload notes:
 - `id` (`hunk_id`) — position-DEPENDENT addressing key: `sha256(path:old_start:new_start:content)[..12]`, where `content` is every hunk line prefixed with its origin marker (` ` context, `+` addition, `-` deletion) and terminated with `\n`. The marker makes replacing a line and keeping it beside an addition hash differently. Shifts when an earlier hunk changes the line count. Use to select a hunk when the scan is fresh.
@@ -224,6 +235,10 @@ Text record kinds:
 index (`stage`) or out of it (`unstage`): its additions plus the deletions it
 carries. It is computed from the selection, so a dry run and the real call
 report the same number. Binary and mode-only changes count 0.
+
+`pgs stage --force <file>...` allows ignored files at the named whole-file
+paths. Use `force: true` on `pgs_stage` for the same behavior. `--expect`,
+`--exclude`, and `--dry-run` still apply.
 
 #### `--dry-run --explain` preview (stage only)
 

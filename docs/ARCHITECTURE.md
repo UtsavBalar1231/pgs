@@ -32,8 +32,8 @@ Text mode uses the exact marker grammar:
 
 Recognized marker kinds:
 
-- scan: `scan.begin`, `file`, `hunk`, `summary`, `scan.end`
-- scan full: `file.begin`, `hunk.begin`, raw diff body, `hunk.end`, `file.end`, `summary`, `scan.end`
+- scan: `scan.begin`, `file`, `hunk`, `scan.skipped`, `summary`, `scan.end`
+- scan full: `file.begin`, `hunk.begin`, raw diff body, `hunk.end`, `file.end`, `scan.skipped`, `summary`, `scan.end`
 - stage: `stage.begin`, `item`, `warning`, `stage.preview.begin`, `stage.preview.line`, `stage.preview.end`, `stage.end`
 - unstage: `unstage.begin`, `item`, `warning`, `unstage.end`
 - status: `status.begin`, `status.file`, `summary`, `status.end`
@@ -183,9 +183,9 @@ the index unchanged:
   gitfile if it has one, as `git add <submodule>` does; unstaging restores the
   commit HEAD records, or removes a pointer HEAD does not have. The hunk scan
   reports for it is the `Subproject commit <id>` text git renders, so hunk and
-  line selectors return `GranularOnWholeFile`. libgit2 does not report a new,
-  untracked nested repository at all; adding one is `git submodule add`'s job,
-  since it also writes `.gitmodules`.
+  line selectors return `GranularOnWholeFile`. Scan reports new nested
+  repositories under `skipped`. `git submodule add` records the gitlink and
+  writes `.gitmodules`.
 
 - **Mode changes propagate through partial staging**: `stage_lines` and `stage_file`
   accept `mode_override: Option<u32>`, which flows into `build_index_entry`. A file

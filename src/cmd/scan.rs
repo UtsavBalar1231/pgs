@@ -12,6 +12,10 @@ pub struct ScanArgs {
     /// Include full diff line content and checksums.
     #[arg(long)]
     pub full: bool,
+
+    /// Include ignored files under the explicitly named paths.
+    #[arg(long)]
+    pub include_ignored: bool,
 }
 
 #[allow(clippy::needless_pass_by_value)] // clap dispatches Args by value
@@ -21,25 +25,19 @@ pub fn execute(
     args: ScanArgs,
 ) -> Result<CommandOutput, PgsError> {
     let repository = repo::open(repo_path)?;
-    let d = diff::diff_index_to_workdir(&repository, context)?;
+    let (result, skipped) =
+        diff::scan_workdir(&repository, context, &args.files, args.include_ignored)?;
 
-    let file_filter: Option<&[String]> = if args.files.is_empty() {
-        None
-    } else {
-        Some(&args.files)
-    };
-
-    let result = diff::build_scan_result(&repository, &d, file_filter)?;
-
-    if result.files.is_empty() {
+    if result.files.is_empty() && skipped.is_empty() {
         return Err(PgsError::NoChanges);
     }
 
-    let output = if args.full {
+    let mut output = if args.full {
         ScanOutput::full(result)
     } else {
         ScanOutput::compact(&result)
     };
 
+    output.skipped = skipped;
     Ok(output.into())
 }
